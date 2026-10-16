@@ -146,8 +146,44 @@ export async function limitedFormData(request: Request, maxBytes: number): Promi
   const stream = request.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ transform(chunk, controller) { size += chunk.byteLength; if (size > maxBytes) { oversized = true; throw new Error("Upload exceeds limit"); } controller.enqueue(chunk); } }));
   try { return await new Response(stream, { headers: { "Content-Type": request.headers.get("content-type") || "" } }).formData(); } catch { throw new StudioError(oversized ? "PAYLOAD_TOO_LARGE" : "INVALID_UPLOAD", oversized ? "Tệp gửi lên vượt giới hạn dung lượng." : "Dữ liệu tải lên không hợp lệ. Hãy chọn lại tệp.", oversized ? 413 : 400); }
 }
+async function providerErrorStatus(response: Response): Promise<string | undefined> {
+  const reader = response.body?.getReader();
+  if (!reader) return;
+  const maxBytes = 32 * 1024, decoder = new TextDecoder();
+  let size = 0, text = "";
+  try {
+    if (Number(response.headers.get("content-length") || 0) > maxBytes) { await reader.cancel().catch(() => {}); return; }
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) { await reader.cancel().catch(() => {}); return; }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    const body: unknown = JSON.parse(text);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return;
+    const detail = (body as Record<string, unknown>).detail;
+    if (!detail || typeof detail !== "object" || Array.isArray(detail)) return;
+    const status = (detail as Record<string, unknown>).status;
+    return typeof status === "string" ? status : undefined;
+  } catch {
+    await reader.cancel().catch(() => {});
+    return;
+  } finally { reader.releaseLock(); }
+}
 export async function providerResponse(response: Response, provider: string): Promise<Response> {
-  if (response.ok) return response; await response.body?.cancel();
+  if (response.ok) return response;
+  // Only exact machine codes influence the response. Provider messages may contain
+  // credentials or user text, so never return or log the parsed body.
+  const status = await providerErrorStatus(response);
+  if (provider === "ElevenLabs") {
+    if (status === "api_key_id_used_as_api_key") throw new StudioError("PROVIDER_KEY_ID", "ElevenLabs nhận được Key ID thay cho khóa API bí mật. Quản trị viên cần đặt giá trị Secret API key vào ELEVENLABS_API_KEY trên Vercel rồi triển khai lại.", 422, "contact_admin");
+    if (status === "invalid_api_key") throw new StudioError("PROVIDER_AUTH", "ElevenLabs không chấp nhận khóa API. Quản trị viên cần kiểm tra Secret API key và trạng thái khóa.", 422, "contact_admin");
+    if (status === "missing_permissions") throw new StudioError("PROVIDER_PERMISSION", "Khóa ElevenLabs chưa có quyền cho chức năng này. Quản trị viên cần kiểm tra quyền đọc giọng (Voices: Read), tạo lời đọc (Text to Speech) hoặc tạo giọng tương ứng với thao tác đang dùng.", 422, "contact_admin");
+    if (status === "quota_exceeded") throw new StudioError("PROVIDER_LIMIT", "ElevenLabs đã hết hạn mức sử dụng. Quản trị viên cần kiểm tra gói và hạn mức của tài khoản.", 429, "contact_admin");
+  }
+  if (provider === "DeepSeek" && response.status === 402) throw new StudioError("PROVIDER_BALANCE", "Tài khoản DeepSeek không đủ số dư. Quản trị viên cần kiểm tra số dư và nạp tiền trước khi thử lại.", 422, "contact_admin");
   if ([401, 403].includes(response.status)) throw new StudioError("PROVIDER_AUTH", `${provider} từ chối kết nối. Quản trị viên cần kiểm tra API key và quyền tài khoản.`, 422, "contact_admin");
   if (response.status === 429) throw new StudioError("PROVIDER_LIMIT", `${provider} đang hết hạn mức hoặc quá nhiều yêu cầu. Quản trị viên cần kiểm tra tài khoản.`, 429, "contact_admin");
   if ([400, 422].includes(response.status)) throw new StudioError("PROVIDER_REJECTED", `${provider} chưa xử lý được dữ liệu hoặc model đã chọn. Hãy kiểm tra tệp và cấu hình.`, 422);

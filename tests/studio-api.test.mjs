@@ -8,7 +8,7 @@ import ts from "typescript";
 const root=process.cwd(), alice="11111111-1111-4111-8111-111111111111", bob="22222222-2222-4222-8222-222222222222";
 const environment={NEXT_PUBLIC_SUPABASE_URL:"https://offline.supabase.invalid",NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"offline-public",DEEPSEEK_API_KEY:"offline-deepseek",ELEVENLABS_API_KEY:"offline-eleven",STUDIO_ENCRYPTION_KEY:"offline-signing-secret-do-not-use-in-production"};
 const members=new Map([[alice,{user_id:alice,email:"alice@example.invalid",display_name:"Alice",role:"member",enabled:true,ai_units_limit:1000,ai_units_used:0}],[bob,{user_id:bob,email:"bob@example.invalid",display_name:"Bob",role:"member",enabled:true,ai_units_limit:1000,ai_units_used:0}]]),profiles=new Map(),voices=new Map(),media=new Map();
-let identity=alice, requestFetch=async()=>{throw new Error("Unexpected outbound request");}, charged=[];
+let identity=alice, requestFetch=async()=>{throw new Error("Unexpected outbound request");}, charged=[], usageLogs=[];
 function query(table){let filters=[],action="select",values;const builder={select(){return this;},eq(key,value){filters.push([key,value]);return this;},order(){return this;},limit(){return this;},update(data){action="update";values=data;return this;},upsert(data){action="upsert";values=data;return this;},maybeSingle(){return run(true);},then(resolve,reject){return run(false).then(resolve,reject);}};
 async function run(single){const map=table==="studio_members"?members:table==="studio_settings"?profiles:voices;
 if(action==="upsert"){for(const row of Array.isArray(values)?values:[values]){if(row.user_id!==identity)return{data:null,error:{message:"RLS"}};map.set(table==="studio_voices"?`${row.user_id}:${row.voice_id}`:row.user_id,row);}return{data:null,error:null};}
@@ -16,7 +16,7 @@ let rows=[...map.values()].filter(row=>(row.user_id===identity||(table==="studio
 if(action==="update"){if(members.get(identity)?.role!=="admin")return{data:null,error:{message:"RLS"}};rows=rows.map(row=>{Object.assign(row,values);return row;});}
 return{data:single?rows[0]||null:rows,error:null};}return builder;}
 const fakeClient={auth:{async getUser(){return{data:{user:identity?{id:identity,email:members.get(identity)?.email}:null},error:null};}},from:query,async rpc(name,args){assert.equal(name,"consume_studio_ai_units");const member=members.get(identity);if(!member?.enabled)return{error:{message:"MEMBER_DISABLED"}};if(member.ai_units_used+args.p_units>member.ai_units_limit)return{error:{message:"QUOTA_EXCEEDED"}};member.ai_units_used+=args.p_units;charged.push(args.p_units);return{data:member.ai_units_limit-member.ai_units_used,error:null};},storage:{from(bucket){assert.equal(bucket,"studio-media");return{async upload(name,data){media.set(name,data);return{error:null};},async createSignedUrl(name){return{data:{signedUrl:`https://offline.supabase.invalid/private/${name}?token=offline`},error:null};},async remove(paths){paths.forEach(p=>media.delete(p));return{error:null};},async download(name){return{data:media.get(name)||null,error:media.has(name)?null:{message:"missing"}};}};}}};
-const context=vm.createContext({console,crypto,process:{env:environment},TextEncoder,TextDecoder,Uint8Array,DataView,ArrayBuffer,FormData,File,Request,Response,Headers,URL,AbortSignal,TransformStream,setTimeout,clearTimeout,btoa,atob,fetch:(...args)=>requestFetch(...args)}),modules=new Map();
+const context=vm.createContext({console:{...console,info:(...values)=>usageLogs.push(values)},crypto,process:{env:environment},TextEncoder,TextDecoder,Uint8Array,DataView,ArrayBuffer,FormData,File,Request,Response,Headers,URL,AbortSignal,TransformStream,setTimeout,clearTimeout,btoa,atob,fetch:(...args)=>requestFetch(...args)}),modules=new Map();
 async function load(file){if(modules.has(file))return modules.get(file);const code=ts.transpileModule(await fs.readFile(file,"utf8"),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;const mod=new vm.SourceTextModule(code,{context,identifier:file});modules.set(file,mod);return mod;}
 const synthetic=new Map();
 async function linker(specifier,parent){
@@ -29,12 +29,54 @@ async function linker(specifier,parent){
 }
 const top=await load(path.join(root,"lib/studio-eleven.ts"));await top.link(linker);await top.evaluate();
 const contract=modules.get(path.join(root,"lib/studio-contract.ts")).namespace,server=modules.get(path.join(root,"lib/studio-server.ts")).namespace,deepseek=modules.get(path.join(root,"lib/studio-deepseek.ts")).namespace,eleven=top.namespace,supabase=modules.get(path.join(root,"lib/studio-supabase.ts")).namespace;
-let passed=0;async function check(name,run){if(process.env.STUDIO_TEST_FILTER&&!name.includes(process.env.STUDIO_TEST_FILTER))return;identity=alice;charged=[];await run();console.log(`PASS ${name}`);passed++;}
+let passed=0;async function check(name,run){if(process.env.STUDIO_TEST_FILTER&&!name.includes(process.env.STUDIO_TEST_FILTER))return;identity=alice;charged=[];usageLogs=[];await run();console.log(`PASS ${name}`);passed++;}
 const frame={time:0,image:"data:image/jpeg;base64,/9j/AA=="};
 await check("rejects overlapping timeline and preserves exact WAV samples",()=>{assert.throws(()=>contract.validateSegments([{start:0,end:3,text:"a"},{start:2,end:4,text:"b"}],5));assert.throws(()=>contract.validDuration(91));const pcm=new Uint8Array(96000).fill(7),wav=contract.pcmToWav(pcm);assert.equal(wav.length,96044);assert.equal(wav[44],7);assert.equal(new DataView(wav.buffer).getUint32(24,true),24000);});
 await check("validates Supabase identity rather than forged user headers",async()=>{identity=null;await assert.rejects(server.requestUser(new Request("https://app.example/api/config",{headers:{"oai-authenticated-user-id":alice}})),{code:"SIGN_IN_REQUIRED"});identity=alice;members.get(alice).enabled=false;await assert.rejects(server.requestUser(new Request("https://app.example/api/config")),{code:"MEMBER_DISABLED"});members.get(alice).enabled=true;assert.equal(await server.requestUser(new Request("https://app.example/api/config")),alice);});
 await check("rejects foreign origins and missing configuration",async()=>{await assert.rejects(server.requestUser(new Request("https://app.example/api/settings",{method:"POST",headers:{origin:"https://evil.example"}}),true),{code:"INVALID_ORIGIN"});const key=environment.NEXT_PUBLIC_SUPABASE_URL;delete environment.NEXT_PUBLIC_SUPABASE_URL;await assert.rejects(supabase.createStudioSupabaseServer(),{code:"AUTH_NOT_CONFIGURED"});environment.NEXT_PUBLIC_SUPABASE_URL=key;});
 await check("shared keys never returned or written by member settings",async()=>{const config=await server.getConfig(alice);assert.equal(config.deepseekConfigured,true);assert.ok(!JSON.stringify(config).includes("offline-deepseek"));await assert.rejects(server.saveSettings(alice,{deepseekApiKey:"private"}),{code:"SHARED_KEYS_MANAGED"});await server.saveSettings(alice,{profile:{name:"Alice",tone:"Tự nhiên",mode:"face",secret:"drop"}});assert.equal(profiles.get(alice).profile_json.mode,"face");assert.equal(profiles.get(alice).profile_json.secret,undefined);});
+await check("provider machine codes give actionable errors without exposing provider content",async()=>{
+ const fakeSecret="sk-offline-malicious-provider-message-do-not-expose",cases=[
+  {provider:"ElevenLabs",http:422,status:"api_key_id_used_as_api_key",code:"PROVIDER_KEY_ID",responseStatus:422,hint:/Key ID.*Secret API key/},
+  {provider:"ElevenLabs",http:401,status:"invalid_api_key",code:"PROVIDER_AUTH",responseStatus:422,hint:/khóa API/},
+  {provider:"ElevenLabs",http:403,status:"missing_permissions",code:"PROVIDER_PERMISSION",responseStatus:422,hint:/Voices: Read.*Text to Speech/},
+  {provider:"ElevenLabs",http:400,status:"quota_exceeded",code:"PROVIDER_LIMIT",responseStatus:429,hint:/hạn mức/},
+  {provider:"DeepSeek",http:402,status:"irrelevant",code:"PROVIDER_BALANCE",responseStatus:422,hint:/số dư/},
+ ];
+ for(const item of cases){
+  const response=Response.json({detail:{status:item.status,message:`Sensitive provider message ${fakeSecret}`,required_permissions:[fakeSecret]},error:{message:fakeSecret}},{status:item.http});
+  let caught;
+  await assert.rejects(server.providerResponse(response,item.provider),error=>{caught=error;assert.equal(error.code,item.code);assert.match(error.message,item.hint);return true;});
+  const publicResponse=server.apiError(caught),body=await publicResponse.json();
+  assert.equal(publicResponse.status,item.responseStatus);assert.equal(body.action,"contact_admin");assert.equal(body.code,item.code);
+  assert.ok(!JSON.stringify(body).includes(fakeSecret));assert.ok(!JSON.stringify(body).includes("Sensitive provider message"));assert.equal(response.body.locked,false);
+ }
+});
+await check("provider classification requires exact codes and preserves generic HTTP errors",async()=>{
+ const cases=[
+  {provider:"ElevenLabs",http:422,body:{detail:{status:"unknown",message:"api_key_id_used_as_api_key invalid_api_key missing_permissions quota_exceeded"}},code:"PROVIDER_REJECTED",responseStatus:422},
+  {provider:"ElevenLabs",http:422,body:{detail:{status:"api_key_id_used_as_api_key_extra"}},code:"PROVIDER_REJECTED",responseStatus:422},
+  {provider:"ElevenLabs",http:422,body:{detail:[{status:"api_key_id_used_as_api_key"}]},code:"PROVIDER_REJECTED",responseStatus:422},
+  {provider:"DeepSeek",http:422,body:{detail:{status:"api_key_id_used_as_api_key"}},code:"PROVIDER_REJECTED",responseStatus:422},
+  {provider:"ElevenLabs",http:401,body:{},code:"PROVIDER_AUTH",responseStatus:422},
+  {provider:"ElevenLabs",http:429,body:{},code:"PROVIDER_LIMIT",responseStatus:429},
+  {provider:"ElevenLabs",http:500,body:{},code:"PROVIDER_UNAVAILABLE",responseStatus:502},
+ ];
+ for(const item of cases)await assert.rejects(server.providerResponse(Response.json(item.body,{status:item.http}),item.provider),{code:item.code,status:item.responseStatus});
+ await assert.rejects(server.providerResponse(new Response("not-json sk-offline-error-body",{status:422}),"ElevenLabs"),{code:"PROVIDER_REJECTED"});
+ const success=new Response("untouched audio",{status:200});assert.equal(await server.providerResponse(success,"ElevenLabs"),success);assert.equal(success.bodyUsed,false);
+});
+await check("oversized provider errors are cancelled and never classified from a partial prefix",async()=>{
+ const encoder=new TextEncoder(),prefix=JSON.stringify({detail:{status:"api_key_id_used_as_api_key",message:"sk-offline-oversized-secret"}}),body=encoder.encode(prefix+" ".repeat(32*1024));
+ for(const declaredLength of [undefined,String(32*1024+1)]){
+  let cancelled=false;
+  const stream=new ReadableStream({start(controller){controller.enqueue(body);},cancel(){cancelled=true;}});
+  const response=new Response(stream,{status:422,headers:declaredLength?{"content-length":declaredLength}:undefined});
+  await assert.rejects(server.providerResponse(response,"ElevenLabs"),{code:"PROVIDER_REJECTED"});assert.equal(cancelled,true);assert.equal(response.body.locked,false);
+ }
+ const broken=new ReadableStream({start(controller){controller.error(new Error("sk-offline-stream-secret"));}});
+ await assert.rejects(server.providerResponse(new Response(broken,{status:403}),"ElevenLabs"),{code:"PROVIDER_AUTH"});
+});
 await check("model configuration never exposes a credential accidentally pasted into model fields",async()=>{
  const previousDeepseek=environment.DEEPSEEK_MODEL,previousEleven=environment.ELEVENLABS_MODEL;
  const misplacedDeepseek="sk-offline-model-field-secret-do-not-use",misplacedEleven="a".repeat(64);
@@ -87,6 +129,27 @@ await check("saved profile name is returned as account display name",async()=>{c
 await check("quota exhaustion blocks provider requests before network",async()=>{const member=members.get(alice),limit=member.ai_units_limit;member.ai_units_limit=member.ai_units_used;let requests=0;requestFetch=async()=>{requests++;throw new Error("must not call");};await assert.rejects(deepseek.deepseekJson("offline","json",{text:"x"},()=>server.consumeAiUnits(alice,1)),{code:"QUOTA_EXCEEDED"});assert.equal(requests,0);member.ai_units_limit=limit;});
 await check("sampled frame contract rejects remote URLs and invalid timestamps",()=>{assert.equal(deepseek.validateFrames([frame],5).length,1);assert.throws(()=>deepseek.validateFrames([{time:0,image:"https://example.com/image.jpg"}],5));assert.throws(()=>deepseek.validateFrames([frame,frame],5));assert.throws(()=>deepseek.validateFrames([{...frame,time:6}],5));assert.throws(()=>deepseek.validateFrames([{...frame,image:frame.image+"A".repeat(160000)}],5));});
 await check("DeepSeek vision request is JSON and declares sampling/audio limits",async()=>{let payload;requestFetch=async(url,init)=>{assert.equal(url,"https://api.deepseek.com/chat/completions");payload=JSON.parse(init.body);return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify({summary:"Vườn",intentSummary:"Niềm vui",observations:[{start:0,end:5,description:"Ảnh vườn"}],facts:[],unknowns:[],questions:[]})}}]});};const result=await deepseek.analyzeFrames("offline",{frames:[frame],duration:5,intent:"Chia sẻ niềm vui",profile:{mode:"talking"},transcript:""},()=>server.consumeAiUnits(alice,1));assert.equal(payload.model,"deepseek-flash");assert.equal(payload.response_format.type,"json_object");assert.equal(payload.thinking.type,"disabled");assert.equal(payload.messages[1].content.at(-1).type,"image_url");assert.match(payload.messages[1].content[0].text,/KHÔNG nhận âm thanh/);assert.match(result.samplingNote,/ảnh mẫu/);assert.deepEqual(charged,[1]);});
+await check("DeepSeek usage logs allow only bounded numeric counters and exclude sensitive content",async()=>{
+ const sensitive="sk-offline-sensitive-prompt-and-provider-content",requestKey="sk-offline-private-request-key",allNull={prompt_cache_hit_tokens:null,prompt_cache_miss_tokens:null,completion_tokens:null,reasoning_tokens:null};
+ const cases=[
+  {usage:{prompt_cache_hit_tokens:0,prompt_cache_miss_tokens:2000000,completion_tokens:19,completion_tokens_details:{reasoning_tokens:11,private:sensitive},prompt:sensitive,extra:sensitive},finish:"stop",expected:{prompt_cache_hit_tokens:0,prompt_cache_miss_tokens:2000000,completion_tokens:19,reasoning_tokens:11}},
+  {usage:{prompt_cache_hit_tokens:-1,prompt_cache_miss_tokens:"12",completion_tokens:2000001,reasoning_tokens:999,completion_tokens_details:{reasoning_tokens:0.5},extra:sensitive},finish:sensitive,expected:allNull},
+  {usage:[sensitive],finish:undefined,expected:allNull},
+ ];
+ for(const item of cases){
+  usageLogs=[];
+  requestFetch=async()=>Response.json({model:sensitive,usage:item.usage,private:sensitive,choices:[{finish_reason:item.finish,message:{content:JSON.stringify({text:sensitive})}}]});
+  await deepseek.deepseekJson(requestKey,`Private prompt ${sensitive}`,{private:sensitive},()=>server.consumeAiUnits(alice,1),[frame]);
+  assert.equal(usageLogs.length,1);assert.equal(usageLogs[0].length,1);assert.equal(typeof usageLogs[0][0],"string");
+  const line=usageLogs[0][0],entry=JSON.parse(line);
+  assert.deepEqual(Object.keys(entry).sort(),["event","model","thinking","elapsedMs","usage","finish_reason"].sort());
+  assert.equal(entry.event,"studio_ai_usage");assert.equal(entry.model,"deepseek-flash");assert.equal(entry.thinking,"disabled");
+  assert.ok(entry.elapsedMs===null||(Number.isSafeInteger(entry.elapsedMs)&&entry.elapsedMs>=0&&entry.elapsedMs<=3600000));
+  assert.deepEqual(entry.usage,item.expected);assert.equal(entry.finish_reason,item.finish==="stop"?"stop":null);
+  assert.ok(!line.includes(sensitive));assert.ok(!line.includes(requestKey));assert.ok(!line.includes(frame.image));assert.ok(!line.includes("Private prompt"));
+ }
+ assert.deepEqual(charged,[1,1,1]);
+});
 await check("all scenery, talking and face modes preserve supplied intent and declare source limitations",async()=>{
  const modeCases=[
   {mode:"scenery",constraint:/Không tự suy ra ý muốn chia sẻ từ hình ảnh/},
@@ -105,6 +168,10 @@ await check("all scenery, talking and face modes preserve supplied intent and de
    analysis=await deepseek.analyzeFrames("offline",{frames:[frame],duration:5,intent:supplied,profile:{mode},transcript},()=>server.consumeAiUnits(alice,1));
    const prompt=payload.messages[1].content[0].text;
    assert.match(prompt,constraint,`${mode} analysis must carry its mode constraint`);
+   assert.match(prompt,/Chế độ là ý định biên tập do người dùng chọn, không phải bằng chứng hình ảnh/);
+   assert.match(prompt,/Không suy ra có người, mặt người hay người đang nói chỉ từ chế độ/);
+   assert.match(prompt,/Chỉ mô tả người hoặc mặt khi nhìn thấy rõ trong ảnh mẫu/);
+   assert.ok(!/Video có người|Video có mặt người|Video có người đang nói/.test(prompt),"selected mode must not assert that a person or face was visually observed");
    assert.match(prompt,/KHÔNG nhận âm thanh/);
    assert.match(prompt,/Bản chép bên dưới do người dùng cung cấp, chưa được xác minh bằng âm thanh/);
    assert.ok(prompt.includes(`Ý muốn chia sẻ: ${JSON.stringify(supplied)}`));
@@ -121,6 +188,9 @@ await check("all scenery, talking and face modes preserve supplied intent and de
   const script=await deepseek.createScript("offline",{analysis,intent:supplied,profile:{mode},duration:5,instruction:"Giữ câu chuyện riêng của tôi."},()=>server.consumeAiUnits(alice,1));
   const scriptPrompt=scriptPayload.messages[1].content[0].text;
   assert.match(scriptPrompt,constraint,`${mode} script must carry the same mode constraint`);
+  assert.match(scriptPrompt,/Chế độ là ý định biên tập do người dùng chọn, không phải bằng chứng hình ảnh/);
+  assert.match(scriptPrompt,/Không suy ra có người, mặt người hay người đang nói chỉ từ chế độ/);
+  assert.match(scriptPrompt,/Chỉ mô tả người hoặc mặt khi nhìn thấy rõ trong ảnh mẫu/);
   assert.match(scriptPrompt,/Phân tích chỉ dựa ảnh mẫu, không khẳng định sự kiện giữa ảnh hoặc lời nói gốc/);
   assert.ok(scriptPrompt.includes(`Ý muốn chia sẻ: ${JSON.stringify(supplied)}`));
   assert.ok(!scriptPrompt.includes("Provider tự bịa"),"discarded provider transcripts must not leak into script context");

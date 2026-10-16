@@ -4,16 +4,17 @@ Cập nhật ngày **16/10/2026**. Dự án Supabase tại Singapore đã đư�
 
 ## Đã chạy và đạt
 
-**Tổng cộng 55 nhóm kiểm tra đều đạt:** 19 backend + 10 giao diện/dự án + 15 tích hợp Supabase + 11 tích hợp Next.js.
+**Tổng cộng 63 nhóm kiểm tra đều đạt:** 23 backend + 10 giao diện/dự án + 4 tải/dọn âm thanh + 15 tích hợp Supabase + 11 tích hợp Next.js.
 
 | Bộ kiểm tra | Số nhóm | Phạm vi |
 | --- | ---: | --- |
-| Backend ngoại tuyến | 19 | Đủ ba chế độ `scenery`, `talking`, `face`; giới hạn ảnh và âm thanh; quyền dùng giọng có chữ ký; hạn mức; thời lượng; lỗi nhà cung cấp |
+| Backend ngoại tuyến | 23 | Đủ ba chế độ `scenery`, `talking`, `face`; giới hạn ảnh và âm thanh; quyền dùng giọng có chữ ký; hạn mức; thời lượng; lỗi nhà cung cấp |
 | Giao diện và dự án | 10 | Các hành vi giao diện và lưu dự án được kiểm tra ngoại tuyến |
+| Tải/dọn âm thanh ngoại tuyến | 4 | Tải lỗi vẫn dọn toàn bộ tệp riêng; chặn đường dẫn ngoài; giữ âm thanh đã trả phí khi dọn tạm gặp lỗi |
 | Supabase cục bộ | 15 | Auth, PostgREST và Storage thật trong Docker |
 | Next.js cục bộ | 11 | Các luồng tài khoản chạy qua Next.js thật |
 
-Hai bộ ngoại tuyến dùng nhà cung cấp AI mô phỏng. Kết quả này không xác nhận chất lượng hoặc hoạt động của AI thật.
+Các bộ ngoại tuyến dùng nhà cung cấp AI mô phỏng. Kết quả này không xác nhận chất lượng hoặc hoạt động của AI thật.
 
 - **Tích hợp Supabase:** thử ba tài khoản, cách ly dữ liệu, quyền quản trị, kho riêng, URL ký tạm và thu hồi quyền khi token vẫn còn hạn. Với hạn mức 5 và 12 yêu cầu RPC đồng thời, đúng 5 yêu cầu thành công và 7 bị từ chối; không trừ nhầm tài khoản khác.
 - **Tích hợp Next.js:** đăng ký, cookie đăng nhập, trạng thái chờ duyệt, lưu hồ sơ/tên, quản trị hạn mức, CSRF, khôi phục một lần bằng token Auth thật, đổi mật khẩu và đăng xuất. Dùng `http://localhost:4320` vì Next.js chuẩn hóa địa chỉ loopback sang `localhost`. Token khôi phục được tạo cục bộ, không gửi email; bài kiểm tra không xác nhận SMTP đã giao thư.
@@ -25,8 +26,9 @@ Hai bộ ngoại tuyến dùng nhà cung cấp AI mô phỏng. Kết quả này 
 
 ## Chưa xác nhận / cần dịch vụ thật
 
-- **Chưa gọi DeepSeek hoặc ElevenLabs tính phí** trong đợt kiểm chứng này. Kiểm tra ba chế độ ngoại tuyến không phải đánh giá chất lượng AI thật. Công cụ `scripts/estimate-cost.mjs` và tài liệu `COSTS.md` dùng các giả định được nêu rõ.
-- Cần cấu hình hai khóa AI trong đúng dự án Vercel và triển khai bản mới để thử nhà cung cấp thật.
+- **Đã gọi DeepSeek thật trên Production:** một lượt đọc 9 ảnh trích từ clip tổng hợp 15 giây, trả HTTP 200 trong khoảng 7,1 giây và mô tả đúng ba màu/hình. Các lượt thử đủ ba chế độ và số token sẽ được cập nhật sau kiểm tra tiếp theo.
+- Hai biến khóa đã có trên Vercel Production và bản mới đã nhận cấu hình. **ElevenLabs chưa kết nối thành công:** yêu cầu đọc danh sách giọng bị từ chối; chưa tạo âm thanh thật. Chưa có chi phí TTS được đo.
+- Kết quả hiện tại không phải đánh giá chất lượng giọng, nhân bản giọng hoặc toàn bộ video thật. Công cụ `scripts/estimate-cost.mjs` và phần dự toán trong `COSTS.md` vẫn là ước tính.
 - Cần cấu hình Site URL, Redirect URLs và mẫu email của Supabase cho domain chính thức; xác nhận email quản trị và cấp quyền cho đúng UUID. Chưa xác nhận email SMTP đã đến hộp thư.
 - Chưa thử clip dài 15–90 giây trên các điện thoại mục tiêu, nhập vào CapCut hoặc đăng lên Facebook.
 
