@@ -84,7 +84,13 @@ Không có tài khoản giả hay AI giả trong app. Bài kiểm tra ngoại tu
 
 ## Tình trạng kiểm chứng
 
-Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Schema và quyền đã được kiểm tra trên dự án Supabase thật tại Singapore; **55 nhóm kiểm tra ngoại tuyến và tích hợp cục bộ đều đạt**. Hoạt động của nhà cung cấp AI và việc giao thư SMTP vẫn cần được kiểm chứng riêng. Xem `COSTS.md` hoặc chạy `pnpm run cost --duration 30 --videos 1000` để dự toán chi phí; kết quả dự toán không phải hóa đơn. Hai bài tích hợp Supabase/Next.js chạy riêng theo hướng dẫn trong `QA.md`, không nằm trong `pnpm test`.
+Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Schema và quyền đã được kiểm tra trên dự án Supabase thật tại Singapore; **63 nhóm kiểm tra đều đạt**: 23 backend, 10 giao diện/dự án, 4 tải/dọn âm thanh, 15 tích hợp Supabase và 11 tích hợp Next.js.
+
+Đã gọi DeepSeek thật qua app cho cả ba chế độ `scenery`, `talking`, `face`: 6 yêu cầu phân tích/kịch bản đều HTTP 200, JSON hợp lệ và kết thúc `stop`. Mẫu thử tổng hợp dài 15 giây, có 9 ảnh, không có người hoặc âm thanh. Chi phí tính từ usage của 6 yêu cầu là **$0.003624636** theo giá ngoài cao điểm, không phải hóa đơn; một lượt phân tích thành công trước khi có log không nằm trong tổng này. Không suy rộng mẫu thử sang video thật 30–90 giây.
+
+**Chưa kiểm chứng toàn bộ luồng giọng đọc/video:** ElevenLabs trả HTTP 422 `PROVIDER_KEY_ID` vì giá trị hiện tại là Key ID, cần Secret API Key; chưa gọi tạo giọng trả phí hoặc nhân bản giọng. Việc giao thư SMTP và kiểm tra CapCut/Facebook trên thiết bị thật vẫn cần xác nhận riêng.
+
+Xem `COSTS.md` để tách kết quả DeepSeek đã đo khỏi dự toán, hoặc chạy `pnpm run cost --duration 30 --videos 1000` để lập ngân sách. Hai bài tích hợp Supabase/Next.js chạy riêng theo hướng dẫn trong `QA.md`, không nằm trong `pnpm test`.
 
 ## Giấy phép
 

@@ -1,6 +1,6 @@
 # Chi phí AI cho Lời Kể
 
-Giá kiểm tra ngày **16/10/2026**, đơn vị **USD**, dùng API trực tiếp của DeepSeek. Các con số cho từng video là phép ước tính, chưa phải kết quả đo API thật. Phần1–5 tính DeepSeek; phần6–10 cộng giọng đọc và hạ tầng. Giá chưa gồm thuế hoặc phí thanh toán.
+Giá kiểm tra ngày **16/10/2026**, đơn vị **USD**, dùng API trực tiếp. Các bảng dự toán là **ước tính**, trừ **mục 11 đo token DeepSeek thật**. Phần 1–5 tính DeepSeek; phần 6–10 cộng giọng đọc và hạ tầng. Giá chưa gồm thuế hoặc phí thanh toán; chi phí tính từ token vẫn không phải hóa đơn.
 
 ## 1. Model và mức giá
 
@@ -61,7 +61,15 @@ JSON giúp app đọc kết quả có cấu trúc nhưng vẫn cần kiểm tra 
 
 ## 5. Ghi chi phí thực tế khi thử
 
-Mỗi yêu cầu nên lưu model, chế độ, giờ gọi, số ảnh, thời gian xử lý, `prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`, `completion_tokens` và phần `reasoning_tokens` nếu có. Không cộng token suy luận thêm lần nữa nếu chúng đã nằm trong tổng completion. Các trường này được mô tả trong [phản hồi Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/).
+App ghi một dòng JSON `studio_ai_usage` sau khi đọc phản hồi JSON của DeepSeek. Danh sách trường được phép chỉ gồm `event`, model đã kiểm tra, `thinking: "disabled"`, `elapsedMs`, `usage` và `finish_reason`. `usage` chỉ có `prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`, `completion_tokens`, `reasoning_tokens`: số nguyên an toàn từ 0 đến 2.000.000; thiếu hoặc sai kiểu ghi `null`. Thời gian được kiểm tra trong khoảng 0–3.600.000 ms; trạng thái kết thúc dùng danh sách cho phép. Không ghi lời dặn, nội dung trả về, ảnh, ID người dùng hay khóa bí mật.
+
+Lọc `studio_ai_usage` trong Vercel Runtime Logs. Nếu đã xuất log JSONL về máy, có thể lọc bằng PowerShell:
+
+```powershell
+Get-Content -LiteralPath './runtime-logs.jsonl' | Select-String -SimpleMatch 'studio_ai_usage'
+```
+
+Thời gian và khung giá lấy từ metadata của log; đối chiếu từng lần gọi với thao tác thử. `null` không có nghĩa là 0 token. Không cộng token suy luận thêm lần nữa nếu chúng đã nằm trong tổng completion. Các trường usage được mô tả trong [phản hồi Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/).
 
 Công thức đối soát theo từng yêu cầu:
 
@@ -129,3 +137,20 @@ Vercel Hobby là **$0/tháng**, dành cho mục đích cá nhân phi thương m�
 Ví dụ dự toán vận hành thương mại với một chỗ ngồi Vercel Pro, một Supabase Pro cơ bản và ElevenLabs Creator là **$67/tháng phí gói ban đầu** ($20 + $25 + $22), cộng DeepSeek, phần sử dụng vượt gói, SMTP, domain và thuế. Với 1.000 video 30 giây một lượt theo giả định trên, chưa vượt hạn mức TTS Creator, tổng tham chiếu khoảng **$68.61–$70.22/tháng** trước các phần phát sinh ấy. Đây là phép tính cấu hình minh họa, chưa phải đề xuất nâng gói hoặc hóa đơn của tài khoản.
 
 Video gốc và ghép MP4 ở thiết bị giúp giảm tải máy chủ, nhưng vẫn có phí lưu/tải lời đọc, mẫu giọng và tải bộ FFmpeg lần đầu. Muốn chốt giá thành cần đối soát `usage` DeepSeek, ký tự ElevenLabs, số lần tạo lại, lưu lượng và gói thực của cả ba dịch vụ sau bài thử thật.
+
+## 11. Chi phí DeepSeek đã đo qua app
+
+Ngày **16/10/2026**, bài thử Production dùng video tổng hợp 15 giây với 9 ảnh JPEG: hình tròn đỏ, hình vuông xanh dương, hình tam giác xanh lá; không có người hoặc âm thanh. Mỗi chế độ chạy một lần phân tích và một lần viết kịch bản bằng `deepseek-flash`, tắt suy luận. **Cả 6 yêu cầu trả HTTP 200, `finish_reason: stop`.**
+
+| Chế độ | Yêu cầu | Token cache hit | Token cache miss | Token completion | Chi phí tính từ usage |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `scenery` — ghi cảnh | 2 | 0 | 4.145 | 812 | $0.001108950 |
+| `talking` — vừa quay vừa nói | 2 | 256 | 4.193 | 1.040 | $0.001253718 |
+| `face` — quay mặt nói | 2 | 256 | 4.212 | 1.049 | $0.001261968 |
+| **Tổng đã đo** | **6** | **512** | **12.550** | **2.901** | **$0.003624636** |
+
+Các yêu cầu này chạy ngoài giờ cao điểm, áp dụng giá mỗi triệu token: hit **$0.003**, miss **$0.15**, completion **$0.60**. Đây là token thực do API trả về kết hợp đơn giá chính thức, **không phải số tiền đã đối soát hóa đơn**. `reasoning_tokens` không được trả về nên log là `null`; không tự tính thành một khoản cộng thêm. [Giá DeepSeek](https://api-docs.deepseek.com/quick_start/pricing/)
+
+Có **một lần phân tích `scenery` thành công trước khi bật log** nhưng không có số token; lần này **bị loại khỏi tổng $0.003624636**, không được coi là miễn phí. Thời gian HTTP của sáu yêu cầu đã đo là 6,76–7,03 giây cho phân tích và 3,59–4,17 giây cho kịch bản.
+
+Không dùng một mẫu tổng hợp 15 giây để suy ra giá cố định cho video thật 30–90 giây. Chưa thử bật suy luận. **ElevenLabs hiện trả HTTP 422 `PROVIDER_KEY_ID` do dùng Key ID thay cho Secret API Key; chưa tạo giọng trả phí hoặc nhân bản giọng**, nên chưa có tổng chi phí thực của cả luồng và chưa có số TTS để thay cho dự toán ở phần trên.

@@ -24,11 +24,23 @@ Các bộ ngoại tuyến dùng nhà cung cấp AI mô phỏng. Kết quả này
 - Bản dựng Next.js và kiểm tra TypeScript đã chạy lại thành công sau các thay đổi của đợt này. CI trên GitHub tiếp tục kiểm tra mỗi lần cập nhật.
 - **Xuất MP4 trên trình duyệt:** đã xuất và tải tệp thật với H.264/yuv420p, 30 fps, AAC 48 kHz stereo. Mẫu kiểm tra có kích thước 160 × 90, dài 3 giây. Đã trích ảnh từ MP4 và WebM thật, kể cả WebM có `duration = Infinity`; tệp lỗi bị từ chối và object URL được giải phóng.
 
+- **Tài khoản thử trên Production:** đăng nhập và đăng xuất qua app thật thành công; tài khoản chỉ có quyền thành viên. Hạn mức tăng đúng 7 lượt cho 7 yêu cầu DeepSeek (gồm lượt trước khi bật log). Không gửi email thử. Sau kiểm tra, đã xóa đúng tài khoản tạm cùng phiên, refresh token, hồ sơ và quyền giọng; truy vấn xác minh cả 8 nhóm dữ liệu liên quan đều bằng 0. Không có tệp âm thanh thử được tạo trên cloud. Đây không phải xác nhận luồng đăng ký và giao thư.
+
+## DeepSeek thật trên Production
+
+Ngày 16/10/2026, đã thử đủ ba chế độ `scenery`, `talking`, `face` qua app đã triển khai. Mỗi chế độ chạy một lần phân tích và một lần viết kịch bản: **6 yêu cầu đều HTTP 200, JSON hợp lệ và `finish_reason: stop`**. Model là `deepseek-flash`, tắt suy luận.
+
+Mẫu thử là video tổng hợp **15 giây, 9 ảnh**, gồm hình tròn đỏ, hình vuông xanh dương và hình tam giác xanh lá; không có người và không có âm thanh. Phân tích trả đúng các hình/màu; chế độ `face` ghi rõ không thấy người hoặc mặt người trong ảnh mẫu, không nghe âm thanh và không đọc môi. Cả ba kịch bản có một đoạn từ **0 đến 15 giây**, không vượt thời lượng.
+
+- Thời gian HTTP quan sát: phân tích **6,76–7,03 giây**, viết kịch bản **3,59–4,17 giây**. Đây là thời gian toàn yêu cầu, khác thời gian gọi nhà cung cấp trong log.
+- Sáu log `studio_ai_usage` cho phép tính chi phí DeepSeek **$0.003624636** theo token trả về và đơn giá ngoài cao điểm; đây không phải hóa đơn. Theo từng cặp phân tích + kịch bản: `scenery` **$0.001108950**, `talking` **$0.001253718**, `face` **$0.001261968**. Xem cách tính trong `COSTS.md`.
+- Có **một lần phân tích `scenery` HTTP 200 trước khi bật log**, không có số token nên **không nằm trong tổng đo trên**.
+- Không suy rộng bài thử tổng hợp 15 giây này thành kết luận chất lượng, độ trễ hoặc chi phí cho video thực tế 30–90 giây. Chưa so sánh chế độ bật suy luận.
+
 ## Chưa xác nhận / cần dịch vụ thật
 
-- **Đã gọi DeepSeek thật trên Production:** một lượt đọc 9 ảnh trích từ clip tổng hợp 15 giây, trả HTTP 200 trong khoảng 7,1 giây và mô tả đúng ba màu/hình. Các lượt thử đủ ba chế độ và số token sẽ được cập nhật sau kiểm tra tiếp theo.
-- Hai biến khóa đã có trên Vercel Production và bản mới đã nhận cấu hình. **ElevenLabs chưa kết nối thành công:** yêu cầu đọc danh sách giọng bị từ chối; chưa tạo âm thanh thật. Chưa có chi phí TTS được đo.
-- Kết quả hiện tại không phải đánh giá chất lượng giọng, nhân bản giọng hoặc toàn bộ video thật. Công cụ `scripts/estimate-cost.mjs` và phần dự toán trong `COSTS.md` vẫn là ước tính.
+- **ElevenLabs chưa kết nối thành công:** lấy danh sách giọng trả HTTP 422, mã chẩn đoán `PROVIDER_KEY_ID`. Giá trị đã cung cấp là Key ID, cần thay bằng Secret API Key; đã yêu cầu chủ tài khoản sửa. **Chưa gọi tạo giọng trả phí hoặc nhân bản giọng**, chưa đo chi phí TTS.
+- Kết quả hiện tại chưa xác nhận toàn bộ luồng AI → giọng đọc → video. Công cụ `scripts/estimate-cost.mjs` và các bảng dự toán trong `COSTS.md` vẫn là ước tính, tách khỏi mục DeepSeek đã đo.
 - Cần cấu hình Site URL, Redirect URLs và mẫu email của Supabase cho domain chính thức; xác nhận email quản trị và cấp quyền cho đúng UUID. Chưa xác nhận email SMTP đã đến hộp thư.
 - Chưa thử clip dài 15–90 giây trên các điện thoại mục tiêu, nhập vào CapCut hoặc đăng lên Facebook.
 
