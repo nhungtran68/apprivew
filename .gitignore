@@ -7,3 +7,5 @@ public/ffmpeg/
 *.tsbuildinfo
 next-env.d.ts
 work/
+supabase/.temp/
+supabase/.branches/

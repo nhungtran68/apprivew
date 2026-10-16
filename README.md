@@ -10,7 +10,7 @@ Next.js App Router chạy trên Vercel; Supabase Auth/Postgres/Storage cho thàn
 
 1. Import repo nhungtran68/apprivew vào Vercel, chọn Next.js, Root Directory để trống (gốc repo). Có thể bắt đầu tại https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fnhungtran68%2Fapprivew .
 2. Giữ lệnh build mặc định pnpm run build và Output Directory mặc định. Bộ FFmpeg được chuẩn bị tự động khi build; không cần tải WASM lên GitHub.
-3. Tạo dự án Supabase. Chạy supabase/setup.sql một lần trong SQL Editor của dự án mới; đọc supabase/README.md và kiểm tra bằng supabase/verify.sql + Security Advisors. Script chưa tự áp dụng vào dự án nào.
+3. Tạo dự án Supabase. Chạy supabase/setup.sql một lần trong SQL Editor của dự án mới; đọc supabase/README.md và kiểm tra bằng supabase/verify.sql + Security Advisors. Bản apprivew đã áp dụng schema và kiểm tra quyền trên Supabase Singapore; với dự án mới khác, bạn cần chạy lại phần thiết lập.
 4. Thêm biến môi trường bên dưới vào Vercel, rồi deploy lại. Chưa có biến vẫn dựng được giao diện, nhưng đăng nhập/AI sẽ báo chưa kết nối.
 5. Trong Supabase Auth → URL Configuration, đặt Site URL là domain Vercel chính thức; thêm URL đó cùng đường dẫn /auth/callback và /auth/confirm vào Redirect URLs. Cấu hình SMTP cho email thành viên nếu cần gửi xác nhận, mời hoặc đặt lại mật khẩu.
 6. Đăng ký tài khoản của bạn; lấy UUID trong Supabase Auth và cấp admin theo hướng dẫn bên dưới.
@@ -84,7 +84,7 @@ Không có tài khoản giả hay AI giả trong app. Bài kiểm tra ngoại tu
 
 ## Tình trạng kiểm chứng
 
-Đọc QA.md để biết kiểm tra đã chạy và giới hạn. Chưa có dự án Supabase hoặc khóa AI thật trong phiên xây dựng; không coi kiểm tra ngoại tuyến là xác nhận kết nối production.
+Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Schema và quyền đã được kiểm tra trên dự án Supabase thật tại Singapore; **52 nhóm kiểm tra ngoại tuyến và tích hợp cục bộ đều đạt**. Hoạt động của nhà cung cấp AI và việc giao thư SMTP vẫn cần được kiểm chứng riêng. Xem `COSTS.md` hoặc chạy `pnpm run cost --duration 30 --videos 1000` để dự toán chi phí; kết quả dự toán không phải hóa đơn. Hai bài tích hợp Supabase/Next.js chạy riêng theo hướng dẫn trong `QA.md`, không nằm trong `pnpm test`.
 
 ## Giấy phép
 

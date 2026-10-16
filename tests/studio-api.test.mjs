@@ -35,9 +35,54 @@ await check("rejects overlapping timeline and preserves exact WAV samples",()=>{
 await check("validates Supabase identity rather than forged user headers",async()=>{identity=null;await assert.rejects(server.requestUser(new Request("https://app.example/api/config",{headers:{"oai-authenticated-user-id":alice}})),{code:"SIGN_IN_REQUIRED"});identity=alice;members.get(alice).enabled=false;await assert.rejects(server.requestUser(new Request("https://app.example/api/config")),{code:"MEMBER_DISABLED"});members.get(alice).enabled=true;assert.equal(await server.requestUser(new Request("https://app.example/api/config")),alice);});
 await check("rejects foreign origins and missing configuration",async()=>{await assert.rejects(server.requestUser(new Request("https://app.example/api/settings",{method:"POST",headers:{origin:"https://evil.example"}}),true),{code:"INVALID_ORIGIN"});const key=environment.NEXT_PUBLIC_SUPABASE_URL;delete environment.NEXT_PUBLIC_SUPABASE_URL;await assert.rejects(supabase.createStudioSupabaseServer(),{code:"AUTH_NOT_CONFIGURED"});environment.NEXT_PUBLIC_SUPABASE_URL=key;});
 await check("shared keys never returned or written by member settings",async()=>{const config=await server.getConfig(alice);assert.equal(config.deepseekConfigured,true);assert.ok(!JSON.stringify(config).includes("offline-deepseek"));await assert.rejects(server.saveSettings(alice,{deepseekApiKey:"private"}),{code:"SHARED_KEYS_MANAGED"});await server.saveSettings(alice,{profile:{name:"Alice",tone:"Tự nhiên",mode:"face",secret:"drop"}});assert.equal(profiles.get(alice).profile_json.mode,"face");assert.equal(profiles.get(alice).profile_json.secret,undefined);});
+await check("saved profile name is returned as account display name",async()=>{const config=await server.getConfig(alice);assert.equal(config.memberName,"Alice");});
 await check("quota exhaustion blocks provider requests before network",async()=>{const member=members.get(alice),limit=member.ai_units_limit;member.ai_units_limit=member.ai_units_used;let requests=0;requestFetch=async()=>{requests++;throw new Error("must not call");};await assert.rejects(deepseek.deepseekJson("offline","json",{text:"x"},()=>server.consumeAiUnits(alice,1)),{code:"QUOTA_EXCEEDED"});assert.equal(requests,0);member.ai_units_limit=limit;});
 await check("sampled frame contract rejects remote URLs and invalid timestamps",()=>{assert.equal(deepseek.validateFrames([frame],5).length,1);assert.throws(()=>deepseek.validateFrames([{time:0,image:"https://example.com/image.jpg"}],5));assert.throws(()=>deepseek.validateFrames([frame,frame],5));assert.throws(()=>deepseek.validateFrames([{...frame,time:6}],5));assert.throws(()=>deepseek.validateFrames([{...frame,image:frame.image+"A".repeat(160000)}],5));});
 await check("DeepSeek vision request is JSON and declares sampling/audio limits",async()=>{let payload;requestFetch=async(url,init)=>{assert.equal(url,"https://api.deepseek.com/chat/completions");payload=JSON.parse(init.body);return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify({summary:"Vườn",intentSummary:"Niềm vui",observations:[{start:0,end:5,description:"Ảnh vườn"}],facts:[],unknowns:[],questions:[]})}}]});};const result=await deepseek.analyzeFrames("offline",{frames:[frame],duration:5,intent:"Chia sẻ niềm vui",profile:{mode:"talking"},transcript:""},()=>server.consumeAiUnits(alice,1));assert.equal(payload.model,"deepseek-flash");assert.equal(payload.response_format.type,"json_object");assert.equal(payload.thinking.type,"disabled");assert.equal(payload.messages[1].content.at(-1).type,"image_url");assert.match(payload.messages[1].content[0].text,/KHÔNG nhận âm thanh/);assert.match(result.samplingNote,/ảnh mẫu/);assert.deepEqual(charged,[1]);});
+await check("all scenery, talking and face modes preserve supplied intent and declare source limitations",async()=>{
+ const modeCases=[
+  {mode:"scenery",constraint:/Không tự suy ra ý muốn chia sẻ từ hình ảnh/},
+  {mode:"talking",constraint:/Giữ ý bản chép, không suy đoán lời nói từ hình/},
+  {mode:"face",constraint:/không đọc môi, không suy đoán quan điểm người trong hình/},
+ ];
+ const supplied="Tôi muốn kể niềm vui khi thấy chùm nho đầu tiên, không giới thiệu giá bán.";
+ for(const {mode,constraint} of modeCases){
+  let analysis;
+  for(const transcript of [supplied,""]){
+   let payload;
+   requestFetch=async(url,init)=>{
+    assert.equal(url,"https://api.deepseek.com/chat/completions");payload=JSON.parse(init.body);
+    return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify({summary:"Một chùm nho trong ảnh",intentSummary:supplied,observations:[{start:0,end:5,description:"Chùm nho nhìn thấy trong ảnh mẫu"}],facts:[],unknowns:[],questions:[],transcript:"Provider tự bịa rằng người quay nói giá 999 nghìn.",generatedTranscript:"Provider tự bịa lời nói gốc."})}}]});
+   };
+   analysis=await deepseek.analyzeFrames("offline",{frames:[frame],duration:5,intent:supplied,profile:{mode},transcript},()=>server.consumeAiUnits(alice,1));
+   const prompt=payload.messages[1].content[0].text;
+   assert.match(prompt,constraint,`${mode} analysis must carry its mode constraint`);
+   assert.match(prompt,/KHÔNG nhận âm thanh/);
+   assert.match(prompt,/Bản chép bên dưới do người dùng cung cấp, chưa được xác minh bằng âm thanh/);
+   assert.ok(prompt.includes(`Ý muốn chia sẻ: ${JSON.stringify(supplied)}`));
+   assert.ok(prompt.includes(`Bản chép\/lời dặn: ${JSON.stringify(transcript)}`));
+   assert.equal(payload.messages[1].content.filter(part=>part.type==="image_url").length,1);
+   assert.equal(payload.messages[1].content.some(part=>part.type==="input_audio"||part.type==="audio"||part.type==="video"),false);
+   assert.equal(analysis.transcript,undefined,"provider-generated transcript must not become original speech");
+   assert.equal(analysis.generatedTranscript,undefined,"untrusted provider extensions must not be promoted into source facts");
+   assert.match(analysis.samplingNote,/không nghe âm thanh gốc/);
+   if(mode==="face"){assert.match(prompt,/không đọc môi/);assert.match(prompt,/không đồng bộ khẩu hình/);}
+  }
+  let scriptPayload;
+  requestFetch=async(url,init)=>{assert.equal(url,"https://api.deepseek.com/chat/completions");scriptPayload=JSON.parse(init.body);return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify({title:"Chùm nho đầu tiên",intentSummary:supplied,segments:[{start:0,end:5,text:"Thật vui khi thấy chùm nho đầu tiên trong vườn."}]})}}]});};
+  const script=await deepseek.createScript("offline",{analysis,intent:supplied,profile:{mode},duration:5,instruction:"Giữ câu chuyện riêng của tôi."},()=>server.consumeAiUnits(alice,1));
+  const scriptPrompt=scriptPayload.messages[1].content[0].text;
+  assert.match(scriptPrompt,constraint,`${mode} script must carry the same mode constraint`);
+  assert.match(scriptPrompt,/Phân tích chỉ dựa ảnh mẫu, không khẳng định sự kiện giữa ảnh hoặc lời nói gốc/);
+  assert.ok(scriptPrompt.includes(`Ý muốn chia sẻ: ${JSON.stringify(supplied)}`));
+  assert.ok(!scriptPrompt.includes("Provider tự bịa"),"discarded provider transcripts must not leak into script context");
+  if(mode==="talking"||mode==="face")assert.match(scriptPrompt,/KHÔNG nhận âm thanh gốc/);
+  if(mode==="face")assert.match(scriptPrompt,/không đồng bộ khẩu hình/);
+  assert.equal(script.segments[0].end,5);
+  assert.equal(scriptPayload.messages[1].content.some(part=>part.type==="image_url"),false,"the script step should reuse verified analysis rather than resending images");
+ }
+ assert.equal(charged.length,9,"three offline provider requests per mode must each consume one unit");
+});
 await check("shared voice list hides other members clones and forged ownership",async()=>{await server.saveAuthorizedVoice(alice,"voiceAlice123","Alice","personal");const own=voices.get(`${alice}:voiceAlice123`);identity=bob;voices.set(`${bob}:voiceAlice123`,{...own,user_id:bob});await assert.rejects(eleven.authorizeVoice(bob,"voiceAlice123"),{code:"VOICE_NOT_AUTHORIZED"});identity=alice;requestFetch=async()=>Response.json({voices:[{voice_id:"voiceAlice123",name:"Alice",category:"cloned"},{voice_id:"victimVoice123",name:"Victim",category:"cloned"},{voice_id:"premadeVoice123",name:"Sample",category:"premade"}]});const list=await eleven.listVoices("offline",alice);assert.equal(list.length,2);assert.ok(!list.some(v=>v.voiceId==="victimVoice123"));});
 await check("speech retries consume units and return signed WAV references",async()=>{let synths=0;requestFetch=async(url)=>{if(String(url).includes("elevenlabs")){synths++;return new Response(new Uint8Array(synths===1?144000:86400));}return Response.json({choices:[{message:{content:JSON.stringify({text:"Câu ngắn hơn."})},finish_reason:"stop"}]});};const result=await eleven.generateSpeech({key:"offline",userId:alice,voiceId:"voiceAlice123",duration:5,segments:[{start:1,end:3,text:"Đây là câu hiện quá dài."}]});assert.equal(synths,2);assert.equal(charged.length,3);assert.equal(result.segments[0].duration,1.8);assert.equal(result.segments[0].audioBase64,undefined);assert.ok(result.segments[0].audioUrl.startsWith("https://offline.supabase.invalid/"));assert.equal(media.get(result.segments[0].audioPath).length,86444);});
 await check("failed timing preserves speech and blocks final export",async()=>{let synths=0;requestFetch=async(url)=>String(url).includes("elevenlabs")?(synths++,new Response(new Uint8Array(144000))):Response.json({choices:[{message:{content:JSON.stringify({text:"Vẫn quá dài"})}}]});await assert.rejects(eleven.generateSpeech({key:"offline",userId:alice,voiceId:"voiceAlice123",duration:5,segments:[{start:0,end:2,text:"Câu đầu"}]}),{code:"TIMING_NEEDS_EDIT"});assert.equal(synths,3);});

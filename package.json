@@ -13,7 +13,10 @@
     "start": "next start",
     "prepare:media": "node scripts/prepare-media-assets.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-vm-modules tests/studio-api.test.mjs && node tests/studio-ui.test.mjs"
+    "test": "node --experimental-vm-modules tests/studio-api.test.mjs && node tests/studio-ui.test.mjs",
+    "test:supabase": "node tests/supabase.integration.mjs",
+    "test:auth": "node tests/studio-auth.integration.mjs",
+    "cost": "node scripts/estimate-cost.mjs"
   },
   "dependencies": {
     "next": "16.3.4",

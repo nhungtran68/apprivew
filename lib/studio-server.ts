@@ -41,7 +41,7 @@ export async function readSettings(userId: string) {
 }
 export async function getConfig(userId: string) {
   const [{ profile }, member] = await Promise.all([readSettings(userId), getMember(userId)]);
-  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), ...modelNames(), profile, quota: { limit: member.ai_units_limit, used: member.ai_units_used, reserved: 0, remaining: Math.max(0, member.ai_units_limit - member.ai_units_used) } };
+  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: profile.name || member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), ...modelNames(), profile, quota: { limit: member.ai_units_limit, used: member.ai_units_used, reserved: 0, remaining: Math.max(0, member.ai_units_limit - member.ai_units_used) } };
 }
 export async function providerKey(_userId: string, provider: "deepseek" | "eleven"): Promise<{ key: string; personal: boolean }> {
   const key = provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : process.env.ELEVENLABS_API_KEY;
