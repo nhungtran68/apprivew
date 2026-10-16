@@ -1,0 +1,33 @@
+{
+  "name": "apprivew",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "node scripts/build-studio.mjs",
+    "start": "next start",
+    "prepare:media": "node scripts/prepare-media-assets.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-vm-modules tests/studio-api.test.mjs && node tests/studio-ui.test.mjs"
+  },
+  "dependencies": {
+    "next": "16.3.4",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.118.0",
+    "@ffmpeg/ffmpeg": "0.12.15",
+    "@ffmpeg/core": "0.12.10"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.9.3"
+  }
+}

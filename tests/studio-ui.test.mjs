@@ -1,0 +1,103 @@
+// Run from the repository root: node tests/studio-ui.test.mjs
+// This also works with node --test on hosts that permit test-runner child processes.
+// The helpers and initial UI are evaluated from the actual component source.
+// No network, camera, account, or external provider is used by these tests.
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import React from "react";
+import { renderToString } from "react-dom/server";
+import ts from "typescript";
+
+const sourcePath = fileURLToPath(new URL("../components/Studio.tsx", import.meta.url));
+const source = readFileSync(sourcePath, "utf8");
+const exportsForTests = "\nexport {restoreArchive,freshProject,applyProjectChanges,applySegmentChange,scriptKey,safeProfile,configurationFrom};";
+const compiled = ts.transpileModule(source + exportsForTests, {
+  fileName: sourcePath,
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+const evaluated = { exports: {} };
+new Function("require", "module", "exports", compiled)(createRequire(import.meta.url), evaluated, evaluated.exports);
+const { restoreArchive, freshProject, applyProjectChanges, applySegmentChange, scriptKey, safeProfile, configurationFrom, default: Studio } = evaluated.exports;
+
+const audio = { start: 0, end: 3, text: "Lời kể thử nghiệm", audioBase64: "AQID", audioMime: "audio/wav", duration: 1 };
+const archive = {
+  format: "loike-project-v1",
+  project: { id: "foreign-project", userId: "foreign-user", duration: 3, title: "Dự án thử nghiệm", segments: [audio], profile: { name: "Tên thử", apiKey: "must-not-copy" } },
+  video: { data: "AQID", type: "video/mp4" },
+};
+const project = { ...freshProject("current-user"), duration: 3, voiceId: "voice-one", segments: [audio] };
+
+test("archive imports assign a fresh id and current owner, preserving the real media bytes", () => {
+  const restored = restoreArchive(archive, "current-user");
+  assert.equal(restored.userId, "current-user");
+  assert.notEqual(restored.id, archive.project.id);
+  assert.ok(restored.source instanceof Blob);
+  assert.equal(restored.source.size, 3);
+  assert.equal(restored.profile.apiKey, undefined);
+});
+
+test("archive imports reject media outside the expected video type", () => {
+  assert.throws(() => restoreArchive({ ...archive, video: { ...archive.video, type: "text/html" } }, "current-user"));
+});
+
+test("archive imports reject duration above the supported 90 seconds", () => {
+  assert.throws(() => restoreArchive({ ...archive, project: { ...archive.project, duration: 91 } }, "current-user"));
+});
+
+test("archive imports reject narration timelines extending beyond the clip", () => {
+  assert.throws(() => restoreArchive({ ...archive, project: { ...archive.project, segments: [{ start: 0, end: 99, text: "Invalid" }] } }, "current-user"));
+});
+
+test("changing a voice invalidates its previously generated audio without mutating the old project", () => {
+  const changed = applyProjectChanges(project, { voiceId: "voice-two" });
+  assert.equal(changed.segments[0].audioBase64, undefined);
+  assert.equal(changed.segments[0].text, audio.text);
+  assert.equal(project.segments[0].audioBase64, "AQID");
+  assert.equal(applyProjectChanges(project, { voiceId: "voice-one" }).segments[0].audioBase64, "AQID");
+});
+
+test("editing script text removes the old voice bytes and measured duration", () => {
+  const changed = applySegmentChange(audio, { text: "Lời kể đã chỉnh" });
+  assert.equal(changed.audioBase64, undefined);
+  assert.equal(changed.audioMime, undefined);
+  assert.equal(changed.duration, undefined);
+});
+
+test("adjusting a timing boundary preserves audio for the exporter to measure against the new interval", () => {
+  const changed = applySegmentChange(audio, { end: 2.5 });
+  assert.equal(changed.audioBase64, "AQID");
+  assert.equal(changed.end, 2.5);
+});
+
+test("request fingerprints change after a script edit, allowing stale AI results to be rejected", () => {
+  const edited = { ...project, segments: [{ ...audio, text: "Nội dung mới" }] };
+  assert.notEqual(scriptKey(project), scriptKey(edited));
+});
+
+test("configuration preserves the member identity, shared AI state, and quota without granting admin by default", () => {
+  const config = configurationFrom({ userId: "current-user", memberName: "Thành viên", deepseekConfigured: true, elevenConfigured: true, quota: { used: 2, limit: 10 }, isAdmin: false }, "local");
+  assert.equal(config.displayName, "Thành viên");
+  assert.equal(config.authenticated, true);
+  assert.equal(config.deepseek, true);
+  assert.equal(config.eleven, true);
+  assert.equal(config.isAdmin, false);
+  assert.deepEqual(config.quota, { used: 2, limit: 10 });
+  assert.equal(configurationFrom({}, "local").isAdmin, false);
+  assert.equal(configurationFrom({ userId: "admin", isAdmin: true }, "local").isAdmin, true);
+  assert.deepEqual(Object.keys(safeProfile({ name: "Tên", apiKey: "must-not-copy" })).sort(), ["audience", "cta", "facts", "name", "tone"]);
+});
+
+test("the real initial UI renders the simplified workspace without admin links or member API key fields", () => {
+  const html = renderToString(React.createElement(Studio));
+  assert.ok(html.includes("app-header"));
+  assert.ok(html.includes("Tạo video"));
+  assert.ok(html.includes("Video của tôi"));
+  assert.ok(html.includes("Giọng của tôi"));
+  assert.ok(html.indexOf('class="capture-actions"') < html.indexOf('class="camera-stage'), "record controls must be presented before the preview canvas");
+  assert.ok(html.includes('href="/dang-nhap"'));
+  assert.equal(html.includes('href="/quan-tri"'), false);
+  for (const removed of ["sidebar", "intent-panel", "ChatGPT", "Gemini", "API key"]) assert.equal(html.includes(removed), false, `${removed} should not appear in the initial UI`);
+});
