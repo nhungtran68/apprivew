@@ -35,6 +35,54 @@ await check("rejects overlapping timeline and preserves exact WAV samples",()=>{
 await check("validates Supabase identity rather than forged user headers",async()=>{identity=null;await assert.rejects(server.requestUser(new Request("https://app.example/api/config",{headers:{"oai-authenticated-user-id":alice}})),{code:"SIGN_IN_REQUIRED"});identity=alice;members.get(alice).enabled=false;await assert.rejects(server.requestUser(new Request("https://app.example/api/config")),{code:"MEMBER_DISABLED"});members.get(alice).enabled=true;assert.equal(await server.requestUser(new Request("https://app.example/api/config")),alice);});
 await check("rejects foreign origins and missing configuration",async()=>{await assert.rejects(server.requestUser(new Request("https://app.example/api/settings",{method:"POST",headers:{origin:"https://evil.example"}}),true),{code:"INVALID_ORIGIN"});const key=environment.NEXT_PUBLIC_SUPABASE_URL;delete environment.NEXT_PUBLIC_SUPABASE_URL;await assert.rejects(supabase.createStudioSupabaseServer(),{code:"AUTH_NOT_CONFIGURED"});environment.NEXT_PUBLIC_SUPABASE_URL=key;});
 await check("shared keys never returned or written by member settings",async()=>{const config=await server.getConfig(alice);assert.equal(config.deepseekConfigured,true);assert.ok(!JSON.stringify(config).includes("offline-deepseek"));await assert.rejects(server.saveSettings(alice,{deepseekApiKey:"private"}),{code:"SHARED_KEYS_MANAGED"});await server.saveSettings(alice,{profile:{name:"Alice",tone:"Tự nhiên",mode:"face",secret:"drop"}});assert.equal(profiles.get(alice).profile_json.mode,"face");assert.equal(profiles.get(alice).profile_json.secret,undefined);});
+await check("model configuration never exposes a credential accidentally pasted into model fields",async()=>{
+ const previousDeepseek=environment.DEEPSEEK_MODEL,previousEleven=environment.ELEVENLABS_MODEL;
+ const misplacedDeepseek="sk-offline-model-field-secret-do-not-use",misplacedEleven="a".repeat(64);
+ try{
+  environment.DEEPSEEK_MODEL=misplacedDeepseek;environment.ELEVENLABS_MODEL=misplacedEleven;
+  const config=await server.getConfig(alice),serialized=JSON.stringify(config);
+  assert.equal(config.deepseekModel,"deepseek-flash");assert.equal(config.voiceModel,"eleven_flash_v2_5");
+  assert.ok(!serialized.includes(misplacedDeepseek));assert.ok(!serialized.includes(misplacedEleven));
+  assert.equal(config.deepseekConfigured,true);assert.equal(config.elevenConfigured,true);
+ }finally{
+  if(previousDeepseek===undefined)delete environment.DEEPSEEK_MODEL;else environment.DEEPSEEK_MODEL=previousDeepseek;
+  if(previousEleven===undefined)delete environment.ELEVENLABS_MODEL;else environment.ELEVENLABS_MODEL=previousEleven;
+ }
+});
+await check("only approved vision and Vietnamese speech model IDs are accepted",()=>{
+ const previousDeepseek=environment.DEEPSEEK_MODEL,previousEleven=environment.ELEVENLABS_MODEL;
+ try{
+  environment.DEEPSEEK_MODEL="deepseek-flash";
+  for(const model of ["eleven_flash_v2_5","eleven_turbo_v2_5","eleven_v3","eleven_v4"]){environment.ELEVENLABS_MODEL=model;assert.equal(server.modelNames().deepseekModel,"deepseek-flash");assert.equal(server.modelNames().voiceModel,model);}
+  for(const model of ["deepseek-v4-pro","deepseek-chat","unknown-model",""]){environment.DEEPSEEK_MODEL=model;assert.equal(server.modelNames().deepseekModel,"deepseek-flash");}
+  for(const model of ["eleven_flash_v2","eleven_multilingual_v2","eleven_text_to_sound_v2","unknown-model",""]){environment.ELEVENLABS_MODEL=model;assert.equal(server.modelNames().voiceModel,"eleven_flash_v2_5");}
+ }finally{
+  if(previousDeepseek===undefined)delete environment.DEEPSEEK_MODEL;else environment.DEEPSEEK_MODEL=previousDeepseek;
+  if(previousEleven===undefined)delete environment.ELEVENLABS_MODEL;else environment.ELEVENLABS_MODEL=previousEleven;
+ }
+});
+await check("provider requests use safe default model IDs after model-field secret misconfiguration",async()=>{
+ const previousDeepseek=environment.DEEPSEEK_MODEL,previousEleven=environment.ELEVENLABS_MODEL;
+ const misplacedDeepseek="sk-offline-model-payload-secret-do-not-use",misplacedEleven="b".repeat(64),requests=[];
+ let speech;
+ try{
+  environment.DEEPSEEK_MODEL=misplacedDeepseek;environment.ELEVENLABS_MODEL=misplacedEleven;
+  requestFetch=async(url,init)=>{
+   const body=JSON.parse(init.body);requests.push({url:String(url),body});
+   if(String(url)==="https://api.deepseek.com/chat/completions")return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify({text:"offline response"})}}]});
+   assert.ok(String(url).startsWith("https://api.elevenlabs.io/v1/text-to-speech/"));
+   return new Response(new Uint8Array(48000));
+  };
+  await deepseek.deepseekJson("offline","json",{text:"offline"},()=>server.consumeAiUnits(alice,1));
+  speech=await eleven.generateSpeech({key:"offline",userId:alice,voiceId:"offlineVoice123",duration:5,segments:[{start:0,end:2,text:"Offline speech"}]});
+  assert.equal(requests.length,2);assert.equal(requests[0].body.model,"deepseek-flash");assert.equal(requests[1].body.model_id,"eleven_flash_v2_5");
+  const serialized=JSON.stringify(requests);assert.ok(!serialized.includes(misplacedDeepseek));assert.ok(!serialized.includes(misplacedEleven));assert.deepEqual(charged,[1,1]);
+ }finally{
+  if(speech)await supabase.removeOwnedMedia(alice,speech.segments.map(segment=>segment.audioPath));
+  if(previousDeepseek===undefined)delete environment.DEEPSEEK_MODEL;else environment.DEEPSEEK_MODEL=previousDeepseek;
+  if(previousEleven===undefined)delete environment.ELEVENLABS_MODEL;else environment.ELEVENLABS_MODEL=previousEleven;
+ }
+});
 await check("saved profile name is returned as account display name",async()=>{const config=await server.getConfig(alice);assert.equal(config.memberName,"Alice");});
 await check("quota exhaustion blocks provider requests before network",async()=>{const member=members.get(alice),limit=member.ai_units_limit;member.ai_units_limit=member.ai_units_used;let requests=0;requestFetch=async()=>{requests++;throw new Error("must not call");};await assert.rejects(deepseek.deepseekJson("offline","json",{text:"x"},()=>server.consumeAiUnits(alice,1)),{code:"QUOTA_EXCEEDED"});assert.equal(requests,0);member.ai_units_limit=limit;});
 await check("sampled frame contract rejects remote URLs and invalid timestamps",()=>{assert.equal(deepseek.validateFrames([frame],5).length,1);assert.throws(()=>deepseek.validateFrames([{time:0,image:"https://example.com/image.jpg"}],5));assert.throws(()=>deepseek.validateFrames([frame,frame],5));assert.throws(()=>deepseek.validateFrames([{...frame,time:6}],5));assert.throws(()=>deepseek.validateFrames([{...frame,image:frame.image+"A".repeat(160000)}],5));});

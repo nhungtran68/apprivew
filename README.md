@@ -84,7 +84,7 @@ Không có tài khoản giả hay AI giả trong app. Bài kiểm tra ngoại tu
 
 ## Tình trạng kiểm chứng
 
-Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Schema và quyền đã được kiểm tra trên dự án Supabase thật tại Singapore; **52 nhóm kiểm tra ngoại tuyến và tích hợp cục bộ đều đạt**. Hoạt động của nhà cung cấp AI và việc giao thư SMTP vẫn cần được kiểm chứng riêng. Xem `COSTS.md` hoặc chạy `pnpm run cost --duration 30 --videos 1000` để dự toán chi phí; kết quả dự toán không phải hóa đơn. Hai bài tích hợp Supabase/Next.js chạy riêng theo hướng dẫn trong `QA.md`, không nằm trong `pnpm test`.
+Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Schema và quyền đã được kiểm tra trên dự án Supabase thật tại Singapore; **55 nhóm kiểm tra ngoại tuyến và tích hợp cục bộ đều đạt**. Hoạt động của nhà cung cấp AI và việc giao thư SMTP vẫn cần được kiểm chứng riêng. Xem `COSTS.md` hoặc chạy `pnpm run cost --duration 30 --videos 1000` để dự toán chi phí; kết quả dự toán không phải hóa đơn. Hai bài tích hợp Supabase/Next.js chạy riêng theo hướng dẫn trong `QA.md`, không nằm trong `pnpm test`.
 
 ## Giấy phép
 

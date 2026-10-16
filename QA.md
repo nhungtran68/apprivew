@@ -4,11 +4,11 @@ Cập nhật ngày **16/10/2026**. Dự án Supabase tại Singapore đã đư�
 
 ## Đã chạy và đạt
 
-**Tổng cộng 52 nhóm kiểm tra đều đạt:** 16 backend + 10 giao diện/dự án + 15 tích hợp Supabase + 11 tích hợp Next.js.
+**Tổng cộng 55 nhóm kiểm tra đều đạt:** 19 backend + 10 giao diện/dự án + 15 tích hợp Supabase + 11 tích hợp Next.js.
 
 | Bộ kiểm tra | Số nhóm | Phạm vi |
 | --- | ---: | --- |
-| Backend ngoại tuyến | 16 | Đủ ba chế độ `scenery`, `talking`, `face`; giới hạn ảnh và âm thanh; quyền dùng giọng có chữ ký; hạn mức; thời lượng; lỗi nhà cung cấp |
+| Backend ngoại tuyến | 19 | Đủ ba chế độ `scenery`, `talking`, `face`; giới hạn ảnh và âm thanh; quyền dùng giọng có chữ ký; hạn mức; thời lượng; lỗi nhà cung cấp |
 | Giao diện và dự án | 10 | Các hành vi giao diện và lưu dự án được kiểm tra ngoại tuyến |
 | Supabase cục bộ | 15 | Auth, PostgREST và Storage thật trong Docker |
 | Next.js cục bộ | 11 | Các luồng tài khoản chạy qua Next.js thật |

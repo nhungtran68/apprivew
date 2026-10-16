@@ -2,7 +2,18 @@ import "server-only";
 import { StudioError, bytesToBase64, base64ToBytes, sanitizeProfile, type StudioProfile } from "./studio-contract";
 import { createStudioSupabaseServer, supabaseConfigured } from "./studio-supabase";
 
-export const modelNames = () => ({ deepseekModel: process.env.DEEPSEEK_MODEL || "deepseek-flash", voiceModel: process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5" });
+// Model names are returned to members and sent in provider bodies. Never echo an
+// arbitrary environment value: an administrator may accidentally paste a key here.
+// The app's DeepSeek model must support images as well as JSON/text generation.
+const deepseekVisionModels = ["deepseek-flash"] as const;
+const vietnameseSpeechModels = ["eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_v3", "eleven_v4"] as const;
+function approvedModel(value: string | undefined, allowed: readonly string[], fallback: string): string {
+  return allowed.find((model) => model === value) ?? fallback;
+}
+export const modelNames = () => ({
+  deepseekModel: approvedModel(process.env.DEEPSEEK_MODEL, deepseekVisionModels, "deepseek-flash"),
+  voiceModel: approvedModel(process.env.ELEVENLABS_MODEL, vietnameseSpeechModels, "eleven_flash_v2_5"),
+});
 export function json(data: unknown, status = 200): Response { return Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } }); }
 export function apiError(error: unknown): Response {
   if (error instanceof StudioError) return json({ error: error.message, code: error.code, action: error.action, ...(error.code === "AUTH_NOT_CONFIGURED" ? { authReady: false } : {}) }, error.status);
