@@ -17,6 +17,31 @@ async function storageUser() {
   } catch { throw new Error("Chưa xác thực được tài khoản để xử lý tệp riêng. Hãy đăng nhập lại rồi thử lại."); }
 }
 
+export async function prepareMaziaoVoiceSample(file: File): Promise<File> {
+  if (!file.size || file.size > MAX_AUDIO) throw new Error("Chọn bản thu không quá 25 MB để chuẩn hóa giọng.");
+  const browser = window as typeof window & { webkitAudioContext?: typeof AudioContext };
+  const Context = browser.AudioContext || browser.webkitAudioContext;
+  if (!Context || typeof OfflineAudioContext === "undefined") throw new Error("Trình duyệt chưa đọc được mẫu giọng. Hãy dùng Chrome, Safari hoặc Edge mới.");
+  const context = new Context();
+  try {
+    let input: AudioBuffer;
+    try { input = await context.decodeAudioData(await file.arrayBuffer()); }
+    catch { throw new Error("Chưa đọc được mẫu giọng. Hãy chọn tệp MP3, WAV hoặc M4A khác."); }
+    if (!Number.isFinite(input.duration) || input.duration < 3) throw new Error("Mẫu giọng cần ít nhất 3 giây nói liên tục, rõ tiếng.");
+    const sampleRate = 24000, frames = Math.floor(Math.min(8, input.duration) * sampleRate);
+    const offline = new OfflineAudioContext(1, frames, sampleRate), source = offline.createBufferSource();
+    source.buffer = input; source.connect(offline.destination); source.start();
+    const output = (await offline.startRendering()).getChannelData(0);
+    const bytes = new Uint8Array(44 + output.length * 2), view = new DataView(bytes.buffer);
+    const text = (offset: number, value: string) => [...value].forEach((letter, index) => view.setUint8(offset + index, letter.charCodeAt(0)));
+    text(0, "RIFF"); view.setUint32(4, bytes.length - 8, true); text(8, "WAVE"); text(12, "fmt "); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true); text(36, "data"); view.setUint32(40, output.length * 2, true);
+    output.forEach((value, index) => { const clamped = Math.max(-1, Math.min(1, value)); view.setInt16(44 + index * 2, clamped < 0 ? clamped * 32768 : clamped * 32767, true); });
+    return new File([bytes], "voice-sample.wav", { type: "audio/wav" });
+  } finally { await context.close().catch(() => {}); }
+}
+
 export async function uploadVoiceSamples(files: File[]) {
   if (!files.length || files.length > 5 || files.reduce((sum, file) => sum + file.size, 0) > MAX_AUDIO) throw new Error("Chọn 1–5 bản thu, tổng dung lượng tối đa 25 MB.");
   const client = createStudioBrowser();

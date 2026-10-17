@@ -112,6 +112,34 @@ test("configuration preserves the member identity, shared AI state, and quota wi
   assert.deepEqual(Object.keys(safeProfile({ name: "Tên", apiKey: "must-not-copy" })).sort(), ["audience", "brand", "channel", "cta", "customPrompt", "facts", "name", "pronoun", "tone", "topic"]);
 });
 
+test("Maziao readiness works without ElevenLabs and an explicitly unavailable provider never falls back", () => {
+  const maziao = configurationFrom({ userId: "current-user", voiceProvider: "maziao", maziaoConfigured: true, voiceConfigured: true, elevenConfigured: false }, "local");
+  assert.equal(maziao.voiceProvider, "maziao"); assert.equal(maziao.voiceConfigured, true); assert.equal(maziao.eleven, false);
+  const unavailable = configurationFrom({ voiceProvider: "maziao", voiceConfigured: false, maziaoConfigured: false, elevenConfigured: true }, "local");
+  assert.equal(unavailable.voiceConfigured, false, "an ElevenLabs key must not enable a disconnected Maziao selection");
+  const legacy = configurationFrom({ elevenConfigured: true }, "local");
+  assert.equal(legacy.voiceProvider, "eleven"); assert.equal(legacy.voiceConfigured, true);
+});
+
+test("the actual voice screen presents provider-specific clone requirements while keeping ElevenLabs uploads", () => {
+  for (const provider of ["maziao", "eleven"]) {
+    const configuredSource = source.replace('useState<View>("studio")', 'useState<View>("voices")')
+      .replace('useState<Configuration>({ userId: "local", deepseek: false, eleven: false })', `useState<Configuration>({ userId: "member", deepseek: true, eleven: ${provider === "eleven"}, voiceProvider: "${provider}", voiceConfigured: true, maziaoConfigured: ${provider === "maziao"} })`);
+    const output = ts.transpileModule(configuredSource, { fileName: sourcePath, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+    const viewModule = { exports: {} };
+    new Function("require", "module", "exports", output)(componentRequire, viewModule, viewModule.exports);
+    const html = renderToString(React.createElement(viewModule.exports.default));
+    assert.ok(html.includes("Tạo giọng cá nhân"), "the actual voice page should be rendered");
+    assert.equal(html.includes('id="clone-gender"'), provider === "maziao");
+    assert.equal(/id="voice-samples"[^>]*multiple=""/.test(html), provider === "eleven");
+    assert.equal(html.includes("gói ElevenLabs Starter"), provider === "eleven");
+    assert.equal(html.includes("ít nhất 3 giây"), provider === "maziao");
+    const refreshAttributes = html.match(/<button class="button secondary"([^>]*)>/)?.[1];
+    assert.equal(typeof refreshAttributes, "string");
+    assert.equal(refreshAttributes.includes("disabled"), false, "configured Maziao must not be blocked by an absent ElevenLabs key");
+  }
+});
+
 test("exported video survives step navigation and editorial metadata updates but expires after media changes", () => {
   for (const changes of [{ step: 4 }, { title: "Tên video mới" }, { format: "story", angleId: "angle-2" }, { intent: "Thông điệp mới" }, { profile: safeProfile({ channel: "Kênh riêng" }) }]) assert.equal(affectsExport(changes), false);
   for (const changes of [{ id: "another-project" }, { source: new Blob(["new-video"]) }, { duration: 15 }, { segments: [{ start: 0, end: 3, text: "Đổi lời" }] }, { voiceId: "different-voice" }, { narration: undefined }, { keepAmbient: true }]) assert.equal(affectsExport(changes), true);

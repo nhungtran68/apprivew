@@ -1,5 +1,15 @@
 # Kiểm chứng Supabase và AI
 
+## Tích hợp Maziao — 17/10/2026
+
+- `pnpm test`: **88 kiểm tra ngoại tuyến đạt** (31 backend, 16 UI, 6 tải/chuẩn hóa mẫu, 8 lưu/chia sẻ MP4, 11 ElevenLabs, 16 Maziao). Kiểm tra TypeScript và production build đạt.
+- Đối chiếu API chính thức: cấu hình model, thư viện tiếng Việt, nhân bản WAV 3–8 giây và tác vụ TTS nhiều đoạn. Không có khóa Maziao trong mã trình duyệt hoặc GitHub; không tự chuyển sang ElevenLabs khi Maziao lỗi.
+- Quyền giọng được ký cho từng thành viên và model. Giọng cá nhân đã xóa trên Maziao được bỏ qua riêng khi trả 404; lỗi mạng/quyền vẫn được báo. Không trả danh sách giọng riêng của tài khoản dùng chung.
+- Đo thời lượng WAV thật, không cắt lời để ép khớp cảnh; chỉ tạo lại đoạn quá dài. Không tự gửi lại yêu cầu trả phí sau lỗi mạng hoặc timeout. Log chỉ ghi số liệu sử dụng và credit nhà cung cấp, không ghi token hoặc nội dung lời thoại.
+- **Chưa gọi API Maziao thật trong đợt này.** Cần `MAZIAO_API_KEY` trong bản triển khai mới để xác minh quyền API, cấu trúc `/configs`, số dư, chất lượng và chi phí thực. Không có chi phí Maziao nào được xác nhận bởi kiểm tra mô phỏng.
+
+Các mục bên dưới là kết quả của những đợt kiểm tra trước.
+
 Cập nhật ngày **17/10/2026**. Dự án Supabase tại Singapore đã được tạo và áp dụng schema. Website mục tiêu: [Apprivew](https://apprivew.vercel.app). Không có khóa bí mật trong mã nguồn.
 
 ## Đã chạy và đạt

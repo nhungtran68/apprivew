@@ -94,6 +94,34 @@ await check("model configuration never exposes a credential accidentally pasted 
   if(previousEleven===undefined)delete environment.ELEVENLABS_MODEL;else environment.ELEVENLABS_MODEL=previousEleven;
  }
 });
+await check("voice configuration follows the active provider and exposes readiness without any API secret",async()=>{
+ const fields=["MAZIAO_API_KEY","MAZIAO_MODEL","STUDIO_VOICE_PROVIDER","ELEVENLABS_API_KEY"],previous=Object.fromEntries(fields.map(field=>[field,environment[field]]));
+ const maziaoSecret="offline-private-maziao-key-do-not-expose",misplacedSecret="sk-offline-misplaced-maziao-model-or-provider";
+ try{
+  environment.MAZIAO_API_KEY=maziaoSecret;delete environment.STUDIO_VOICE_PROVIDER;environment.MAZIAO_MODEL="vieten_speech";
+  let config=await server.getConfig(alice);
+  assert.equal(config.voiceProvider,"maziao");assert.equal(config.maziaoConfigured,true);assert.equal(config.voiceConfigured,true);assert.equal(config.maziaoModel,"vieten_speech");
+  assert.equal((await server.providerKey(alice,"maziao")).key,maziaoSecret);
+  assert.ok(!JSON.stringify(config).includes(maziaoSecret));assert.ok(!JSON.stringify(config).includes(environment.ELEVENLABS_API_KEY));
+  environment.STUDIO_VOICE_PROVIDER="eleven";config=await server.getConfig(alice);
+  assert.equal(config.voiceProvider,"eleven");assert.equal(config.voiceConfigured,true);assert.equal(config.maziaoConfigured,true);
+  environment.STUDIO_VOICE_PROVIDER="maziao";delete environment.MAZIAO_API_KEY;config=await server.getConfig(alice);
+  assert.equal(config.voiceProvider,"maziao");assert.equal(config.voiceConfigured,false);assert.equal(config.elevenConfigured,true);assert.equal(config.maziaoConfigured,false);
+  await assert.rejects(server.providerKey(alice,"maziao"),{code:"API_KEY_REQUIRED"});
+  environment.MAZIAO_API_KEY=maziaoSecret;environment.STUDIO_VOICE_PROVIDER=misplacedSecret;environment.MAZIAO_MODEL=misplacedSecret;
+  config=await server.getConfig(alice);
+  assert.equal(config.voiceProvider,"maziao");assert.equal(config.maziaoModel,"vieten_speech");
+  assert.ok(!JSON.stringify(config).includes(misplacedSecret));assert.ok(!JSON.stringify(config).includes(maziaoSecret));
+  environment.MAZIAO_MODEL="lingual_speech_v2";assert.equal((await server.getConfig(alice)).maziaoModel,"lingual_speech_v2");
+  delete environment.MAZIAO_API_KEY;delete environment.STUDIO_VOICE_PROVIDER;delete environment.ELEVENLABS_API_KEY;
+  config=await server.getConfig(alice);assert.equal(config.voiceProvider,"eleven");assert.equal(config.voiceConfigured,false);
+  assert.equal(config.maziaoConfigured,false);assert.equal(config.elevenConfigured,false);
+ }finally{for(const field of fields){if(previous[field]===undefined)delete environment[field];else environment[field]=previous[field];}}
+});
+await check("member settings cannot save Maziao API credentials",async()=>{
+ const saved=profiles.get(alice);
+ for(const field of ["maziaoApiKey","MAZIAO_API_KEY"]){await assert.rejects(server.saveSettings(alice,{[field]:"offline-private-maziao-key"}),{code:"SHARED_KEYS_MANAGED"});assert.equal(profiles.get(alice),saved);}
+});
 await check("only approved vision and Vietnamese speech model IDs are accepted",()=>{
  const previousDeepseek=environment.DEEPSEEK_MODEL,previousEleven=environment.ELEVENLABS_MODEL;
  try{

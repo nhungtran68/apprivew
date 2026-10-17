@@ -8,7 +8,7 @@ const origin = "https://offline.supabase.invalid", bytes = new Uint8Array([82, 7
 const paths = ["first", "second", "third"].map(name => `${alice}/narration/${name}.wav`);
 let state;
 function reset() {
-  state = { userId: alice, authError: null, authThrows: false, removeError: null, removeThrows: false, removals: [], fetches: [], fetch: async () => new Response(bytes, { headers: { "content-type": "audio/wav" } }) };
+  state = { userId: alice, authError: null, authThrows: false, removeError: null, removeThrows: false, removals: [], fetches: [], fetch: async () => new Response(bytes, { headers: { "content-type": "audio/wav" } }), audioDuration: 6, decodeFails: false, contextClosed: 0, renderRequests: [] };
 }
 reset();
 const client = {
@@ -33,15 +33,43 @@ class TestFileReader {
     }, () => this.onerror?.());
   }
 }
+// Browser decoding/resampling is a platform API; capture its requested channel,
+// frame and rate settings, then verify the real helper's WAV with the server parser.
+class TestAudioContext {
+  async decodeAudioData() {
+    if (state.decodeFails) throw new Error("private-decoder-detail");
+    return { duration: state.audioDuration };
+  }
+  async close() { state.contextClosed++; }
+}
+class TestOfflineAudioContext {
+  constructor(channels, frames, sampleRate) {
+    this.frames = frames; this.destination = {};
+    state.renderRequests.push({ channels, frames, sampleRate });
+  }
+  createBufferSource() {
+    const source = { buffer: null, connect: destination => assert.equal(destination, this.destination), start: () => assert.equal(source.buffer.duration, state.audioDuration) };
+    return source;
+  }
+  async startRendering() {
+    const samples = new Float32Array(this.frames);
+    samples.set([-2, -0.5, 0, 0.5, 2]);
+    return { getChannelData: channel => { assert.equal(channel, 0); return samples; } };
+  }
+}
 const source = readFileSync(new URL("../lib/studio-upload.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const evaluated = { exports: {} };
-new Function("require", "module", "exports", "process", "fetch", "FileReader", compiled)(
+new Function("require", "module", "exports", "process", "fetch", "FileReader", "window", "OfflineAudioContext", compiled)(
   name => { assert.equal(name, "./studio-browser"); return { createStudioBrowser: () => client }; },
   evaluated, evaluated.exports, { env: { NEXT_PUBLIC_SUPABASE_URL: origin } },
-  async (url, options) => { state.fetches.push({ url, options }); return state.fetch(url, options); }, TestFileReader,
+  async (url, options) => { state.fetches.push({ url, options }); return state.fetch(url, options); }, TestFileReader, { AudioContext: TestAudioContext }, TestOfflineAudioContext,
 );
-const { cleanupAnalysisMedia, downloadSpeechSegments } = evaluated.exports;
+const { cleanupAnalysisMedia, downloadSpeechSegments, prepareMaziaoVoiceSample } = evaluated.exports;
+const contractModule = { exports: {} }, wavModule = { exports: {} };
+const compile = input => ts.transpileModule(input, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+new Function("module", "exports", compile(readFileSync(new URL("../lib/studio-contract.ts", import.meta.url), "utf8")))(contractModule, contractModule.exports);
+new Function("require", "module", "exports", compile(readFileSync(new URL("../lib/studio-wav.ts", import.meta.url), "utf8")))(name => { assert.equal(name, "./studio-contract"); return contractModule.exports; }, wavModule, wavModule.exports);
 const segment = (path, index = 0) => ({ start: index * 2, end: index * 2 + 2, text: `Offline segment ${index}`, audioPath: path, audioUrl: `${origin}/storage/v1/object/sign/studio-media/${path}?token=offline`, audioMime: "audio/wav", duration: 1 });
 let passed = 0;
 async function check(name, test) { reset(); await test(); passed++; console.log(`PASS ${name}`); }
@@ -105,6 +133,35 @@ await check("successful downloads return exact base64 without signed URLs and re
     assert.equal(new URL(request.url).origin, origin);
     assert.equal(request.options.credentials, "omit");
     assert.equal(request.options.redirect, "error", "redirects cannot escape the approved storage origin");
+  }
+});
+
+await check("Maziao samples become server-readable mono 24 kHz PCM WAV and long recordings stop at eight seconds", async () => {
+  for (const duration of [3, 6.25, 12]) {
+    reset(); state.audioDuration = duration;
+    const prepared = await prepareMaziaoVoiceSample(new File(["offline browser audio fixture"], "voice.m4a", { type: "audio/mp4" }));
+    const wav = new Uint8Array(await prepared.arrayBuffer()), format = wavModule.exports.inspectWav(wav);
+    assert.equal(prepared.name, "voice-sample.wav"); assert.equal(prepared.type, "audio/wav");
+    assert.deepEqual(state.renderRequests, [{ channels: 1, frames: Math.min(8, duration) * 24000, sampleRate: 24000 }]);
+    assert.equal(format.duration, Math.min(8, duration)); assert.equal(format.sampleRate, 24000);
+    assert.equal(format.channels, 1); assert.equal(format.encoding, 1); assert.equal(format.bits, 16);
+    const pcm = new DataView(wav.buffer, wav.byteOffset + 44);
+    assert.deepEqual(Array.from({ length: 5 }, (_, index) => pcm.getInt16(index * 2, true)), [-32768, -16384, 0, 16383, 32767], "normalization preserves sample signs and clips safely to PCM limits");
+    assert.equal(state.contextClosed, 1); assert.equal(state.fetches.length, 0);
+  }
+});
+
+await check("short or unreadable Maziao samples close the browser decoder before any network or upload", async () => {
+  for (const failure of ["short", "decode"]) {
+    reset();
+    if (failure === "short") state.audioDuration = 2.99;
+    else state.decodeFails = true;
+    await assert.rejects(prepareMaziaoVoiceSample(new File(["offline"], "voice.mp3", { type: "audio/mpeg" })), error => {
+      assert.ok(!error.message.includes("private-decoder-detail"));
+      assert.match(error.message, failure === "short" ? /ít nhất 3 giây/ : /Chưa đọc được/);
+      return true;
+    });
+    assert.equal(state.contextClosed, 1); assert.deepEqual(state.renderRequests, []); assert.equal(state.fetches.length, 0);
   }
 });
 console.log(`${passed} offline upload/download cleanup tests passed.`);

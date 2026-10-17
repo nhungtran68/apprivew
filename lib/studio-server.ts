@@ -7,6 +7,13 @@ import { createStudioSupabaseServer, supabaseConfigured } from "./studio-supabas
 // The app's DeepSeek model must support images as well as JSON/text generation.
 const deepseekVisionModels = ["deepseek-flash"] as const;
 const vietnameseSpeechModels = ["eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_v3", "eleven_v4"] as const;
+export const MAZIAO_MODELS = ["vieten_speech", "lingual_speech_v2"] as const;
+export type MaziaoModel = typeof MAZIAO_MODELS[number];
+export function maziaoModel(): MaziaoModel { return MAZIAO_MODELS.find(model => model === process.env.MAZIAO_MODEL) ?? "vieten_speech"; }
+export function voiceProvider(): "maziao" | "eleven" {
+  if (process.env.STUDIO_VOICE_PROVIDER === "maziao" || process.env.STUDIO_VOICE_PROVIDER === "eleven") return process.env.STUDIO_VOICE_PROVIDER;
+  return process.env.MAZIAO_API_KEY ? "maziao" : "eleven";
+}
 function approvedModel(value: string | undefined, allowed: readonly string[], fallback: string): string {
   return allowed.find((model) => model === value) ?? fallback;
 }
@@ -52,11 +59,12 @@ export async function readSettings(userId: string) {
 }
 export async function getConfig(userId: string) {
   const [{ profile }, member] = await Promise.all([readSettings(userId), getMember(userId)]);
-  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: profile.name || member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), ...modelNames(), profile, quota: { limit: member.ai_units_limit, used: member.ai_units_used, reserved: 0, remaining: Math.max(0, member.ai_units_limit - member.ai_units_used) } };
+  const provider = voiceProvider();
+  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: profile.name || member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), maziaoConfigured: Boolean(process.env.MAZIAO_API_KEY), voiceProvider: provider, voiceConfigured: Boolean(provider === "maziao" ? process.env.MAZIAO_API_KEY : process.env.ELEVENLABS_API_KEY), ...modelNames(), maziaoModel: maziaoModel(), profile, quota: { limit: member.ai_units_limit, used: member.ai_units_used, reserved: 0, remaining: Math.max(0, member.ai_units_limit - member.ai_units_used) } };
 }
-export async function providerKey(_userId: string, provider: "deepseek" | "eleven"): Promise<{ key: string; personal: boolean }> {
-  const key = provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : process.env.ELEVENLABS_API_KEY;
-  if (!key) throw new StudioError("API_KEY_REQUIRED", provider === "deepseek" ? "Quản trị viên chưa kết nối DeepSeek cho app." : "Quản trị viên chưa kết nối ElevenLabs cho app.", 503, "contact_admin");
+export async function providerKey(_userId: string, provider: "deepseek" | "eleven" | "maziao"): Promise<{ key: string; personal: boolean }> {
+  const key = provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : provider === "maziao" ? process.env.MAZIAO_API_KEY : process.env.ELEVENLABS_API_KEY;
+  if (!key) throw new StudioError("API_KEY_REQUIRED", `Quản trị viên chưa kết nối ${provider === "deepseek" ? "DeepSeek" : provider === "maziao" ? "Maziao" : "ElevenLabs"} cho app.`, 503, "contact_admin");
   return { key, personal: false };
 }
 export async function saveSettings(userId: string, body: Record<string, unknown>) {

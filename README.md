@@ -12,6 +12,22 @@ Ba góc ý tưởng nằm trong cùng lần phân tích; chỉ góc đã chọn 
 
 ## Giọng tiếng Việt và thư viện phổ biến
 
+### Maziao
+
+Thêm `MAZIAO_API_KEY` (Personal Access Token) vào Vercel Production + Preview rồi triển khai lại. App tự chọn Maziao khi có khóa này. `MAZIAO_MODEL` mặc định `vieten_speech`, có thể đổi sang `lingual_speech_v2`; cả hai được xác minh lại qua `/api/configs` về hỗ trợ tiếng Việt và nhân bản. Có thể đặt `STUDIO_VOICE_PROVIDER=eleven` để chủ động dùng ElevenLabs. App không tự chuyển nhà cung cấp khi lỗi, tránh phát sinh phí ngoài dự kiến.
+
+Giọng cá nhân được cấp quyền riêng theo thành viên bằng HMAC và RLS. ID được gắn `maziao:<model>:<id>` để không nhầm với ElevenLabs. Danh sách chỉ lấy giọng công khai tiếng Việt và giọng có quyền đã ký của thành viên đang đăng nhập; không trả thư viện giọng riêng của toàn bộ tài khoản Maziao.
+
+Trình duyệt chuẩn hóa mẫu nhân bản thành WAV mono 24 kHz/16-bit, lấy tối đa 8 giây đầu, yêu cầu bản gốc có ít nhất 3 giây. Server kiểm tra lại WAV, thời lượng và giới hạn 1 MB. Người dùng xác nhận quyền dùng giọng và chọn nam/nữ. Mẫu tạm trong Supabase được dọn sau yêu cầu; giọng đã nhân bản được Maziao giữ để tạo lời đọc.
+
+Lời đọc dùng `multiParts`: gửi các đoạn trong một tác vụ, kiểm tra trạng thái mỗi 6 giây rồi tải WAV. Không tự gửi lại tác vụ khi lỗi mạng hoặc hết thời gian chờ. Server đo thời lượng WAV thực; chỉ rút gọn và tạo lại các đoạn vượt cảnh, tối đa hai lần, không cắt mất lời để ép khớp. Luồng Maziao chờ tối đa 240 giây; kiểm tra tác vụ trên Maziao trước khi tạo lại nếu quá lâu.
+
+Log `studio_voice_usage` ghi model, số ký tự, số đoạn và `totalCost` credit thực do Maziao trả, không ghi token, lời thoại, mẫu giọng hoặc URL cá nhân. Không mặc định 1 ký tự luôn bằng 1 credit; không quy đổi tiền khi chưa đối chiếu gói đã mua. Hạn mức AI nội bộ độc lập với credit Maziao.
+
+Tài liệu: [Maziao API](https://app.maziao.com/api-docs), [hợp đồng API](https://app.maziao.com/api-documentation.md).
+
+### ElevenLabs
+
 App truy vấn Voice Library ElevenLabs bằng `language=vi`, ưu tiên tối đa 10 giọng có mô tả phù hợp kể chuyện, hội thoại, quảng cáo hoặc mạng xã hội. Thêm tối đa 5 giọng phổ biến toàn thư viện theo `cloned_by_count`. Số người đã thêm, ngôn ngữ và bản nghe mẫu lấy từ provider, không tự tạo tên hay số liệu. Danh sách được làm mới với cache tối đa 5 phút; có thể thay đổi khi chủ giọng rút chia sẻ.
 
 Giọng thư viện qua API và nhân bản giọng nhanh cần **gói ElevenLabs trả phí (Starter trở lên) của quản trị viên**. Thành viên app không cần mua riêng. App kiểm tra gói trước khi nhập/dùng giọng thư viện hoặc gửi yêu cầu nhân bản, báo lỗi cụ thể và không trừ lượt AI nội bộ khi bị chặn ở bước kiểm tra gói. Chỉ giọng công khai được server xác minh trong danh sách tuyển chọn mới được nhập; quyền cá nhân vẫn được ký riêng theo thành viên. Nghe mẫu dùng tệp có sẵn; bấm tạo lời đọc mới phát sinh TTS.
@@ -20,7 +36,7 @@ Nguồn: [Voice Library](https://elevenlabs.io/docs/eleven-creative/voices/voice
 
 ## Công nghệ
 
-Next.js App Router chạy trên Vercel; Supabase Auth/Postgres/Storage cho thành viên và tệp riêng; DeepSeek Flash đọc ảnh mẫu và viết kịch bản; ElevenLabs tạo giọng; FFmpeg WASM ghép MP4 ngay trong trình duyệt. Không dùng Gemini.
+Next.js App Router chạy trên Vercel; Supabase Auth/Postgres/Storage cho thành viên và tệp riêng; DeepSeek Flash đọc ảnh mẫu và viết kịch bản; Maziao hoặc ElevenLabs tạo giọng; FFmpeg WASM ghép MP4 ngay trong trình duyệt. Không dùng Gemini.
 
 ## Đưa lên Vercel từ GitHub
 
@@ -53,6 +69,9 @@ Chỉ hai biến NEXT_PUBLIC_SUPABASE_URL và NEXT_PUBLIC_SUPABASE_PUBLISHABLE_K
 | DEEPSEEK_MODEL | Mặc định deepseek-flash, cần có khả năng đọc ảnh |
 | ELEVENLABS_API_KEY | Khóa ElevenLabs dùng chung |
 | ELEVENLABS_MODEL | Mặc định eleven_flash_v2_5, hỗ trợ tiếng Việt |
+| MAZIAO_API_KEY | Personal Access Token Maziao, chỉ ở server |
+| MAZIAO_MODEL | vieten_speech (mặc định) hoặc lingual_speech_v2 |
+| STUDIO_VOICE_PROVIDER | maziao hoặc eleven; mặc định Maziao khi có MAZIAO_API_KEY |
 | STUDIO_ENCRYPTION_KEY | Chuỗi ngẫu nhiên ít nhất32 ký tự, bảo vệ quyền dùng giọng cá nhân; giữ ổn định |
 | STUDIO_SHARED_VOICE_IDS | Tùy chọn: danh sách voice ID được chia sẻ, phân cách bằng dấu phẩy |
 
@@ -68,7 +87,7 @@ Thành viên dùng email/mật khẩu; đăng ký mới mặc định chưa có 
 
 Mở /quan-tri để duyệt thành viên và cấp hạn mức. Đơn vị là lượt xử lý: mỗi yêu cầu DeepSeek1lượt; mỗi lần tạo tiếng ceil(số ký tự/100)lượt; nhân bản giọng10lượt. Lần tạo lại cũng tính; không tự hoàn lượt khi đã gửi yêu cầu tới dịch vụ. Đây là hạn mức nội bộ của app, không phải số tiền hoặc số video cố định.
 
-Khóa DeepSeek và ElevenLabs do quản trị viên nối một lần. Thành viên không thấy khóa và không phải có tài khoản nhà cung cấp AI. Mỗi thành viên chỉ dùng giọng được phép: giọng mẫu, giọng chia sẻ được quản trị viên chỉ định, và giọng đã tạo cho chính họ.
+Khóa DeepSeek, Maziao và ElevenLabs do quản trị viên nối một lần. Thành viên không thấy khóa và không phải có tài khoản nhà cung cấp AI. Mỗi thành viên chỉ dùng giọng được phép: giọng mẫu, giọng chia sẻ được quản trị viên chỉ định, và giọng đã tạo cho chính họ.
 
 ## Phân tích video với DeepSeek
 
@@ -82,7 +101,7 @@ Quản trị viên mở ElevenLabs → Developers → API Keys, sửa đúng kh�
 
 ## Lưu dữ liệu và xuất video
 
-Video gốc và dự án tự lưu trên trình duyệt/thiết bị hiện tại bằng IndexedDB, có thể tải bản sao .loike để chuyển thiết bị. Bản đầu chưa đồng bộ thư viện dự án lên cloud. Supabase lưu hồ sơ, quyền, hạn mức, giọng được phép và tệp âm thanh riêng. Tệp lời đọc được tải về trình duyệt rồi xóa khỏi kho tạm; mẫu nhân bản giọng gửi tới ElevenLabs.
+Video gốc và dự án tự lưu trên trình duyệt/thiết bị hiện tại bằng IndexedDB, có thể tải bản sao .loike để chuyển thiết bị. Bản đầu chưa đồng bộ thư viện dự án lên cloud. Supabase lưu hồ sơ, quyền, hạn mức, giọng được phép và tệp âm thanh riêng. Tệp lời đọc được tải về trình duyệt rồi xóa khỏi kho tạm; mẫu nhân bản giọng gửi tới nhà cung cấp giọng đang được quản trị viên chọn.
 
 MP4 vừa ghép được giữ khi chuyển bước, đổi tiêu đề hoặc xem lại hồ sơ; chỉ thay đổi đầu vào âm thanh/video mới làm mất hiệu lực bản xuất. Nút tải dùng liên kết bền vững; trình duyệt hỗ trợ có thêm **Lưu vào thư mục…**, điện thoại hỗ trợ có **Chia sẻ tệp video**, cùng liên kết mở video để lưu dự phòng. Cần lưu MP4 trước khi đóng/tải lại trang hoặc chuyển sang dự án khác; bản MP4 hoàn chỉnh chưa lưu trong IndexedDB.
 
