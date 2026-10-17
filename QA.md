@@ -96,3 +96,11 @@ DeepSeek chỉ đọc ảnh lấy mẫu, không nghe tiếng gốc hoặc xem ch
 - Chạy lại helper FFmpeg WASM thật với WAV ElevenLabs đã có: MP4 241.418 byte, H.264/yuv420p/30fps, AAC 48 kHz stereo, 15 giây; tương quan âm thanh 0,999968. Không gọi thêm ElevenLabs để làm bài này.
 - Danh sách mới lấy tối đa 10 giọng tiếng Việt và 5 giọng phổ biến từ ElevenLabs. Không gắn nhãn sử dụng API miễn phí dựa vào `free_users_allowed`; gói Free không dùng được Voice Library qua API. Dữ liệu thư viện có thể thay đổi hoặc tạm không khả dụng; giọng mặc định và cá nhân vẫn hiển thị khi thư viện lỗi.
 
+## Kiểm tra giao diện ưu tiên điện thoại — 17/10/2026
+
+- Đã kiểm tra trên Chromium với chiều rộng **320, 375, 390, 430, 768 và 1.280 px**; không có tràn ngang. Thanh điều hướng điện thoại cao 66 px, vùng bấm của các điều khiển chính đạt 44–54 px. Thanh hành động cố định nằm phía trên thanh điều hướng, không chồng lên nhau.
+- Hồ sơ hiển thị năm trường chính; thông tin bổ sung thu gọn và có thể mở. Ô nhập trên điện thoại dùng chữ 16 px. Đã mở phần ý định, câu hỏi cần làm rõ và lựa chọn dạng video ở 320 px; đã lưu hồ sơ qua API mô phỏng cục bộ.
+- Đã xuất bằng FFmpeg WASM trong trình duyệt và tải MP4 thật qua liên kết tải: **241.418 byte**. SHA-256 khớp tệp mẫu đã kiểm chứng trước đó: **H.264/yuv420p, 30 fps; AAC 48 kHz stereo; 15 giây**.
+- **66 nhóm kiểm thử và kiểm tra TypeScript đạt**. Các bài giao diện dùng dữ liệu mẫu và API mô phỏng, không phải lần chạy AI thật; đợt kiểm tra giao diện này không gọi thêm AI trả phí.
+- Chưa thử trên iPhone hoặc Android vật lý; chưa nhập tệp vào CapCut hoặc đăng Facebook. Kết quả Chromium và định dạng tệp không thay thế kiểm tra trên thiết bị, ứng dụng mục tiêu.
+
