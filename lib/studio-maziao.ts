@@ -86,9 +86,11 @@ function safeMediaUrl(value: unknown): string | undefined {
     return url.href;
   } catch { return; }
 }
-function publicVoice(voice: ProviderVoice) {
-  // Missing ownership metadata is not proof that a shared-account voice is public.
-  return Object.hasOwn(voice, "userId") ? voice.userId === null : Object.hasOwn(voice, "user_id") && voice.user_id === null;
+function catalogOwnership(voice: ProviderVoice) {
+  // Normalized system-catalog responses omit owner fields. Missing ownership
+  // is allowed only together with verified membership in that public catalog;
+  // an arbitrary voice-detail response never establishes a shared grant.
+  return ["userId", "user_id"].every(field => !Object.hasOwn(voice, field) || (voice as Record<string, unknown>)[field] === null);
 }
 const voiceModel = (voice: ProviderVoice) => voice.modelId ?? voice.model_id;
 const compatible = (voice: ProviderVoice) => {
@@ -108,22 +110,24 @@ async function getVoice(key: string, id: string, deadline?: number): Promise<Pro
   return voice;
 }
 
-export type MaziaoCatalogDiagnostics = { received: number; public: number; vietnamese: number; cloneable: number; validIds: number; fieldNames: string[]; firstFieldTypes: Record<string, string> };
-export async function listMaziaoVoices(key: string, userId: string, report?: (value: MaziaoCatalogDiagnostics) => void): Promise<StudioVoice[]> {
+async function systemVoices(key: string, search?: string): Promise<ProviderVoice[]> {
+  const query = new URLSearchParams({ language: "vi", type: "system", limit: "100", offset: "0", sort_field: "total_used" });
+  if (search) query.set("search", cleanText(search, 200));
+  const result = await api(key, `/voices?${query}`), data = result.data as { items?: ProviderVoice[] } | undefined;
+  if (!Array.isArray(data?.items)) throw invalidResponse();
+  return data.items.filter(voice => Boolean(voice && typeof voice === "object" && !Array.isArray(voice)));
+}
+
+export async function listMaziaoVoices(key: string, userId: string): Promise<StudioVoice[]> {
   const model = maziaoModel();
   await assertModel(key, model);
   const grants = (await authorizedVoiceRows(userId)).filter(row => row.voice_id.startsWith("maziao:"));
   const owned = grants.filter(row => row.source === "personal");
   const ownedIds = new Set(owned.map(row => row.voice_id));
-  const query = new URLSearchParams({ language: "vi", type: "system", limit: "100", offset: "0", sort_field: "total_used" });
-  const result = await api(key, `/voices?${query}`), data = result.data as { items?: ProviderVoice[] } | undefined;
-  if (!Array.isArray(data?.items)) throw invalidResponse();
-  const items = data.items.filter((voice): voice is ProviderVoice => Boolean(voice && typeof voice === "object" && !Array.isArray(voice)));
-  const first = items[0];
-  report?.({ received: data.items.length, public: items.filter(publicVoice).length, vietnamese: items.filter(voice => voice.language === "vi" || voice.language === "vi-VN").length, cloneable: items.filter(compatible).length, validIds: items.filter(voice => rawId(voice.id)).length, fieldNames: first ? Object.keys(first).filter(name => /^[a-zA-Z_]{1,40}$/.test(name)).slice(0, 40) : [], firstFieldTypes: Object.fromEntries(["id", "userId", "user_id", "language", "refFile", "ref_file", "refText", "ref_text"].map(name => [name, !first || !Object.hasOwn(first, name) ? "missing" : (first as Record<string, unknown>)[name] === null ? "null" : typeof (first as Record<string, unknown>)[name]])) });
+  const items = await systemVoices(key);
   const seen = new Set<string>();
-  const shared = data.items.filter(voice => {
-    if (!voice || !rawId(voice.id) || !publicVoice(voice) || !compatible(voice)) return false;
+  const shared = items.filter(voice => {
+    if (!rawId(voice.id) || !catalogOwnership(voice) || !compatible(voice)) return false;
     const id = scopedId(model, voice.id);
     if (seen.has(id) || ownedIds.has(id)) return false;
     seen.add(id); return true;
@@ -171,7 +175,11 @@ export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
   if (!grant || !["shared", "personal"].includes(grant.source)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Tải lại danh sách và chọn giọng thuộc tài khoản của bạn.", 403);
   const { key } = await providerKey(userId, "maziao");
   const voice = await getVoice(key, parsed.id);
-  if (grant.source === "shared" && (!publicVoice(voice) || !compatible(voice))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
+  if (grant.source === "shared") {
+    if (!catalogOwnership(voice) || !compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
+    const current = await systemVoices(key, cleanText(voice.name, 200) || undefined);
+    if (!current.some(item => item.id === parsed.id && catalogOwnership(item) && compatible(item))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn trong thư viện hệ thống. Hãy tải lại danh sách để chọn giọng khác.", 403);
+  }
   if (grant.source === "personal" && voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng này dùng model khác. Hãy tải lại danh sách giọng.", 422);
   return voiceId;
 }

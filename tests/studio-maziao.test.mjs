@@ -42,9 +42,17 @@ async function harness() {
     saveSharedVoiceList: async (userId, voices) => { for (const voice of voices) grant(userId, voice.voiceId, "shared", voice.name); },
     consumeAiUnits: async (_user, units) => charged.push(units),
     providerKey: async () => ({ key, personal: false }),
+    requestUser: async () => alice,
+    limitedJson: async request => request.json(),
+    json: (data, status = 200) => Response.json(data, { status }),
+    apiError: error => Response.json({ code: error.code, error: error.message }, { status: error.status || 500 }),
   };
   const mocks = new Map([
     [path.join(root, "lib/studio-server.ts"), server],
+    [path.join(root, "lib/studio-eleven.ts"), {
+      authorizeVoice: async () => { throw new Error("Maziao selection must not use ElevenLabs authorization"); },
+      generateSpeech: async () => { throw new Error("Maziao selection must not use ElevenLabs generation"); },
+    }],
     [path.join(root, "lib/studio-deepseek.ts"), {
       shortenSegment: async (_key, segment) => { shortened.push(segment.text); return segment.text.length > 10 ? segment.text.slice(0, 10) : segment.text; },
     }],
@@ -67,7 +75,12 @@ async function harness() {
     if (modules.has(file)) return modules.get(file);
     const source = await fs.readFile(file, "utf8");
     const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-    const module = new vm.SourceTextModule(code, { context, identifier: file });
+    const module = new vm.SourceTextModule(code, { context, identifier: file, importModuleDynamically: async (specifier, parent) => {
+      const dependency = await linker(specifier, parent);
+      if (dependency.status === "unlinked") await dependency.link(linker);
+      if (dependency.status === "linked") await dependency.evaluate();
+      return dependency;
+    } });
     modules.set(file, module);
     return module;
   }
@@ -112,7 +125,9 @@ let passed = 0;
 async function check(name, run) { await run(); console.log(`PASS ${name}`); passed++; }
 const scoped = (id, model = "vieten_speech") => `maziao:${model}:${id}`;
 const config = () => Response.json({ data: { ttsModels: [{ id: "vieten_speech", support_cloning: true, supported_languages: ["vi", "en"] }] } });
-const voice = (id, extra = {}) => ({ id, name: id, userId: null, language: "vi", modelId: "vieten_speech", refFile: `https://r2-storage.maziao.com/voices/${id}.wav`, refText: "Trong vườn hoa nở rực rỡ.", previewUrl: `https://r2-storage.maziao.com/samples/${id}.wav`, ...extra });
+// The live system catalog omits ownership fields; its fixed server-selected
+// system query supplies public membership evidence, never a detail response alone.
+const voice = (id, extra = {}) => ({ id, name: id, language: "vi", modelId: "vieten_speech", refFile: `https://r2-storage.maziao.com/voices/${id}.wav`, refText: "Trong vườn hoa nở rực rỡ.", previewUrl: `https://r2-storage.maziao.com/samples/${id}.wav`, ...extra });
 const sampleSegments = () => [{ start: 0, end: 3, text: "Xin chào." }, { start: 4, end: 7, text: "Một câu chuyện nhỏ." }];
 const isApi = request => request.url.startsWith("https://app.maziao.com/api/");
 async function provider(h) { return h.entry("lib/studio-maziao.ts"); }
@@ -169,9 +184,9 @@ await check("voice lists expose only verified public voices and the current memb
       const query = new URL(request.url).searchParams;
       assert.equal(query.get("type"), "system"); assert.equal(query.get("language"), "vi"); assert.equal(query.has("modelId"), false); assert.equal(query.get("sort_field"), "total_used");
       return Response.json({ data: { items: [
-        voice("publicVoice"), voice("publicVoice"), voice("foreignClone", { userId: "provider-account", name: "Bob secret" }),
+        voice("publicVoice", { userId: null }), voice("publicVoice"), voice("foreignClone", { userId: "provider-account", name: "Bob secret" }),
         voice("staleShared", { userId: "provider-account", previewUrl: "https://private.invalid/secret.wav" }),
-        voice("missingOwnership", { userId: undefined }), voice("wrongLanguage", { language: "en" }),
+        voice("publicNoOwnership"), voice("wrongLanguage", { language: "en" }),
         voice("missingTranscript", { refText: "" }), voice("missingSample", { refFile: "" }),
         voice("unprovenCloneFlag", { refFile: undefined, refText: undefined, supportCloning: true }),
       ] } });
@@ -180,11 +195,12 @@ await check("voice lists expose only verified public voices and the current memb
     return Response.json({ data: voice("ownClone", { userId: "provider-account" }) });
   });
   const voices = await maziao.listMaziaoVoices(h.key, alice);
-  assert.deepEqual(Array.from(voices, item => item.voiceId), [scoped("ownClone"), scoped("publicVoice")]);
+  assert.deepEqual(Array.from(voices, item => item.voiceId), [scoped("ownClone"), scoped("publicVoice"), scoped("publicNoOwnership")]);
   assert.equal(voices[0].group, "personal"); assert.equal(voices[1].group, "vietnamese");
   const visible = JSON.stringify(voices);
-  for (const secret of ["foreignClone", "Bob secret", "staleShared", "missingOwnership", "wrongLanguage", "missingTranscript", "missingSample", "unprovenCloneFlag", "private.invalid", "provider-account", "refFile", "refText"]) assert.ok(!visible.includes(secret));
+  for (const secret of ["foreignClone", "Bob secret", "staleShared", "wrongLanguage", "missingTranscript", "missingSample", "unprovenCloneFlag", "private.invalid", "provider-account", "refFile", "refText"]) assert.ok(!visible.includes(secret));
   assert.ok(h.grants.has(`${alice}:${scoped("publicVoice")}`));
+  assert.ok(h.grants.has(`${alice}:${scoped("publicNoOwnership")}`));
   assert.ok(!h.requests.some(request => request.url.includes("my-voices")));
 });
 
@@ -203,6 +219,12 @@ await check("verified public reference voices can use a compatible engine indepe
   assert.deepEqual(Array.from(listed, item => item.voiceId), [scoped("crossModelVoice"), scoped("snakeVoice")]);
   assert.equal(h.grants.get(`${alice}:${scoped("crossModelVoice")}`).source, "shared");
   h.setHandler(request => {
+    if (request.url.includes("/voices?")) {
+      const query = new URL(request.url).searchParams;
+      assert.equal(query.get("type"), "system"); assert.equal(query.get("language"), "vi");
+      assert.equal(query.get("search"), originalVoice.name); assert.equal(query.has("modelId"), false);
+      return Response.json({ data: { items: [originalVoice], total: 1 } });
+    }
     assert.ok(request.url.endsWith("/voices/crossModelVoice"));
     return Response.json({ data: originalVoice });
   });
@@ -212,6 +234,42 @@ await check("verified public reference voices can use a compatible engine indepe
   h.setHandler(() => Response.json({ data: { ...originalVoice, refText: "" } }));
   await assert.rejects(maziao.authorizeMaziaoVoice(alice, scoped("crossModelVoice")), { code: "VOICE_NOT_AUTHORIZED" });
   assert.equal(h.charged.length, 0);
+});
+
+await check("an ownerless detail response cannot authorize a voice absent from the fresh system catalog", async () => {
+  const h = await harness(), maziao = await provider(h);
+  h.grant(alice, scoped("staleOwnerless"), "shared");
+  h.setHandler(request => {
+    if (request.url.endsWith("/voices/staleOwnerless")) return Response.json({ data: voice("staleOwnerless") });
+    assert.ok(request.url.includes("/voices?"));
+    const query = new URL(request.url).searchParams;
+    assert.equal(query.get("type"), "system"); assert.equal(query.get("language"), "vi");
+    assert.equal(query.get("search"), "staleOwnerless");
+    return Response.json({ data: { items: [voice("differentId", { name: "staleOwnerless" })], total: 1 } });
+  });
+  await assert.rejects(maziao.authorizeMaziaoVoice(alice, scoped("staleOwnerless")), { code: "VOICE_NOT_AUTHORIZED" });
+  assert.equal(h.requests.length, 2); assert.equal(h.charged.length, 0);
+});
+
+await check("stale shared grants are blocked by the speech route before any paid TTS job", async () => {
+  for (const explicitOwner of [false, true]) {
+    const h = await harness();
+    await provider(h);
+    h.grant(alice, scoped("staleSharedVoice"), "shared");
+    h.setHandler(request => {
+      if (request.url.endsWith("/voices/staleSharedVoice")) return Response.json({ data: voice("staleSharedVoice", explicitOwner ? { userId: "foreign-private-owner" } : {}) });
+      if (request.url.includes("/voices?")) {
+        assert.equal(new URL(request.url).searchParams.get("type"), "system");
+        return Response.json({ data: { items: [], total: 0 } });
+      }
+      throw new Error("Unauthorized shared voice must not submit, poll or download speech");
+    });
+    const route = await h.entry("app/api/speech/route.ts");
+    const response = await route.POST(new Request("https://app.example/api/speech", { method: "POST", headers: { origin: "https://app.example", "content-type": "application/json" }, body: JSON.stringify({ voiceId: scoped("staleSharedVoice"), segments: sampleSegments(), duration: 7 }) }));
+    assert.equal(response.status, 403); assert.equal((await response.json()).code, "VOICE_NOT_AUTHORIZED");
+    assert.equal(h.charged.length, 0); assert.equal(h.media.size, 0);
+    assert.ok(h.requests.every(request => request.method === "GET" && request.url.includes("/voices")));
+  }
 });
 
 await check("historical shared grants cannot authorize private provider voices", async () => {
