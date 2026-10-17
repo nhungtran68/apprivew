@@ -172,7 +172,13 @@ async function providerErrorStatus(response: Response): Promise<string | undefin
     return;
   } finally { reader.releaseLock(); }
 }
-export async function providerResponse(response: Response, provider: string): Promise<Response> {
+type ProviderPermission = "voices_read" | "voices_write" | "text_to_speech";
+const elevenPermissionMessages: Record<ProviderPermission, string> = {
+  voices_read: "Khóa ElevenLabs đang kết nối chưa có quyền đọc giọng (Voices: Read). Quản trị viên cần bật Voices → Read cho đúng khóa này trong ElevenLabs rồi lưu.",
+  voices_write: "Khóa ElevenLabs đang kết nối chưa có quyền tạo giọng cá nhân (Voices: Write). Quản trị viên cần bật Voices → Write cho đúng khóa này trong ElevenLabs rồi lưu.",
+  text_to_speech: "Khóa ElevenLabs đang kết nối chưa có quyền tạo lời đọc (Text to Speech). Quản trị viên cần bật quyền Text to Speech cho đúng khóa này trong ElevenLabs rồi lưu.",
+};
+export async function providerResponse(response: Response, provider: string, permission?: ProviderPermission): Promise<Response> {
   if (response.ok) return response;
   // Only exact machine codes influence the response. Provider messages may contain
   // credentials or user text, so never return or log the parsed body.
@@ -180,7 +186,7 @@ export async function providerResponse(response: Response, provider: string): Pr
   if (provider === "ElevenLabs") {
     if (status === "api_key_id_used_as_api_key") throw new StudioError("PROVIDER_KEY_ID", "ElevenLabs nhận được Key ID thay cho khóa API bí mật. Quản trị viên cần đặt giá trị Secret API key vào ELEVENLABS_API_KEY trên Vercel rồi triển khai lại.", 422, "contact_admin");
     if (status === "invalid_api_key") throw new StudioError("PROVIDER_AUTH", "ElevenLabs không chấp nhận khóa API. Quản trị viên cần kiểm tra Secret API key và trạng thái khóa.", 422, "contact_admin");
-    if (status === "missing_permissions") throw new StudioError("PROVIDER_PERMISSION", "Khóa ElevenLabs chưa có quyền cho chức năng này. Quản trị viên cần kiểm tra quyền đọc giọng (Voices: Read), tạo lời đọc (Text to Speech) hoặc tạo giọng tương ứng với thao tác đang dùng.", 422, "contact_admin");
+    if (status === "missing_permissions") throw new StudioError("PROVIDER_PERMISSION", permission ? elevenPermissionMessages[permission] : "Khóa ElevenLabs chưa có quyền cho chức năng này. Quản trị viên cần kiểm tra quyền đọc giọng (Voices: Read), tạo lời đọc (Text to Speech) hoặc tạo giọng tương ứng với thao tác đang dùng.", 422, "contact_admin");
     if (status === "quota_exceeded") throw new StudioError("PROVIDER_LIMIT", "ElevenLabs đã hết hạn mức sử dụng. Quản trị viên cần kiểm tra gói và hạn mức của tài khoản.", 429, "contact_admin");
   }
   if (provider === "DeepSeek" && response.status === 402) throw new StudioError("PROVIDER_BALANCE", "Tài khoản DeepSeek không đủ số dư. Quản trị viên cần kiểm tra số dư và nạp tiền trước khi thử lại.", 422, "contact_admin");

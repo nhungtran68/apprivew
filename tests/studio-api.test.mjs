@@ -40,13 +40,16 @@ await check("provider machine codes give actionable errors without exposing prov
   {provider:"ElevenLabs",http:422,status:"api_key_id_used_as_api_key",code:"PROVIDER_KEY_ID",responseStatus:422,hint:/Key ID.*Secret API key/},
   {provider:"ElevenLabs",http:401,status:"invalid_api_key",code:"PROVIDER_AUTH",responseStatus:422,hint:/khóa API/},
   {provider:"ElevenLabs",http:403,status:"missing_permissions",code:"PROVIDER_PERMISSION",responseStatus:422,hint:/Voices: Read.*Text to Speech/},
+  {provider:"ElevenLabs",http:403,status:"missing_permissions",permission:"voices_read",code:"PROVIDER_PERMISSION",responseStatus:422,hint:/khóa ElevenLabs đang kết nối.*Voices: Read.*lưu/i},
+  {provider:"ElevenLabs",http:403,status:"missing_permissions",permission:"voices_write",code:"PROVIDER_PERMISSION",responseStatus:422,hint:/khóa ElevenLabs đang kết nối.*tạo giọng cá nhân.*Voices: Write.*lưu/i},
+  {provider:"ElevenLabs",http:403,status:"missing_permissions",permission:"text_to_speech",code:"PROVIDER_PERMISSION",responseStatus:422,hint:/khóa ElevenLabs đang kết nối.*tạo lời đọc.*Text to Speech.*lưu/i},
   {provider:"ElevenLabs",http:400,status:"quota_exceeded",code:"PROVIDER_LIMIT",responseStatus:429,hint:/hạn mức/},
   {provider:"DeepSeek",http:402,status:"irrelevant",code:"PROVIDER_BALANCE",responseStatus:422,hint:/số dư/},
  ];
  for(const item of cases){
   const response=Response.json({detail:{status:item.status,message:`Sensitive provider message ${fakeSecret}`,required_permissions:[fakeSecret]},error:{message:fakeSecret}},{status:item.http});
   let caught;
-  await assert.rejects(server.providerResponse(response,item.provider),error=>{caught=error;assert.equal(error.code,item.code);assert.match(error.message,item.hint);return true;});
+  await assert.rejects(server.providerResponse(response,item.provider,item.permission),error=>{caught=error;assert.equal(error.code,item.code);assert.match(error.message,item.hint);return true;});
   const publicResponse=server.apiError(caught),body=await publicResponse.json();
   assert.equal(publicResponse.status,item.responseStatus);assert.equal(body.action,"contact_admin");assert.equal(body.code,item.code);
   assert.ok(!JSON.stringify(body).includes(fakeSecret));assert.ok(!JSON.stringify(body).includes("Sensitive provider message"));assert.equal(response.body.locked,false);
@@ -202,6 +205,41 @@ await check("all scenery, talking and face modes preserve supplied intent and de
  assert.equal(charged.length,9,"three offline provider requests per mode must each consume one unit");
 });
 await check("shared voice list hides other members clones and forged ownership",async()=>{await server.saveAuthorizedVoice(alice,"voiceAlice123","Alice","personal");const own=voices.get(`${alice}:voiceAlice123`);identity=bob;voices.set(`${bob}:voiceAlice123`,{...own,user_id:bob});await assert.rejects(eleven.authorizeVoice(bob,"voiceAlice123"),{code:"VOICE_NOT_AUTHORIZED"});identity=alice;requestFetch=async()=>Response.json({voices:[{voice_id:"voiceAlice123",name:"Alice",category:"cloned"},{voice_id:"victimVoice123",name:"Victim",category:"cloned"},{voice_id:"premadeVoice123",name:"Sample",category:"premade"}]});const list=await eleven.listVoices("offline",alice);assert.equal(list.length,2);assert.ok(!list.some(v=>v.voiceId==="victimVoice123"));});
+await check("voice list, authorization and speech permission errors identify their actual operation",async()=>{
+ const requests=[];
+ requestFetch=async(url,init)=>{requests.push({url,method:init?.method||"GET"});return Response.json({detail:{status:"missing_permissions"}},{status:403});};
+ const assertPermission=(hint,excluded)=>error=>{assert.equal(error.code,"PROVIDER_PERMISSION");assert.equal(error.status,422);assert.equal(error.action,"contact_admin");assert.match(error.message,hint);assert.doesNotMatch(error.message,excluded);return true;};
+ await assert.rejects(eleven.listVoices("offline",alice),assertPermission(/Voices: Read/,/Voices: Write|Text to Speech/));
+ await server.saveAuthorizedVoice(alice,"permissionShared123","Shared permission fixture","shared");
+ await assert.rejects(eleven.authorizeVoice(alice,"permissionShared123"),assertPermission(/Voices: Read/,/Voices: Write|Text to Speech/));
+ await assert.rejects(eleven.generateSpeech({key:"offline",userId:alice,voiceId:"permissionShared123",duration:5,segments:[{start:0,end:5,text:"Câu thử."}]}),assertPermission(/Text to Speech/,/Voices: Read|Voices: Write/));
+ assert.deepEqual(requests,[
+  {url:"https://api.elevenlabs.io/v1/voices",method:"GET"},
+  {url:"https://api.elevenlabs.io/v1/voices/permissionShared123",method:"GET"},
+  {url:"https://api.elevenlabs.io/v1/text-to-speech/permissionShared123?output_format=pcm_24000",method:"POST"},
+ ]);
+ assert.deepEqual(charged,[1]);
+});
+await check("rejected voice cloning requests Voices Write without saving a voice or exposing provider data",async()=>{
+ const fakeSecret="sk-offline-clone-provider-secret",beforeVoices=[...voices.entries()],beforeMedia=[...media.entries()],beforeUnits=members.get(alice).ai_units_used;
+ const sample=new File([new Uint8Array([1,2,3,4])],"sample.wav",{type:"audio/wav"});
+ let requests=0;
+ requestFetch=async(url,init)=>{
+  requests++;
+  assert.equal(url,"https://api.elevenlabs.io/v1/voices/add");assert.equal(init.method,"POST");
+  assert.equal(init.headers["xi-api-key"],"offline");assert.equal(init.body.get("name"),"Giọng thử");
+  const files=init.body.getAll("files");assert.equal(files.length,1);assert.equal(files[0].name,"sample.wav");assert.equal(files[0].type,"audio/wav");
+  assert.deepEqual(new Uint8Array(await files[0].arrayBuffer()),new Uint8Array([1,2,3,4]));
+  return Response.json({detail:{status:"missing_permissions",message:fakeSecret,required_permissions:[fakeSecret]}},{status:403});
+ };
+ let failure;
+ await assert.rejects(eleven.cloneVoice("offline",alice,"Giọng thử",[sample]),error=>{failure=error;assert.equal(error.code,"PROVIDER_PERMISSION");assert.match(error.message,/tạo giọng cá nhân.*Voices: Write/);assert.doesNotMatch(error.message,/Voices: Read|Text to Speech/);return true;});
+ const response=server.apiError(failure),body=await response.json();
+ assert.equal(response.status,422);assert.equal(body.action,"contact_admin");assert.equal(body.code,"PROVIDER_PERMISSION");
+ assert.ok(!JSON.stringify(body).includes(fakeSecret));assert.equal(requests,1);assert.deepEqual(charged,[10]);
+ assert.equal(members.get(alice).ai_units_used,beforeUnits+10);
+ assert.deepEqual([...voices.entries()],beforeVoices);assert.deepEqual([...media.entries()],beforeMedia);
+});
 await check("speech retries consume units and return signed WAV references",async()=>{let synths=0;requestFetch=async(url)=>{if(String(url).includes("elevenlabs")){synths++;return new Response(new Uint8Array(synths===1?144000:86400));}return Response.json({choices:[{message:{content:JSON.stringify({text:"Câu ngắn hơn."})},finish_reason:"stop"}]});};const result=await eleven.generateSpeech({key:"offline",userId:alice,voiceId:"voiceAlice123",duration:5,segments:[{start:1,end:3,text:"Đây là câu hiện quá dài."}]});assert.equal(synths,2);assert.equal(charged.length,3);assert.equal(result.segments[0].duration,1.8);assert.equal(result.segments[0].audioBase64,undefined);assert.ok(result.segments[0].audioUrl.startsWith("https://offline.supabase.invalid/"));assert.equal(media.get(result.segments[0].audioPath).length,86444);});
 await check("failed timing preserves speech and blocks final export",async()=>{let synths=0;requestFetch=async(url)=>String(url).includes("elevenlabs")?(synths++,new Response(new Uint8Array(144000))):Response.json({choices:[{message:{content:JSON.stringify({text:"Vẫn quá dài"})}}]});await assert.rejects(eleven.generateSpeech({key:"offline",userId:alice,voiceId:"voiceAlice123",duration:5,segments:[{start:0,end:2,text:"Câu đầu"}]}),{code:"TIMING_NEEDS_EDIT"});assert.equal(synths,3);});
 await check("admin member changes require role and validate quota",async()=>{await assert.rejects(server.listMembers(alice),{code:"ADMIN_REQUIRED"});members.get(alice).role="admin";const changed=await server.updateMember(alice,{userId:bob,enabled:true,aiUnitsLimit:50,resetUsage:true});assert.equal(changed.ai_units_limit,50);assert.equal(changed.ai_units_used,0);await assert.rejects(server.updateMember(alice,{userId:bob,aiUnitsLimit:-1}),{code:"INVALID_QUOTA"});members.get(alice).role="member";});

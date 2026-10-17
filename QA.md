@@ -4,11 +4,11 @@ Cập nhật ngày **17/10/2026**. Dự án Supabase tại Singapore đã đư�
 
 ## Đã chạy và đạt
 
-**Tổng cộng 63 nhóm kiểm tra đều đạt:** 23 backend + 10 giao diện/dự án + 4 tải/dọn âm thanh + 15 tích hợp Supabase + 11 tích hợp Next.js.
+**Tổng cộng 65 nhóm kiểm tra đều đạt:** 25 backend + 10 giao diện/dự án + 4 tải/dọn âm thanh + 15 tích hợp Supabase + 11 tích hợp Next.js.
 
 | Bộ kiểm tra | Số nhóm | Phạm vi |
 | --- | ---: | --- |
-| Backend ngoại tuyến | 23 | Đủ ba chế độ `scenery`, `talking`, `face`; giới hạn ảnh và âm thanh; quyền dùng giọng có chữ ký; hạn mức; thời lượng; lỗi nhà cung cấp |
+| Backend ngoại tuyến | 25 | Đủ ba chế độ `scenery`, `talking`, `face`; giới hạn ảnh và âm thanh; quyền dùng giọng có chữ ký; hạn mức; thời lượng; lỗi nhà cung cấp |
 | Giao diện và dự án | 10 | Các hành vi giao diện và lưu dự án được kiểm tra ngoại tuyến |
 | Tải/dọn âm thanh ngoại tuyến | 4 | Tải lỗi vẫn dọn toàn bộ tệp riêng; chặn đường dẫn ngoài; giữ âm thanh đã trả phí khi dọn tạm gặp lỗi |
 | Supabase cục bộ | 15 | Auth, PostgREST và Storage thật trong Docker |
@@ -52,9 +52,15 @@ Ngày **17/10/2026**, quyền đọc giọng và tạo lời đọc đã đượ
 
 Tệp mẫu được giữ cục bộ ở thư mục outputs: `Apprivew-voice-test.wav` và `Apprivew-AI-test.mp4`. Chi phí theo ký tự của lần tạo giọng ước tính **$0.00476** theo bảng giá API, chưa đối soát hóa đơn hoặc dung lượng trong gói.
 
+## Thông báo quyền nhân bản giọng
+
+Ảnh lỗi do chủ tài khoản cung cấp cho thấy ElevenLabs từ chối quyền ở bước tạo giọng. App nay phân biệt lỗi đọc giọng, tạo lời đọc và nhân bản giọng. Khi yêu cầu tạo giọng bị `missing_permissions`, thông báo chỉ rõ cần bật **Voices → Write** cho đúng khóa ElevenLabs đang kết nối. Mã `PROVIDER_PERMISSION`, HTTP 422 và việc ẩn nội dung lỗi thô được giữ nguyên.
+
+Hai nhóm kiểm tra ngoại tuyến mới bao phủ từng ngữ cảnh và yêu cầu clone giả lập bị từ chối: đúng endpoint/multipart, chỉ gọi một lần, dùng 10 lượt nội bộ theo thiết kế hiện tại, không lưu giọng hoặc tệp khi thất bại và không lộ nội dung nhạy cảm từ provider. Chưa tạo bản sao giọng thật trong đợt sửa này.
+
 ## Chưa xác nhận / cần dịch vụ thật
 
-- **Nhân bản giọng chưa thử:** chưa có mẫu giọng và xác nhận của chủ giọng; chưa xác minh quyền Voices: Write hoặc quyền lợi gói. Thành công của TTS không xác nhận quyền tạo bản sao giọng.
+- **Nhân bản giọng thật chưa được xác nhận thành công:** ảnh người dùng gửi cho thấy yêu cầu bị từ chối quyền. Đợt sửa này kiểm tra phản hồi lỗi bằng dữ liệu mô phỏng; cần bật Voices: Write rồi thử lại với bản thu đã chọn. Thành công của TTS không xác nhận quyền tạo bản sao giọng.
 - Đã kiểm tra các bước phân tích → kịch bản → lời đọc → MP4 trên dữ liệu tổng hợp qua các bài thử. Chưa chạy toàn bộ luồng trên một phiên trình duyệt/điện thoại với video thực tế của người dùng.
 - Cần đối soát Site URL, Redirect URLs và mẫu email của Supabase cho domain chính thức. Quản trị viên đã được kích hoạt như trên; chưa xác nhận email SMTP đã đến hộp thư hoặc thao tác đăng nhập của chủ tài khoản.
 - Chưa thử clip dài 15–90 giây trên các điện thoại mục tiêu, nhập vào CapCut hoặc đăng lên Facebook.

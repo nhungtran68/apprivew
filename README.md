@@ -60,6 +60,10 @@ Bản này trích4–16 ảnh JPEG có thời gian từ clip, tối đa640px/ả
 
 API DeepSeek hiện được cấu hình theo tài liệu chính thức: https://api-docs.deepseek.com/guides/vision/ và https://api-docs.deepseek.com/guides/json_mode/ .
 
+## Khi nhân bản giọng báo thiếu quyền
+
+Quản trị viên mở ElevenLabs → Developers → API Keys, sửa đúng khóa đang dùng ở Vercel và bật **Voices → Write**, rồi Save. Lỗi này thuộc quyền tạo giọng; quyền đọc giọng và tạo lời đọc được kiểm tra riêng. Nếu giữ nguyên Secret key thì không cần đổi cấu hình Vercel. Sau khi lưu quyền, quay lại app chọn bản thu và thử lại một lần.
+
 ## Lưu dữ liệu và xuất video
 
 Video gốc và dự án tự lưu trên trình duyệt/thiết bị hiện tại bằng IndexedDB, có thể tải bản sao .loike để chuyển thiết bị. Bản đầu chưa đồng bộ thư viện dự án lên cloud. Supabase lưu hồ sơ, quyền, hạn mức, giọng được phép và tệp âm thanh riêng. Tệp lời đọc được tải về trình duyệt rồi xóa khỏi kho tạm; mẫu nhân bản giọng gửi tới ElevenLabs.
@@ -84,7 +88,7 @@ Không có tài khoản giả hay AI giả trong app. Bài kiểm tra ngoại tu
 
 ## Tình trạng kiểm chứng
 
-Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Schema và quyền đã được kiểm tra trên dự án Supabase thật tại Singapore; **63 nhóm kiểm tra đều đạt**: 23 backend, 10 giao diện/dự án, 4 tải/dọn âm thanh, 15 tích hợp Supabase và 11 tích hợp Next.js.
+Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Schema và quyền đã được kiểm tra trên dự án Supabase thật tại Singapore; **65 nhóm kiểm tra đều đạt**: 25 backend, 10 giao diện/dự án, 4 tải/dọn âm thanh, 15 tích hợp Supabase và 11 tích hợp Next.js.
 
 Đã gọi DeepSeek thật qua app cho cả ba chế độ `scenery`, `talking`, `face`: 6 yêu cầu phân tích/kịch bản đều HTTP 200, JSON hợp lệ và kết thúc `stop`. Mẫu thử tổng hợp dài 15 giây, có 9 ảnh, không có người hoặc âm thanh. Chi phí tính từ usage của 6 yêu cầu là **$0.003624636** theo giá ngoài cao điểm, không phải hóa đơn; một lượt phân tích thành công trước khi có log không nằm trong tổng này. Không suy rộng mẫu thử sang video thật 30–90 giây.
 
