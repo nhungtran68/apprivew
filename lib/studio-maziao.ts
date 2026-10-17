@@ -108,7 +108,8 @@ async function getVoice(key: string, id: string, deadline?: number): Promise<Pro
   return voice;
 }
 
-export async function listMaziaoVoices(key: string, userId: string): Promise<StudioVoice[]> {
+export type MaziaoCatalogDiagnostics = { received: number; public: number; vietnamese: number; cloneable: number; validIds: number; fieldNames: string[]; firstFieldTypes: Record<string, string> };
+export async function listMaziaoVoices(key: string, userId: string, report?: (value: MaziaoCatalogDiagnostics) => void): Promise<StudioVoice[]> {
   const model = maziaoModel();
   await assertModel(key, model);
   const grants = (await authorizedVoiceRows(userId)).filter(row => row.voice_id.startsWith("maziao:"));
@@ -117,6 +118,9 @@ export async function listMaziaoVoices(key: string, userId: string): Promise<Stu
   const query = new URLSearchParams({ language: "vi", type: "system", limit: "100", offset: "0", sort_field: "total_used" });
   const result = await api(key, `/voices?${query}`), data = result.data as { items?: ProviderVoice[] } | undefined;
   if (!Array.isArray(data?.items)) throw invalidResponse();
+  const items = data.items.filter((voice): voice is ProviderVoice => Boolean(voice && typeof voice === "object" && !Array.isArray(voice)));
+  const first = items[0];
+  report?.({ received: data.items.length, public: items.filter(publicVoice).length, vietnamese: items.filter(voice => voice.language === "vi" || voice.language === "vi-VN").length, cloneable: items.filter(compatible).length, validIds: items.filter(voice => rawId(voice.id)).length, fieldNames: first ? Object.keys(first).filter(name => /^[a-zA-Z_]{1,40}$/.test(name)).slice(0, 40) : [], firstFieldTypes: Object.fromEntries(["id", "userId", "user_id", "language", "refFile", "ref_file", "refText", "ref_text"].map(name => [name, !first || !Object.hasOwn(first, name) ? "missing" : (first as Record<string, unknown>)[name] === null ? "null" : typeof (first as Record<string, unknown>)[name]])) });
   const seen = new Set<string>();
   const shared = data.items.filter(voice => {
     if (!voice || !rawId(voice.id) || !publicVoice(voice) || !compatible(voice)) return false;
