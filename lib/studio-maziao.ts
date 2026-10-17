@@ -198,7 +198,7 @@ async function synthesizeBatch(key: string, userId: string, voiceId: string, seg
   const data = result.data as { taskId?: unknown; totalCost?: unknown } | undefined;
   if (!data || !rawId(data.taskId)) throw invalidResponse();
   // Actual provider credits, never estimated as 1 character = 1 credit.
-  console.info(JSON.stringify({ event: "studio_voice_usage", provider: "maziao", model: parsed.model, characters: segments.reduce((sum, segment) => sum + segment.text.length, 0), credits: typeof data.totalCost === "number" && Number.isSafeInteger(data.totalCost) && data.totalCost >= 0 && data.totalCost <= 1000000000 ? data.totalCost : null, segments: segments.length, elapsedMs: Date.now() - started }));
+  console.info(JSON.stringify({ event: "studio_voice_usage", provider: "maziao", model: parsed.model, characters: segments.reduce((sum, segment) => sum + segment.text.length, 0), credits: typeof data.totalCost === "number" && Number.isFinite(data.totalCost) && data.totalCost >= 0 && data.totalCost <= 1000000000 ? data.totalCost : null, segments: segments.length, elapsedMs: Date.now() - started }));
   while (Date.now() < deadline) {
     const polled = await api(key, "/tts/status", { method: "POST", body: JSON.stringify({ ids: [data.taskId] }) }, deadline);
     const job = Array.isArray(polled.data) ? (polled.data as SpeechJob[]).find(item => item?.id === data.taskId) : undefined;

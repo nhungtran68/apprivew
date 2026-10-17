@@ -254,7 +254,7 @@ export default function Studio() {
   const voiceProvider = config.voiceProvider || "eleven";
   const isMaziao = voiceProvider === "maziao";
   const voiceProviderLabel = isMaziao ? "Maziao" : "ElevenLabs";
-  const voicePlanNote = isMaziao ? "Maziao do quản trị viên kết nối. Tạo giọng và lời đọc sử dụng credit của tài khoản chung." : "Giọng thư viện qua app cần gói ElevenLabs Starter trở lên của quản trị viên.";
+  const voicePlanNote = isMaziao ? "Maziao do quản trị viên kết nối. Chi phí và hạn mức phụ thuộc model và gói của tài khoản chung." : "Giọng thư viện qua app cần gói ElevenLabs Starter trở lên của quản trị viên.";
   const update = useCallback((changes: Partial<Project>) => {
     setProject(current => applyProjectChanges(current, changes));
     if (affectsExport(changes)) setExported(undefined);

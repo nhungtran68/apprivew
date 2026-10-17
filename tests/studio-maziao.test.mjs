@@ -123,7 +123,7 @@ function speechHandler(h, { durations = [1, 2], urls, status = "completed", onSu
     if (request.url.endsWith("/configs")) return config();
     if (request.url.endsWith("/tts/submit")) {
       submits++; onSubmit?.(JSON.parse(request.body), submits);
-      return Response.json({ data: { taskId: `task_${submits}`, totalCost: 34, remainingCredits: 1000 } });
+      return Response.json({ data: { taskId: `task_${submits}`, totalCost: 34.5, remainingCredits: 1000 } });
     }
     if (request.url.endsWith("/tts/status")) {
       polls++;
@@ -267,7 +267,7 @@ await check("speech submits the entire timeline once, polls at six seconds, and 
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/status")).length, 2);
   assert.deepEqual(h.waits, [6000]); assert.equal(h.media.size, 2); assert.equal(h.shortened.length, 0);
-  assert.equal(h.usage.length, 1); assert.equal(h.usage[0].credits, 34); assert.equal(h.usage[0].characters, 28);
+  assert.equal(h.usage.length, 1); assert.equal(h.usage[0].credits, 34.5); assert.equal(h.usage[0].characters, 28);
   assert.ok(!JSON.stringify(h.usage).includes(h.key)); assert.ok(!JSON.stringify(h.usage).includes(original[0].text));
   for (const request of h.requests) {
     if (isApi(request)) assert.equal(request.headers.Authorization, `Bearer ${h.key}`);
