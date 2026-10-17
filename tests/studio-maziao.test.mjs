@@ -112,18 +112,18 @@ let passed = 0;
 async function check(name, run) { await run(); console.log(`PASS ${name}`); passed++; }
 const scoped = (id, model = "vieten_speech") => `maziao:${model}:${id}`;
 const config = () => Response.json({ data: { ttsModels: [{ id: "vieten_speech", support_cloning: true, supported_languages: ["vi", "en"] }] } });
-const voice = (id, extra = {}) => ({ id, name: id, userId: null, language: "vi", modelId: "vieten_speech", refFile: `https://r2-storage.maziao.com/voices/${id}.wav`, previewUrl: `https://r2-storage.maziao.com/samples/${id}.wav`, ...extra });
+const voice = (id, extra = {}) => ({ id, name: id, userId: null, language: "vi", modelId: "vieten_speech", refFile: `https://r2-storage.maziao.com/voices/${id}.wav`, refText: "Trong vườn hoa nở rực rỡ.", previewUrl: `https://r2-storage.maziao.com/samples/${id}.wav`, ...extra });
 const sampleSegments = () => [{ start: 0, end: 3, text: "Xin chào." }, { start: 4, end: 7, text: "Một câu chuyện nhỏ." }];
 const isApi = request => request.url.startsWith("https://app.maziao.com/api/");
 async function provider(h) { return h.entry("lib/studio-maziao.ts"); }
 
-function speechHandler(h, { durations = [1, 2], urls, status = "completed", onSubmit } = {}) {
+function speechHandler(h, { durations = [1, 2], urls, status = "completed", onSubmit, totalCost = 34.5, omitCost = false } = {}) {
   let polls = 0, submits = 0;
   return request => {
     if (request.url.endsWith("/configs")) return config();
     if (request.url.endsWith("/tts/submit")) {
       submits++; onSubmit?.(JSON.parse(request.body), submits);
-      return Response.json({ data: { taskId: `task_${submits}`, totalCost: 34.5, remainingCredits: 1000 } });
+      return Response.json({ data: { taskId: `task_${submits}`, ...omitCost ? {} : { totalCost }, remainingCredits: 1000 } });
     }
     if (request.url.endsWith("/tts/status")) {
       polls++;
@@ -167,11 +167,13 @@ await check("voice lists expose only verified public voices and the current memb
     if (request.url.endsWith("/configs")) return config();
     if (request.url.includes("/voices?")) {
       const query = new URL(request.url).searchParams;
-      assert.equal(query.get("type"), "system"); assert.equal(query.get("language"), "vi"); assert.equal(query.get("modelId"), "vieten_speech");
+      assert.equal(query.get("type"), "system"); assert.equal(query.get("language"), "vi"); assert.equal(query.has("modelId"), false); assert.equal(query.get("sort_field"), "total_used");
       return Response.json({ data: { items: [
         voice("publicVoice"), voice("publicVoice"), voice("foreignClone", { userId: "provider-account", name: "Bob secret" }),
         voice("staleShared", { userId: "provider-account", previewUrl: "https://private.invalid/secret.wav" }),
-        voice("missingOwnership", { userId: undefined }), voice("wrongLanguage", { language: "en" }), voice("wrongModel", { modelId: "jeck_speech" }),
+        voice("missingOwnership", { userId: undefined }), voice("wrongLanguage", { language: "en" }),
+        voice("missingTranscript", { refText: "" }), voice("missingSample", { refFile: "" }),
+        voice("unprovenCloneFlag", { refFile: undefined, refText: undefined, supportCloning: true }),
       ] } });
     }
     assert.equal(request.url, "https://app.maziao.com/api/voices/ownClone");
@@ -181,9 +183,35 @@ await check("voice lists expose only verified public voices and the current memb
   assert.deepEqual(Array.from(voices, item => item.voiceId), [scoped("ownClone"), scoped("publicVoice")]);
   assert.equal(voices[0].group, "personal"); assert.equal(voices[1].group, "vietnamese");
   const visible = JSON.stringify(voices);
-  for (const secret of ["foreignClone", "Bob secret", "staleShared", "missingOwnership", "wrongLanguage", "wrongModel", "private.invalid", "provider-account", "refFile"]) assert.ok(!visible.includes(secret));
+  for (const secret of ["foreignClone", "Bob secret", "staleShared", "missingOwnership", "wrongLanguage", "missingTranscript", "missingSample", "unprovenCloneFlag", "private.invalid", "provider-account", "refFile", "refText"]) assert.ok(!visible.includes(secret));
   assert.ok(h.grants.has(`${alice}:${scoped("publicVoice")}`));
   assert.ok(!h.requests.some(request => request.url.includes("my-voices")));
+});
+
+await check("verified public reference voices can use a compatible engine independent of their original model", async () => {
+  const h = await harness(), maziao = await provider(h);
+  const originalVoice = voice("crossModelVoice", { modelId: "lingual_speech_v2", type: "legacy-reference" });
+  const snakeVoice = { id: "snakeVoice", name: "Snake voice", user_id: null, language: "vi", model_id: "lingual_speech_v2", ref_file: "https://r2-storage.maziao.com/voices/snake.wav", ref_text: "Lời mẫu bằng tiếng Việt." };
+  h.setHandler(request => {
+    if (request.url.endsWith("/configs")) return config();
+    assert.ok(request.url.includes("/voices?"));
+    const query = new URL(request.url).searchParams;
+    assert.equal(query.get("type"), "system"); assert.equal(query.has("modelId"), false);
+    return Response.json({ data: { items: [originalVoice, snakeVoice], total: 2 } });
+  });
+  const listed = await maziao.listMaziaoVoices(h.key, alice);
+  assert.deepEqual(Array.from(listed, item => item.voiceId), [scoped("crossModelVoice"), scoped("snakeVoice")]);
+  assert.equal(h.grants.get(`${alice}:${scoped("crossModelVoice")}`).source, "shared");
+  h.setHandler(request => {
+    assert.ok(request.url.endsWith("/voices/crossModelVoice"));
+    return Response.json({ data: originalVoice });
+  });
+  assert.equal(await maziao.authorizeMaziaoVoice(alice, scoped("crossModelVoice")), scoped("crossModelVoice"));
+  h.setHandler(() => Response.json({ data: { ...originalVoice, userId: "private-provider-owner" } }));
+  await assert.rejects(maziao.authorizeMaziaoVoice(alice, scoped("crossModelVoice")), { code: "VOICE_NOT_AUTHORIZED" });
+  h.setHandler(() => Response.json({ data: { ...originalVoice, refText: "" } }));
+  await assert.rejects(maziao.authorizeMaziaoVoice(alice, scoped("crossModelVoice")), { code: "VOICE_NOT_AUTHORIZED" });
+  assert.equal(h.charged.length, 0);
 });
 
 await check("historical shared grants cannot authorize private provider voices", async () => {
@@ -262,6 +290,7 @@ await check("speech submits the entire timeline once, polls at six seconds, and 
   } }));
   const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: original, duration: 7 });
   assert.equal(result.provider, "maziao"); assert.equal(result.voiceId, scoped("publicVoice"));
+  assert.equal(result.usage.credits, 34.5); assert.equal(result.usage.jobs, 1);
   assert.deepEqual(Array.from(result.segments, item => item.duration), [1, 2]);
   assert.deepEqual(Array.from(result.segments, item => item.revised), [false, false]);
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
@@ -333,6 +362,42 @@ await check("overlong speech retries only the offending segment and never trunca
   await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 7 }), { code: "TIMING_NEEDS_EDIT", action: "script" });
   assert.equal(submissions, 3); assert.equal(h.shortened.length, 2); assert.equal(h.media.size, 0); assert.equal(h.deleted.length, 0);
   assert.equal(segments[1].text, "Một câu chuyện nhỏ.");
+  assert.equal(h.usage.length, submissions); assert.equal(h.usage.reduce((sum, event) => sum + event.credits, 0), 10 * submissions);
+});
+
+await check("successful timing corrections include the cost of every accepted generation job", async () => {
+  for (const costs of [[10, 10], [10, null]]) {
+    const h = await harness(), maziao = await provider(h), segments = sampleSegments();
+    let submissions = 0, durations;
+    h.setHandler(request => {
+      if (request.url.endsWith("/configs")) return config();
+      if (request.url.endsWith("/tts/submit")) {
+        submissions++; const body = JSON.parse(request.body);
+        assert.equal(body.parts.length, submissions === 1 ? 2 : 1);
+        durations = submissions === 1 ? [1, 6] : [2];
+        return Response.json({ data: { taskId: `task_${submissions}`, totalCost: costs[submissions - 1] } });
+      }
+      if (request.url.endsWith("/tts/status")) return Response.json({ data: [{ id: `task_${submissions}`, status: "completed", resultUrls: durations.map((_, index) => `https://r2-storage.maziao.com/tts-outputs/task_${submissions}_${index}.wav`) }] });
+      const index = Number(request.url.match(/_(\d+)\.wav$/)[1]);
+      return new Response(wavBytes(durations[index]));
+    });
+    const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 7 });
+    assert.equal(submissions, 2); assert.equal(result.usage.jobs, submissions);
+    assert.equal(result.usage.credits, costs.includes(null) ? null : 10 * submissions);
+    assert.deepEqual(Array.from(result.segments, segment => segment.duration), [1, 2]);
+    assert.deepEqual(Array.from(result.segments, segment => segment.revised), [false, true]);
+    assert.equal(h.media.size, 2);
+  }
+});
+
+await check("missing or invalid provider costs stay unknown rather than appearing as free audio", async () => {
+  for (const totalCost of [undefined, null, "34.5", -1, 1000000001]) {
+    const h = await harness(), maziao = await provider(h);
+    h.setHandler(speechHandler(h, { durations: [1], totalCost, omitCost: totalCost === undefined }));
+    const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: [sampleSegments()[0]], duration: 3 });
+    assert.equal(result.usage.credits, null); assert.equal(result.usage.jobs, 1); assert.equal(h.usage[0].credits, null);
+    assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+  }
 });
 
 await check("partial storage failure removes the narration already stored for the member", async () => {

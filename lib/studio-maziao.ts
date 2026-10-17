@@ -91,7 +91,12 @@ function publicVoice(voice: ProviderVoice) {
   return Object.hasOwn(voice, "userId") ? voice.userId === null : Object.hasOwn(voice, "user_id") && voice.user_id === null;
 }
 const voiceModel = (voice: ProviderVoice) => voice.modelId ?? voice.model_id;
-const compatible = (voice: ProviderVoice, model: MaziaoModel) => (!voiceModel(voice) || voiceModel(voice) === model) && (voice.language === "vi" || voice.language === "vi-VN") && typeof (voice.refFile ?? voice.ref_file) === "string" && Boolean(voice.refFile ?? voice.ref_file);
+const compatible = (voice: ProviderVoice) => {
+  // Maziao's client matches clone-capable engines using language and reference
+  // audio + transcript. A voice's original modelId is a preference, not a lock.
+  const refFile = voice.refFile ?? voice.ref_file, refText = voice.refText ?? voice.ref_text;
+  return (voice.language === "vi" || voice.language === "vi-VN") && typeof refFile === "string" && Boolean(refFile.trim()) && typeof refText === "string" && Boolean(refText.trim());
+};
 function presentVoice(voice: ProviderVoice, id: string, personal: boolean, fallback: string): StudioVoice {
   return { voiceId: id, name: cleanText(voice.name, 200) || fallback, category: personal ? "cloned" : "library", group: personal ? "personal" : "vietnamese", language: "vi", gender: voice.gender === "male" || voice.gender === "female" ? voice.gender : undefined, previewUrl: safeMediaUrl(voice.previewUrl ?? voice.preview_url) };
 }
@@ -109,12 +114,12 @@ export async function listMaziaoVoices(key: string, userId: string): Promise<Stu
   const grants = (await authorizedVoiceRows(userId)).filter(row => row.voice_id.startsWith("maziao:"));
   const owned = grants.filter(row => row.source === "personal");
   const ownedIds = new Set(owned.map(row => row.voice_id));
-  const query = new URLSearchParams({ language: "vi", modelId: model, type: "system", limit: "100", offset: "0" });
+  const query = new URLSearchParams({ language: "vi", type: "system", limit: "100", offset: "0", sort_field: "total_used" });
   const result = await api(key, `/voices?${query}`), data = result.data as { items?: ProviderVoice[] } | undefined;
   if (!Array.isArray(data?.items)) throw invalidResponse();
   const seen = new Set<string>();
   const shared = data.items.filter(voice => {
-    if (!voice || !rawId(voice.id) || !publicVoice(voice) || !compatible(voice, model)) return false;
+    if (!voice || !rawId(voice.id) || !publicVoice(voice) || !compatible(voice)) return false;
     const id = scopedId(model, voice.id);
     if (seen.has(id) || ownedIds.has(id)) return false;
     seen.add(id); return true;
@@ -162,8 +167,8 @@ export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
   if (!grant || !["shared", "personal"].includes(grant.source)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Tải lại danh sách và chọn giọng thuộc tài khoản của bạn.", 403);
   const { key } = await providerKey(userId, "maziao");
   const voice = await getVoice(key, parsed.id);
-  if (grant.source === "shared" && (!publicVoice(voice) || !compatible(voice, parsed.model))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
-  if (voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng này dùng model khác. Hãy tải lại danh sách giọng.", 422);
+  if (grant.source === "shared" && (!publicVoice(voice) || !compatible(voice))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
+  if (grant.source === "personal" && voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng này dùng model khác. Hãy tải lại danh sách giọng.", 422);
   return voiceId;
 }
 
@@ -190,7 +195,7 @@ function resultUrls(job: SpeechJob, count: number): string[] {
   if (!Array.isArray(result) || result.length !== count || result.some(item => !safeMediaUrl(item))) throw invalidResponse();
   return result as string[];
 }
-async function synthesizeBatch(key: string, userId: string, voiceId: string, segments: StudioSegment[], deadline: number): Promise<Audio[]> {
+async function synthesizeBatch(key: string, userId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[]): Promise<Audio[]> {
   const parsed = parseMaziaoVoiceId(voiceId);
   await consumeAiUnits(userId, Math.max(1, Math.ceil(segments.reduce((sum, segment) => sum + segment.text.length, 0) / 100)));
   const started = Date.now();
@@ -198,7 +203,9 @@ async function synthesizeBatch(key: string, userId: string, voiceId: string, seg
   const data = result.data as { taskId?: unknown; totalCost?: unknown } | undefined;
   if (!data || !rawId(data.taskId)) throw invalidResponse();
   // Actual provider credits, never estimated as 1 character = 1 credit.
-  console.info(JSON.stringify({ event: "studio_voice_usage", provider: "maziao", model: parsed.model, characters: segments.reduce((sum, segment) => sum + segment.text.length, 0), credits: typeof data.totalCost === "number" && Number.isFinite(data.totalCost) && data.totalCost >= 0 && data.totalCost <= 1000000000 ? data.totalCost : null, segments: segments.length, elapsedMs: Date.now() - started }));
+  const credits = typeof data.totalCost === "number" && Number.isFinite(data.totalCost) && data.totalCost >= 0 && data.totalCost <= 1000000000 ? data.totalCost : null;
+  costs.push(credits);
+  console.info(JSON.stringify({ event: "studio_voice_usage", provider: "maziao", model: parsed.model, characters: segments.reduce((sum, segment) => sum + segment.text.length, 0), credits, segments: segments.length, elapsedMs: Date.now() - started }));
   while (Date.now() < deadline) {
     const polled = await api(key, "/tts/status", { method: "POST", body: JSON.stringify({ ids: [data.taskId] }) }, deadline);
     const job = Array.isArray(polled.data) ? (polled.data as SpeechJob[]).find(item => item?.id === data.taskId) : undefined;
@@ -219,7 +226,8 @@ export async function generateMaziaoSpeech(input: { key: string; userId: string;
   const parsed = parseMaziaoVoiceId(input.voiceId), deadline = Date.now() + 240000;
   await assertModel(input.key, parsed.model, deadline);
   const segments = input.segments.map(segment => ({ ...segment }));
-  const audio = await synthesizeBatch(input.key, input.userId, input.voiceId, segments, deadline);
+  const costs: (number | null)[] = [];
+  const audio = await synthesizeBatch(input.key, input.userId, input.voiceId, segments, deadline, costs);
   // Recreate only overlong segments. Never truncate paid speech to force a fit.
   for (let attempt = 0; attempt < 2; attempt++) {
     const indexes = segments.flatMap((segment, index) => audio[index].duration > segment.end - segment.start ? [index] : []);
@@ -230,7 +238,7 @@ export async function generateMaziaoSpeech(input: { key: string; userId: string;
       if (Date.now() + 30000 >= deadline) throw new StudioError("TIMING_NEEDS_EDIT", "Cần rút gọn thêm lời thoại để khớp cảnh. Chỉnh kịch bản rồi tạo lại.", 422, "script");
       segments[index].text = await shortenSegment(key, segments[index], audio[index].duration, () => consumeAiUnits(input.userId, 1), Math.min(30000, deadline - Date.now() - 30000));
     }
-    const replacements = await synthesizeBatch(input.key, input.userId, input.voiceId, indexes.map(index => segments[index]), deadline);
+    const replacements = await synthesizeBatch(input.key, input.userId, input.voiceId, indexes.map(index => segments[index]), deadline, costs);
     indexes.forEach((index, offset) => { audio[index] = replacements[offset]; });
   }
   const overlong = segments.findIndex((segment, index) => audio[index].duration > segment.end - segment.start);
@@ -242,6 +250,6 @@ export async function generateMaziaoSpeech(input: { key: string; userId: string;
       const media = await storeNarration(input.userId, audio[index].wav, index); stored.push(media.audioPath);
       results.push({ ...segment, ...media, audioMime: "audio/wav", duration: audio[index].duration, revised: segment.text !== input.segments[index].text });
     }
-    return { segments: results, duration: input.duration, voiceId: input.voiceId, sampleRate: audio[0].sampleRate, channels: audio[0].channels, provider: "maziao" };
+    return { segments: results, duration: input.duration, voiceId: input.voiceId, sampleRate: audio[0].sampleRate, channels: audio[0].channels, provider: "maziao", usage: { credits: costs.every(cost => cost !== null) ? costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0) : null, jobs: costs.length } };
   } catch (error) { await removeOwnedMedia(input.userId, stored).catch(() => {}); throw error; }
 }
