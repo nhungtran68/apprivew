@@ -86,3 +86,13 @@ node tests/studio-auth.integration.mjs --config /absolute/path/work/local-supaba
 Bài thứ hai cần Next.js đang chạy tại `http://localhost:4320`, với Supabase cục bộ đã được cấu hình. Không đưa service-role key hoặc secret key cục bộ vào mã trình duyệt hay môi trường Vercel chính thức.
 
 DeepSeek chỉ đọc ảnh lấy mẫu, không nghe tiếng gốc hoặc xem chuyển động liên tục. Video gốc và thư viện dự án hiện được lưu trên thiết bị.
+## Cập nhật cá nhân hóa, kịch bản và tải video — 17/10/2026
+
+- 66 nhóm kiểm thử ngoại tuyến đạt: 29 backend, 14 UI/lưu dự án, 4 tải/xóa âm thanh tạm, 8 lưu/chia sẻ MP4, 11 thư viện giọng và gói thuê bao. Có kiểm tra chặn tài khoản Free trước khi nhập giọng/gọi TTS/trừ lượt, chặn mã giọng tùy ý và bảo vệ giọng riêng của thành viên khác.
+- Hồ sơ cá nhân dùng bảng `studio_settings` và RLS đã có; không thêm bảng hoặc thay đổi quyền database. `/api/profile` kiểm tra phiên đăng nhập, origin khi ghi, giới hạn dữ liệu và chỉ ghi người dùng hiện tại. Ghi `userId` khác trong body không đổi chủ hồ sơ.
+- Phân tích trả ba hướng kịch bản có thông điệp, hook và lý do. Kịch bản dùng ý định và hồ sơ đã lưu; phần mô tả ảnh chỉ là tư liệu. Bộ thử kiểm tra prompt/contract và điều chỉnh riêng theo video; không bảo đảm mọi đầu ra AI đều đạt chất lượng biên tập, nên vẫn cần bước duyệt.
+- Sửa việc `update({step})` làm mất MP4 vừa ghép. Chuyển bước/đổi tiêu đề giữ bản xuất, đổi đầu vào media xóa hiệu lực. Nhập dự án khác và chuyển tài khoản xóa bản xuất cũ để không tải nhầm video.
+- Nút tải là liên kết MP4 tồn tại cùng preview; có Save File Picker trên trình duyệt hỗ trợ, chia sẻ tệp thật khi điện thoại hỗ trợ và liên kết mở video dự phòng. Hủy hộp thoại không báo lưu thành công. Không khẳng định đã tái hiện được lỗi tải trên đúng trình duyệt của chủ tài khoản.
+- Chạy lại helper FFmpeg WASM thật với WAV ElevenLabs đã có: MP4 241.418 byte, H.264/yuv420p/30fps, AAC 48 kHz stereo, 15 giây; tương quan âm thanh 0,999968. Không gọi thêm ElevenLabs để làm bài này.
+- Danh sách mới lấy tối đa 10 giọng tiếng Việt và 5 giọng phổ biến từ ElevenLabs. Không gắn nhãn sử dụng API miễn phí dựa vào `free_users_allowed`; gói Free không dùng được Voice Library qua API. Dữ liệu thư viện có thể thay đổi hoặc tạm không khả dụng; giọng mặc định và cá nhân vẫn hiển thị khi thư viện lỗi.
+

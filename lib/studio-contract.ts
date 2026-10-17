@@ -1,6 +1,9 @@
-export type StudioProfile = { name?: string; audience?: string; tone?: string; brand?: string; facts?: string; cta?: string; mode?: "scenery" | "talking" | "face" };
+export type StudioProfile = { name?: string; channel?: string; audience?: string; topic?: string; tone?: string; pronoun?: string; brand?: string; facts?: string; cta?: string; customPrompt?: string; mode?: "scenery" | "talking" | "face" };
+export const STUDIO_FORMATS = ["review", "story", "tips", "sales"] as const;
+export type StudioFormat = typeof STUDIO_FORMATS[number];
+export type StudioAngle = { id: string; title: string; format: StudioFormat; purpose: string; hook: string; reason: string };
 export type StudioSegment = { start: number; end: number; text: string };
-export type StudioAnalysis = { duration: number; summary: string; intentSummary: string; observations: { start: number; end: number; description: string }[]; facts: string[]; unknowns: string[]; questions: string[] };
+export type StudioAnalysis = { duration: number; summary: string; intentSummary: string; observations: { start: number; end: number; description: string }[]; facts: string[]; unknowns: string[]; questions: string[]; suggestedAngles?: StudioAngle[]; recommendedAngleId?: string };
 
 export class StudioError extends Error {
   constructor(public code: string, message: string, public status = 400, public action?: string) { super(message); this.name = "StudioError"; }
@@ -14,8 +17,19 @@ export function validDuration(value: unknown): number {
 export function sanitizeProfile(value: unknown): StudioProfile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const raw = value as Record<string, unknown>;
-  const fields = Object.fromEntries(["name", "audience", "tone", "brand", "facts", "cta"].map((key) => [key, cleanText(raw[key], key === "facts" ? 4000 : 800)]));
+  const fields = Object.fromEntries(["name", "channel", "audience", "topic", "tone", "pronoun", "brand", "facts", "cta", "customPrompt"].map((key) => [key, cleanText(raw[key], key === "facts" || key === "customPrompt" ? 4000 : 800)]));
   return { ...fields, mode: raw.mode === "talking" || raw.mode === "face" ? raw.mode : "scenery" };
+}
+export function mergeProfile(saved: StudioProfile, override: unknown): StudioProfile {
+  const raw = override && typeof override === "object" && !Array.isArray(override) ? override as Record<string, unknown> : {};
+  const safe = sanitizeProfile(raw), merged = { ...sanitizeProfile(saved) } as Record<string, unknown>;
+  for (const key of Object.keys(safe)) if (Object.hasOwn(raw, key)) merged[key] = safe[key as keyof StudioProfile];
+  return sanitizeProfile(merged);
+}
+export function validFormat(value: unknown): StudioFormat {
+  if (value === undefined || value === null || value === "") return "review";
+  if (typeof value === "string" && STUDIO_FORMATS.some((format) => format === value)) return value as StudioFormat;
+  throw new StudioError("INVALID_FORMAT", "Chọn dạng video: review, kể chuyện, chia sẻ mẹo hoặc giới thiệu sản phẩm.");
 }
 export function validateSegments(value: unknown, duration: number): StudioSegment[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 16) throw new StudioError("INVALID_SEGMENTS", "Kịch bản cần từ 1 đến 16 đoạn lời thoại.");

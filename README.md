@@ -1,6 +1,22 @@
 # Lời Kể · apprivew
 
-Web app tiếng Việt: quay video → nêu ý muốn chia sẻ → duyệt lời → tạo giọng → tải MP4.
+Web app tiếng Việt: quay video → xác định thông điệp → chọn hướng kịch bản → tạo giọng → tải MP4.
+
+## Cá nhân hóa và chọn kịch bản
+
+Mỗi thành viên có mục **Hiểu về tôi**: tên kênh, chủ đề, người xem, giọng điệu, cách xưng hô, thông tin nền, lời nhắn cuối và lời dặn riêng cho AI. Hồ sơ lưu theo tài khoản trong Supabase, tách quyền bằng RLS; không tự suy diễn tính cách hoặc học từ nội dung thành viên khác. Video mới dùng hồ sơ đã lưu; từng video có thể đổi người xem, giọng kể và thông tin cần nói đúng.
+
+Chọn một trong bốn dạng: **review, kể chuyện, chia sẻ mẹo, giới thiệu sản phẩm**. AI phân tích ảnh làm tư liệu và đề xuất ba góc có thông điệp, câu mở và lý do phù hợp. Người dùng chọn góc rồi mới tạo một kịch bản có mở đầu, ý chính và kết thúc theo thời lượng. Phân tích cảnh không được dùng làm lời thoại mặc định. Khi thiếu giá, trải nghiệm, công dụng hoặc kết quả, AI cần hỏi hoặc chọn góc ít giả định thay vì bịa.
+
+Ba góc ý tưởng nằm trong cùng lần phân tích; chỉ góc đã chọn được viết thành kịch bản. Đổi góc rồi viết lại là một yêu cầu DeepSeek mới, tạo lại lời đọc tính riêng.
+
+## Giọng tiếng Việt và thư viện phổ biến
+
+App truy vấn Voice Library ElevenLabs bằng `language=vi`, ưu tiên tối đa 10 giọng có mô tả phù hợp kể chuyện, hội thoại, quảng cáo hoặc mạng xã hội. Thêm tối đa 5 giọng phổ biến toàn thư viện theo `cloned_by_count`. Số người đã thêm, ngôn ngữ và bản nghe mẫu lấy từ provider, không tự tạo tên hay số liệu. Danh sách được làm mới với cache tối đa 5 phút; có thể thay đổi khi chủ giọng rút chia sẻ.
+
+Giọng thư viện qua API và nhân bản giọng nhanh cần **gói ElevenLabs trả phí (Starter trở lên) của quản trị viên**. Thành viên app không cần mua riêng. App kiểm tra gói trước khi nhập/dùng giọng thư viện hoặc gửi yêu cầu nhân bản, báo lỗi cụ thể và không trừ lượt AI nội bộ khi bị chặn ở bước kiểm tra gói. Chỉ giọng công khai được server xác minh trong danh sách tuyển chọn mới được nhập; quyền cá nhân vẫn được ký riêng theo thành viên. Nghe mẫu dùng tệp có sẵn; bấm tạo lời đọc mới phát sinh TTS.
+
+Nguồn: [Voice Library](https://elevenlabs.io/docs/eleven-creative/voices/voice-library), [API thư viện](https://elevenlabs.io/docs/api-reference/voices/voice-library/get-shared).
 
 ## Công nghệ
 
@@ -67,6 +83,8 @@ Quản trị viên mở ElevenLabs → Developers → API Keys, sửa đúng kh�
 ## Lưu dữ liệu và xuất video
 
 Video gốc và dự án tự lưu trên trình duyệt/thiết bị hiện tại bằng IndexedDB, có thể tải bản sao .loike để chuyển thiết bị. Bản đầu chưa đồng bộ thư viện dự án lên cloud. Supabase lưu hồ sơ, quyền, hạn mức, giọng được phép và tệp âm thanh riêng. Tệp lời đọc được tải về trình duyệt rồi xóa khỏi kho tạm; mẫu nhân bản giọng gửi tới ElevenLabs.
+
+MP4 vừa ghép được giữ khi chuyển bước, đổi tiêu đề hoặc xem lại hồ sơ; chỉ thay đổi đầu vào âm thanh/video mới làm mất hiệu lực bản xuất. Nút tải dùng liên kết bền vững; trình duyệt hỗ trợ có thêm **Lưu vào thư mục…**, điện thoại hỗ trợ có **Chia sẻ tệp video**, cùng liên kết mở video để lưu dự phòng. Cần lưu MP4 trước khi đóng/tải lại trang hoặc chuyển sang dự án khác; bản MP4 hoàn chỉnh chưa lưu trong IndexedDB.
 
 Clip2–90giây, tối đa60MB. Xuất MP4 H.264/yuv420p, AAC48kHz,30fps; giữ tỷ lệ hình nguồn, không đồng bộ khẩu hình. Nguồn HDR cần chuyển SDR trước. Bộ ghép tải lần đầu khoảng31MB; thiết bị cần còn đủ bộ nhớ và giữ trang mở khi xử lý. CapCut/Facebook cần kiểm tra bằng thiết bị thật trước khi mở rộng nhóm.
 

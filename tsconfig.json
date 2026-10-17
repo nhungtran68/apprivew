@@ -38,6 +38,7 @@
     "components/**/*.tsx",
     "lib/studio-*.ts",
     "lib/video-export.ts",
+    "lib/video-download.ts",
     "proxy.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"

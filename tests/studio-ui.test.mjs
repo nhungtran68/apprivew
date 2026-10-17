@@ -13,14 +13,22 @@ import ts from "typescript";
 
 const sourcePath = fileURLToPath(new URL("../components/Studio.tsx", import.meta.url));
 const source = readFileSync(sourcePath, "utf8");
-const exportsForTests = "\nexport {restoreArchive,freshProject,applyProjectChanges,applySegmentChange,scriptKey,safeProfile,configurationFrom};";
+const exportsForTests = "\nexport {restoreArchive,freshProject,applyProjectChanges,applySegmentChange,scriptKey,intentKey,safeProfile,applySavedProfile,configurationFrom,affectsExport};";
 const compiled = ts.transpileModule(source + exportsForTests, {
   fileName: sourcePath,
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 const evaluated = { exports: {} };
-new Function("require", "module", "exports", compiled)(createRequire(import.meta.url), evaluated, evaluated.exports);
-const { restoreArchive, freshProject, applyProjectChanges, applySegmentChange, scriptKey, safeProfile, configurationFrom, default: Studio } = evaluated.exports;
+const baseRequire = createRequire(import.meta.url);
+const downloadSource = readFileSync(new URL("../lib/video-download.ts", import.meta.url), "utf8");
+const downloadCompiled = ts.transpileModule(downloadSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const downloadModule = { exports: {} };
+new Function("module", "exports", downloadCompiled)(downloadModule, downloadModule.exports);
+const componentRequire = (specifier) => specifier === "@/lib/video-download" ? downloadModule.exports : baseRequire(specifier);
+new Function("require", "module", "exports", compiled)(componentRequire, evaluated, evaluated.exports);
+const { restoreArchive, freshProject, applyProjectChanges, applySegmentChange, scriptKey, intentKey, safeProfile, applySavedProfile, configurationFrom, affectsExport, default: Studio } = evaluated.exports;
 
 const audio = { start: 0, end: 3, text: "Lời kể thử nghiệm", audioBase64: "AQID", audioMime: "audio/wav", duration: 1 };
 const archive = {
@@ -77,6 +85,20 @@ test("request fingerprints change after a script edit, allowing stale AI results
   assert.notEqual(scriptKey(project), scriptKey(edited));
 });
 
+test("AI request fingerprints reject results after format, angle, mode or creator preferences change", () => {
+  for (const changes of [{format:"story"}, {angleId:"angle-2"}, {mode:"face"}, {profile:{...project.profile,customPrompt:"Giữ một giọng văn khác"}}, {profile:{...project.profile,audience:"Khán giả khác"}}]) assert.notEqual(intentKey(project), intentKey({...project,...changes}));
+  assert.equal(intentKey(project), intentKey({...project,step:4}), "navigation does not change the AI request's editorial inputs");
+});
+
+test("saving new account defaults preserves explicit per-video preferences and sanitizes the result", () => {
+  const previous=safeProfile({channel:"Kênh cũ",audience:"Mặc định",tone:"Mộc mạc",cta:"Hỏi thêm",facts:"Thông tin nền"});
+  const current={...previous,audience:"Khán giả riêng của video",cta:"",facts:"Thông tin riêng của video"};
+  const saved=safeProfile({channel:"Kênh mới",audience:"Mặc định mới",tone:"Tự nhiên",cta:"Lời nhắn mới",customPrompt:"Câu ngắn",facts:"Nền mới"});
+  const merged=applySavedProfile(current,previous,saved);
+  assert.equal(merged.channel,"Kênh mới");assert.equal(merged.tone,"Tự nhiên");assert.equal(merged.customPrompt,"Câu ngắn");assert.equal(merged.audience,"Khán giả riêng của video");assert.equal(merged.cta,"");assert.equal(merged.facts,"Thông tin riêng của video");
+  assert.equal(current.channel,"Kênh cũ");assert.equal(applySavedProfile({...current,apiKey:"discard"},previous,saved).apiKey,undefined);
+});
+
 test("configuration preserves the member identity, shared AI state, and quota without granting admin by default", () => {
   const config = configurationFrom({ userId: "current-user", memberName: "Thành viên", deepseekConfigured: true, elevenConfigured: true, quota: { used: 2, limit: 10 }, isAdmin: false }, "local");
   assert.equal(config.displayName, "Thành viên");
@@ -87,7 +109,24 @@ test("configuration preserves the member identity, shared AI state, and quota wi
   assert.deepEqual(config.quota, { used: 2, limit: 10 });
   assert.equal(configurationFrom({}, "local").isAdmin, false);
   assert.equal(configurationFrom({ userId: "admin", isAdmin: true }, "local").isAdmin, true);
-  assert.deepEqual(Object.keys(safeProfile({ name: "Tên", apiKey: "must-not-copy" })).sort(), ["audience", "cta", "facts", "name", "tone"]);
+  assert.deepEqual(Object.keys(safeProfile({ name: "Tên", apiKey: "must-not-copy" })).sort(), ["audience", "brand", "channel", "cta", "customPrompt", "facts", "name", "pronoun", "tone", "topic"]);
+});
+
+test("exported video survives step navigation and editorial metadata updates but expires after media changes", () => {
+  for (const changes of [{ step: 4 }, { title: "Tên video mới" }, { format: "story", angleId: "angle-2" }, { intent: "Thông điệp mới" }, { profile: safeProfile({ channel: "Kênh riêng" }) }]) assert.equal(affectsExport(changes), false);
+  for (const changes of [{ id: "another-project" }, { source: new Blob(["new-video"]) }, { duration: 15 }, { segments: [{ start: 0, end: 3, text: "Đổi lời" }] }, { voiceId: "different-voice" }, { narration: undefined }, { keepAmbient: true }]) assert.equal(affectsExport(changes), true);
+});
+
+test("archive preserves creator preferences, selected format and safe suggested script angles", () => {
+  const analysis = { summary: "Tư liệu cảnh vườn", suggestedAngles: [{ id: "angle-2", title: "Chuyện khu vườn", format: "story", purpose: "Tạo đồng cảm", hook: "Bạn vui vì điều gì?", reason: "Phù hợp thông điệp người quay", apiKey: "must-not-copy" }], recommendedAngleId: "angle-2", providerSecret: "must-not-copy" };
+  const profile = { name: "Người kể", channel: "Vườn của mình", brand: "Nhà vườn", audience: "Người mới làm vườn", topic: "Nho", pronoun: "Mình — bạn", customPrompt: "Câu ngắn, không nói quá", cta: "Mời chia sẻ ý kiến", facts: "Vườn nhà", tone: "Mộc mạc", apiKey: "must-not-copy" };
+  const restored = restoreArchive({ ...archive, project: { ...archive.project, format: "story", angleId: "angle-2", analysis, profile } }, "current-user");
+  assert.equal(restored.format, "story"); assert.equal(restored.angleId, "angle-2");
+  for (const field of ["channel", "brand", "audience", "topic", "pronoun", "customPrompt", "tone"]) assert.equal(restored.profile[field], profile[field]);
+  assert.equal(restored.analysis.suggestedAngles[0].purpose, "Tạo đồng cảm"); assert.equal(restored.analysis.recommendedAngleId, "angle-2");
+  assert.equal(restored.profile.apiKey, undefined); assert.equal(restored.analysis.providerSecret, undefined); assert.equal(restored.analysis.suggestedAngles[0].apiKey, undefined);
+  const invalid = restoreArchive({ ...archive, project: { ...archive.project, format: "unsafe-format", analysis: { suggestedAngles: [{ format: "unsafe-format", title: "Discard" }] } } }, "current-user");
+  assert.equal(invalid.format, "review"); assert.deepEqual(invalid.analysis.suggestedAngles, []);
 });
 
 test("the real initial UI renders the simplified workspace without admin links or member API key fields", () => {

@@ -2,6 +2,7 @@ import { apiError, json, limitedJson, providerKey, requestUser } from "@/lib/stu
 import { StudioError, cleanText } from "@/lib/studio-contract";
 import { cloneVoice, listVoices } from "@/lib/studio-eleven";
 import { assertOwnedMediaPath, downloadOwnedMedia, removeOwnedMedia } from "@/lib/studio-supabase";
+import { assertCloningEntitlement } from "@/lib/studio-voice-catalog";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -21,6 +22,7 @@ export async function POST(request: Request) {
     if (files.reduce((sum, file) => sum + file.size, 0) > 25 * 1024 * 1024) throw new StudioError("VOICE_SAMPLE_TOO_LARGE", "Tổng mẫu giọng tối đa 25 MB.", 413);
     if (files.some((file) => !file.type.startsWith("audio/") && !["video/webm", "video/mp4"].includes(file.type.split(";")[0]))) throw new StudioError("INVALID_VOICE_SAMPLE", "Chọn tệp âm thanh hoặc bản ghi giọng.");
     const { key } = await providerKey(userId, "eleven");
+    await assertCloningEntitlement(key);
     return json(await cloneVoice(key, userId, name, files), 201);
   } catch (error) { return apiError(error); }
   finally { if (userId && paths.length) await removeOwnedMedia(userId, paths).catch(() => {}); }

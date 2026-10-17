@@ -13,7 +13,7 @@
     "start": "next start",
     "prepare:media": "node scripts/prepare-media-assets.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-vm-modules tests/studio-api.test.mjs && node tests/studio-ui.test.mjs && node --experimental-vm-modules tests/studio-upload.test.mjs",
+    "test": "node --experimental-vm-modules tests/studio-api.test.mjs && node tests/studio-ui.test.mjs && node --experimental-vm-modules tests/studio-upload.test.mjs && node tests/video-download.test.mjs && node --experimental-vm-modules tests/studio-voices.test.mjs",
     "test:supabase": "node tests/supabase.integration.mjs",
     "test:auth": "node tests/studio-auth.integration.mjs",
     "cost": "node scripts/estimate-cost.mjs"
