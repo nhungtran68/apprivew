@@ -1,6 +1,6 @@
 # Chi phí AI cho Lời Kể
 
-Giá kiểm tra ngày **16/10/2026**, đơn vị **USD**, dùng API trực tiếp. Các bảng dự toán là **ước tính**, trừ **mục 11 đo token DeepSeek thật**. Phần 1–5 tính DeepSeek; phần 6–10 cộng giọng đọc và hạ tầng. Giá chưa gồm thuế hoặc phí thanh toán; chi phí tính từ token vẫn không phải hóa đơn.
+Giá kiểm tra ngày **16/10/2026**, đơn vị **USD**, dùng API trực tiếp. Các bảng dự toán là **ước tính**, trừ **mục 11 đo token DeepSeek thật và mục 12 ghi lần tạo giọng thật**. Phần 1–5 tính DeepSeek; phần 6–10 cộng giọng đọc và hạ tầng. Giá chưa gồm thuế hoặc phí thanh toán; chi phí tính từ token vẫn không phải hóa đơn.
 
 ## 1. Model và mức giá
 
@@ -153,4 +153,12 @@ Các yêu cầu này chạy ngoài giờ cao điểm, áp dụng giá mỗi tri�
 
 Có **một lần phân tích `scenery` thành công trước khi bật log** nhưng không có số token; lần này **bị loại khỏi tổng $0.003624636**, không được coi là miễn phí. Thời gian HTTP của sáu yêu cầu đã đo là 6,76–7,03 giây cho phân tích và 3,59–4,17 giây cho kịch bản.
 
-Không dùng một mẫu tổng hợp 15 giây để suy ra giá cố định cho video thật 30–90 giây. Chưa thử bật suy luận. **ElevenLabs hiện trả HTTP 422 `PROVIDER_KEY_ID` do dùng Key ID thay cho Secret API Key; chưa tạo giọng trả phí hoặc nhân bản giọng**, nên chưa có tổng chi phí thực của cả luồng và chưa có số TTS để thay cho dự toán ở phần trên.
+Không dùng một mẫu tổng hợp 15 giây để suy ra giá cố định cho video thật 30–90 giây. Chưa thử bật suy luận. ElevenLabs đã tạo giọng thật thành công ngày 17/10/2026; xem mục 12. Quyền nhân bản giọng và gói tài khoản chưa được kiểm chứng.
+
+## 12. Lần tạo giọng thật trên Production
+
+Ngày **17/10/2026**, app đọc được **21 giọng mẫu** và tạo thành công một đoạn **119 ký tự** bằng `eleven_flash_v2_5`, giọng Sarah, tiếng Việt. Chỉ gọi TTS **một lần**, không rút câu/tạo lại; lời đọc dài **6,548 giây**, yêu cầu HTTP mất **5,481 giây**. Hạn mức app tăng đúng 2 lượt cho tài khoản thử.
+
+Theo giá Flash/Turbo **$0.04/1.000 ký tự**, giá trị sử dụng tham chiếu là `119 × 0.04 / 1.000 = $0.00476`. Số ký tự và thời lượng được đo trong bài thử; **USD này vẫn là phép tính theo đơn giá, không phải khoản đã đối soát hóa đơn**. Chưa đọc gói thực tế, hạn mức còn lại hoặc analytics của tài khoản ElevenLabs; lượt này có thể nằm trong dung lượng thuê bao. Không cộng thêm phí TTS lần nữa khi ghép WAV đã tạo vào MP4. [Bảng giá ElevenAPI](https://elevenlabs.io/pricing/api)
+
+Tệp WAV đã được tải về, ghép bằng bộ xuất hiện tại thành MP4 15 giây, và dọn khỏi kho riêng. Lời thử ngắn, không đại diện cho video 30–90 giây hoặc chất lượng nhân bản giọng. Chưa thử model giọng khác hoặc nhân bản giọng.
