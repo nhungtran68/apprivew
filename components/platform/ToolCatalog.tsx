@@ -15,10 +15,12 @@ const filters = [
   { id: "audio", title: "Âm thanh" },
 ] as const;
 const categoryLabels = { audio: "ÂM THANH", video: "VIDEO", content: "NỘI DUNG", image: "HÌNH ẢNH", other: "KHÁM PHÁ" };
+// Temporarily hide these dashboard cards while keeping their modules available.
+const hiddenHomeModuleIds = new Set(["review", "other"]);
 
 export function ToolCatalog() {
   const [filter, setFilter] = useState<string>("all");
-  const modules = getVisibleModules();
+  const modules = getVisibleModules().filter(module => !hiddenHomeModuleIds.has(module.id));
   const visible = modules.filter(module => filter === "all" || (filter === "visual" ? module.category === "video" || module.category === "image" : module.category === filter));
   return <section className={styles.catalog} id="cong-cu" aria-labelledby="catalog-title">
     <div className={common.sectionHeading}><div><h2 id="catalog-title">Bộ công cụ của bạn<span className={common.sectionCount}>{modules.length}</span></h2><p>Chọn công cụ phù hợp. Bắt đầu từ điều bạn muốn tạo.</p></div><span className={styles.catalogNote}><PlatformIcon name="layers" size={16} />Một nơi, nhiều khả năng</span></div>
