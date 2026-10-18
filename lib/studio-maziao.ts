@@ -167,7 +167,7 @@ async function adminAccountVoices(key: string): Promise<ProviderVoice[]> {
       add(data?.items);
       if (collected.size) break;
     } catch (error) {
-      if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND"].includes(error.code)) throw error;
+      if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND","MAZIAO_INVALID_RESPONSE"].includes(error.code)) throw error;
     }
   }
   return [...collected.values()];
