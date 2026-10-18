@@ -8,8 +8,14 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 export async function GET(request: Request) {
   try {
-    const userId = await requestUser(request), provider = voiceProvider(), { key } = await providerKey(userId, provider);
-    const voices = provider === "maziao" ? await (await import("@/lib/studio-maziao")).listMaziaoVoices(key, userId) : await listVoices(key, userId);
+    const userId = await requestUser(request), provider = voiceProvider();
+    if (provider === "maziao") {
+      const { cachedVoiceList } = await import("@/lib/studio-voice-cache");
+      const result = await cachedVoiceList(userId);
+      return json({ provider, ...result, voices: result.voices.map(voice => ({ ...voice, voice_id: voice.voiceId, preview_url: voice.previewUrl })) });
+    }
+    const { key } = await providerKey(userId, provider);
+    const voices = await listVoices(key, userId);
     return json({ provider, voices: voices.map(voice => ({ ...voice, voice_id: voice.voiceId, preview_url: voice.previewUrl })) });
   } catch (error) { return apiError(error); }
 }
