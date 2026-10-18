@@ -38,7 +38,7 @@ export default function AuthForm({ configured, updatePassword = false, linkError
         {mode !== "recover" && <label>Mật khẩu<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} minLength={mode === "login" ? 1 : 10} maxLength={128} required />{mode !== "login" && <small>Tối thiểu 10 ký tự.</small>}</label>}
         {message && <div className={error ? styles.error : styles.notice} role={error ? "alert" : "status"}>{message}</div>}
         <button className={styles.primary} disabled={busy}>{busy ? "Đang xử lý…" : labels[mode]}</button>
-        {mode === "register" && <small className={styles.note}>Tài khoản mới cần quản trị viên cấp quyền và hạn mức trước khi dùng AI.</small>}
+        {mode === "register" && <small className={styles.note}>Tài khoản mới được kích hoạt tự động và có sẵn 3 lượt nhân bản giọng. Các giọng dùng chung do quản trị viên lựa chọn.</small>}
       </form>}
       {configured && <div className={styles.links}>{mode === "login" ? <><button type="button" onClick={() => changeMode("register")} disabled={busy}>Chưa có tài khoản? Đăng ký</button><button type="button" onClick={() => changeMode("recover")} disabled={busy}>Quên mật khẩu?</button></> : <button type="button" onClick={() => changeMode("login")} disabled={busy}>Quay lại đăng nhập</button>}</div>}
     </section>
