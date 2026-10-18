@@ -90,7 +90,7 @@ export async function consumeAiUnits(userId: string, units: number) {
   // The RPC uses auth.uid(), so passing another userId cannot charge a different account.
 }
 
-type VoiceRow = { voice_id: string; name: string; source: string; authorization_tag: string };
+type VoiceRow = { voice_id: string; name: string; source: string; authorization_tag: string; preview_url?: string | null; preview_checked_at?: string | null };
 async function signingKey() {
   const secret = process.env.STUDIO_ENCRYPTION_KEY;
   if (!secret || secret.length < 32) throw new StudioError("SIGNING_NOT_CONFIGURED", "Quản trị viên cần cấu hình khóa bảo vệ giọng cá nhân của thành viên.", 503);
@@ -148,7 +148,7 @@ export async function setSharedVoiceCatalog(userId: string, voiceId: string, nam
 
 export async function authorizedVoiceRows(userId: string): Promise<VoiceRow[]> {
   const client = await createStudioSupabaseServer();
-  const { data, error } = await client.from("studio_voices").select("voice_id,name,source,authorization_tag").eq("user_id", userId);
+  const { data, error } = await client.from("studio_voices").select("voice_id,name,source,authorization_tag,preview_url,preview_checked_at").eq("user_id", userId);
   if (error) return storageError();
   const rows = (data || []) as VoiceRow[], verified = await Promise.all(rows.map((row) => validVoiceTag(userId, row)));
   return rows.filter((_, i) => verified[i]);
@@ -161,9 +161,16 @@ export async function adminCloneCandidates(userId: string) {
     .filter(row => row.source === "personal" && /^maziao:(vieten_speech|lingual_speech_v2):[a-zA-Z0-9_-]{1,100}$/.test(row.voice_id))
     .map(row => ({ voice_id: row.voice_id, name: row.name, enabled: false, sort_order: 0, kind: "admin_clone" as const }));
 }
-export async function saveAuthorizedVoice(userId: string, voiceId: string, name: string, source: string) {
+export async function saveAuthorizedVoice(userId: string, voiceId: string, name: string, source: string, previewUrl?: string) {
   const authorization_tag = await voiceTag(userId, voiceId, source), client = await createStudioSupabaseServer();
-  const { error } = await client.from("studio_voices").upsert({ user_id: userId, voice_id: voiceId, name, source, authorization_tag, verified_at: new Date().toISOString() }, { onConflict: "user_id,voice_id" });
+  const { error } = await client.from("studio_voices").upsert({ user_id: userId, voice_id: voiceId, name, source, authorization_tag, verified_at: new Date().toISOString(), ...(previewUrl ? { preview_url: previewUrl, preview_checked_at: new Date().toISOString() } : {}) }, { onConflict: "user_id,voice_id" });
+  if (error) return storageError();
+}
+export async function savePersonalVoicePreview(userId: string, voiceId: string, authorizationTag: string, previewUrl?: string) {
+  const client = await createStudioSupabaseServer();
+  const { error } = await client.from("studio_voices")
+    .update({ preview_url: previewUrl || null, preview_checked_at: new Date().toISOString() })
+    .eq("user_id", userId).eq("voice_id", voiceId).eq("source", "personal").eq("authorization_tag", authorizationTag);
   if (error) return storageError();
 }
 export async function saveSharedVoiceList(userId: string, voices: { voiceId: string; name: string }[]) {

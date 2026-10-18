@@ -6,7 +6,7 @@ import { PlatformIcon } from "./PlatformIcon";
 import { downloadSpeechSegments, prepareMaziaoVoiceSample, uploadVoiceSamples, cleanupAnalysisMedia } from "@/lib/studio-upload";
 import styles from "./VoiceAiPage.module.css";
 
-type Voice = { voiceId: string; name: string; category: string; group?: string; previewUrl?: string };
+type Voice = { voiceId: string; name: string; category: string; group?: string; previewUrl?: string; isPersonalClone?: boolean };
 type CuratedVoice = { voice_id: string; name: string; enabled: boolean; kind: "system" | "admin_clone" };
 type AdminCloneCandidate = { voice_id: string; name: string; enabled: boolean; kind: "admin_clone"; previewUrl?: string };
 type AudioResult = { audioPath: string; audioMime: string; duration: number; voiceId: string; audioUrl?: string };
@@ -37,6 +37,7 @@ export default function VoiceAiPage() {
   const [group, setGroup] = useState("all");
   const [catalogBusy, setCatalogBusy] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const activeSrc = useRef("");
   const loading = account.status === "loading";
@@ -131,6 +132,23 @@ export default function VoiceAiPage() {
     finally { if (paths.length) await cleanupAnalysisMedia(paths).catch(() => {}); setBusy(""); }
   }
 
+  async function deletePersonalVoice(voice: Voice) {
+    if (busy || isAdmin || !voice.isPersonalClone || deleteCandidate !== voice.voiceId) return;
+    setBusy("delete"); setError(""); setNotice("");
+    try {
+      const response = await fetch(`/api/voices/${encodeURIComponent(voice.voiceId)}`, { method: "DELETE" });
+      const result = await response.json();
+      if (!response.ok || result.success !== true) throw new Error(result.error || "Không xóa được giọng này. Hãy thử lại.");
+      setDeleteCandidate("");
+      setVoices(previous => previous.filter(item => item.voiceId !== voice.voiceId));
+      setSelected(previous => previous === voice.voiceId ? "" : previous);
+      setNotice(`Đã xóa giọng ${voice.name}. Bạn có thể tạo giọng khác.`);
+      await load();
+      account.refresh();
+    } catch (err) { setError(friendlyError(err)); }
+    finally { setBusy(""); }
+  }
+
   async function synchronizeVoices() {
     if (syncBusy || busy) return;
     setSyncBusy(true); setError(""); setNotice("");
@@ -172,7 +190,25 @@ export default function VoiceAiPage() {
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>01</span><h2>Chọn giọng nói</h2></div><button className={styles.textButton} onClick={() => void load()} disabled={Boolean(busy)}><PlatformIcon name="refresh" size={17}/> Làm mới</button></div>
             <div className={styles.filterBar}><input aria-label="Tìm kiếm giọng nói" placeholder="Tìm giọng theo tên..." value={search} onChange={e => setSearch(e.target.value)}/><select aria-label="Nhóm giọng" value={group} onChange={e => setGroup(e.target.value)}><option value="all">Tất cả giọng</option><option value="shared">Giọng thư viện</option><option value="personal">Giọng cá nhân</option></select></div>
-            {busy === "loading" && voices.length === 0 ? <p className={styles.muted}>Đang tải giọng nói đã lưu…</p> : visible.length ? <div className={styles.voiceGrid}>{visible.map(voice => <article key={voice.voiceId} className={selected === voice.voiceId ? styles.voiceSelected : styles.voiceItem}><button type="button" className={styles.voiceSelectButton} onClick={() => { setSelected(voice.voiceId); setAudio(null); setAudioSrc(""); }}><span className={styles.voiceAvatar}><PlatformIcon name="voice" size={22}/></span><span className={styles.voiceCopy}><strong>{voice.name}</strong><small>{voice.category === "cloned" ? "Giọng cá nhân" : "Giọng thư viện"}</small></span>{selected === voice.voiceId && <PlatformIcon name="check" size={19}/>}</button>{voice.previewUrl ? <audio aria-label={`Nghe thử ${voice.name}`} controls preload="none" className={styles.voicePreview} src={voice.previewUrl}>Trình duyệt chưa hỗ trợ nghe thử.</audio> : <span className={styles.previewUnavailable}>Chưa có bản nghe thử</span>}</article>)}</div> : <p className={styles.muted}>Chưa có giọng được cấp quyền trong nhóm này. {isAdmin ? "Hãy làm mới danh sách giọng." : "Quản trị viên sẽ chọn giọng phù hợp cho bạn."}</p>}
+            {busy === "loading" && voices.length === 0 ? <p className={styles.muted}>Đang tải giọng nói đã lưu…</p> : visible.length ? <div className={styles.voiceGrid}>{visible.map(voice =>
+              <article key={voice.voiceId} className={selected === voice.voiceId ? styles.voiceSelected : styles.voiceItem}>
+                <button type="button" className={styles.voiceSelectButton} disabled={Boolean(busy)} onClick={() => { setSelected(voice.voiceId); setAudio(null); setAudioSrc(""); }}>
+                  <span className={styles.voiceAvatar}><PlatformIcon name="voice" size={22}/></span>
+                  <span className={styles.voiceCopy}><strong>{voice.name}</strong><small>{voice.category === "cloned" ? "Giọng cá nhân" : "Giọng thư viện"}</small></span>
+                  {selected === voice.voiceId && <PlatformIcon name="check" size={19}/>}
+                </button>
+                {voice.previewUrl ? <audio aria-label={`Nghe thử ${voice.name}`} controls preload="none" className={styles.voicePreview} src={voice.previewUrl}>Trình duyệt chưa hỗ trợ nghe thử.</audio> : <span className={styles.previewUnavailable}>Chưa có bản nghe thử</span>}
+                {!isAdmin && voice.isPersonalClone === true && (deleteCandidate === voice.voiceId ?
+                  <div className={styles.deleteConfirm} role="group" aria-label={`Xác nhận xóa giọng ${voice.name}`}>
+                    <p>Xóa hẳn giọng này? Giọng đã xóa không thể khôi phục. Hãy tải về lời đọc cần giữ trước khi rời trang.</p>
+                    <div className={styles.deleteActions}>
+                      <button type="button" className={styles.deleteCancel} disabled={Boolean(busy)} onClick={() => setDeleteCandidate("")}>Giữ giọng</button>
+                      <button type="button" className={styles.deleteConfirmButton} disabled={Boolean(busy)} onClick={() => void deletePersonalVoice(voice)}>{busy === "delete" ? "Đang xóa…" : "Xác nhận xóa"}</button>
+                    </div>
+                  </div> :
+                  <button type="button" className={styles.deleteTrigger} disabled={Boolean(busy)} onClick={() => setDeleteCandidate(voice.voiceId)}>Xóa giọng để tạo giọng khác</button>)}
+              </article>
+            )}</div> : <p className={styles.muted}>Chưa có giọng được cấp quyền trong nhóm này. {isAdmin ? "Hãy làm mới danh sách giọng." : "Quản trị viên sẽ chọn giọng phù hợp cho bạn."}</p>}
           </section>
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>02</span><h2>Nhập lời thoại</h2></div><span className={styles.counter}>{text.length.toLocaleString("vi-VN")} / {MAX_SCRIPT.toLocaleString("vi-VN")}</span></div>
@@ -194,8 +230,8 @@ export default function VoiceAiPage() {
           </section>
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>05</span><h2>Nhân bản giọng</h2></div></div>
-            <p className={styles.muted}>{isAdmin ? "Tài khoản quản trị không giới hạn số lần clone, vẫn áp dụng hạn mức AI." : "Mỗi tài khoản thành viên mặc định có 3 lượt nhân bản giọng."}</p>
-            <div className={styles.quota}>{isAdmin ? "Không giới hạn lượt clone" : cloning ? "Đã dùng " + cloning.used + " / " + cloning.limit + " lượt" : "Kiểm tra hạn mức tại trang cá nhân"}</div>
+            <p className={styles.muted}>{isAdmin ? "Tài khoản quản trị không giới hạn số lần clone, vẫn áp dụng hạn mức AI." : "Mỗi tài khoản thành viên có thể lưu tối đa 3 giọng cá nhân. Nếu còn chỗ, bạn nên tạo và nghe thử giọng mới trước khi xóa giọng cũ."}</p>
+            <div className={styles.quota}>{isAdmin ? "Không giới hạn giọng cá nhân" : cloning ? "Đã lưu " + cloning.used + " / " + cloning.limit + " giọng cá nhân" : "Kiểm tra hạn mức tại trang cá nhân"}</div>
             <label className={styles.field}>Tên giọng<input value={cloneName} onChange={e => setCloneName(e.target.value)} placeholder="Ví dụ: Giọng của tôi"/></label>
             <label className={styles.field}>Loại giọng<select value={cloneGender} onChange={e => setCloneGender(e.target.value as "female"|"male")}><option value="female">Giọng nữ</option><option value="male">Giọng nam</option></select></label>
             <label className={styles.uploadBlock}>Chọn mẫu giọng MP3, WAV, M4A (3–8 giây)<input type="file" accept="audio/*" onChange={e => setCloneFile(e.target.files?.[0] || null)}/></label>

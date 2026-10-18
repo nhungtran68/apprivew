@@ -10,6 +10,7 @@ export async function GET(request: Request) {
   try {
     const userId = await requestUser(request), provider = voiceProvider();
     if (provider === "maziao") {
+      await (await import("@/lib/studio-maziao")).backfillMaziaoPersonalPreviews(userId).catch(() => {});
       const { cachedVoiceList } = await import("@/lib/studio-voice-cache");
       const result = await cachedVoiceList(userId);
       return json({ provider, ...result, voices: result.voices.map(voice => ({ ...voice, voice_id: voice.voiceId, preview_url: voice.previewUrl })) });

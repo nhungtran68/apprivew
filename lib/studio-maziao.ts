@@ -1,6 +1,6 @@
 import "server-only";
 import { StudioError, cleanText, type StudioSegment } from "./studio-contract";
-import { MAZIAO_MODELS, authorizedVoiceRows, consumeAiUnits, consumeVoiceClone, getMember, sharedVoiceCatalog, maziaoModel, providerKey, saveAuthorizedVoice, saveSharedVoiceList, type MaziaoModel } from "./studio-server";
+import { MAZIAO_MODELS, authorizedVoiceRows, consumeAiUnits, consumeVoiceClone, getMember, sharedVoiceCatalog, maziaoModel, providerKey, saveAuthorizedVoice, savePersonalVoicePreview, saveSharedVoiceList, type MaziaoModel } from "./studio-server";
 import { shortenSegment } from "./studio-deepseek";
 import { removeOwnedMedia, storeNarration } from "./studio-supabase";
 import { inspectWav } from "./studio-wav";
@@ -307,8 +307,32 @@ export async function cloneMaziaoVoice(key: string, userId: string, name: string
   const voice = result.data as ProviderVoice | undefined;
   if (!voice || !rawId(voice.id)) throw invalidResponse();
   const id = scopedId(model, voice.id);
-  await saveAuthorizedVoice(userId, id, name, "personal");
-  return { voiceId: id, name, requiresVerification: false };
+  const previewUrl = safeMediaUrl(voice.previewUrl ?? voice.preview_url) || safeMediaUrl(voice.refFile ?? voice.ref_file);
+  await saveAuthorizedVoice(userId, id, name, "personal", previewUrl);
+  return { voiceId: id, name, previewUrl, requiresVerification: false };
+}
+
+/** Fill old personal grants only when their own sample is missing. A failed
+ * provider lookup never hides an already usable voice list or charges a clone. */
+export async function backfillMaziaoPersonalPreviews(userId: string) {
+  if ((await getMember(userId)).role !== "member") return;
+  const rows = await authorizedVoiceRows(userId);
+  const due = rows.filter(row => row.source === "personal" && row.voice_id.startsWith("maziao:")
+    && !safeMediaUrl(row.preview_url)
+    && (!row.preview_checked_at || !Number.isFinite(Date.parse(row.preview_checked_at)) || Date.now() - Date.parse(row.preview_checked_at) >= 24 * 60 * 60 * 1000));
+  if (!due.length) return;
+  const { key } = await providerKey(userId, "maziao");
+  const deadline = Date.now() + 10000;
+  for (const row of due.slice(0, 3)) {
+    let parsed: ReturnType<typeof parseMaziaoVoiceId>;
+    try { parsed = parseMaziaoVoiceId(row.voice_id); } catch { continue; }
+    try {
+      const voice = await getVoice(key, parsed.id, deadline);
+      if (voiceModel(voice) && voiceModel(voice) !== parsed.model) continue;
+      const previewUrl = safeMediaUrl(voice.previewUrl ?? voice.preview_url) || safeMediaUrl(voice.refFile ?? voice.ref_file);
+      await savePersonalVoicePreview(userId, row.voice_id, row.authorization_tag, previewUrl);
+    } catch { /* the cached voice list remains available if Maziao is slow */ }
+  }
 }
 
 export async function authorizeMaziaoVoice(userId: string, voiceId: string) {

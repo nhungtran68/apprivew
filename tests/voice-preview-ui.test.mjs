@@ -18,18 +18,19 @@ const preview = "https://r2-storage.maziao.com/users/owner/clone-preview.wav";
 const cloneId = "maziao:lingual_speech_v2:owner-clone";
 const clone = { voiceId: cloneId, name: "Giọng của quản trị", category: "cloned", previewUrl: preview };
 
-function renderPage({ voices = [clone], curated = [], candidates = [], isAdmin = true } = {}) {
+function renderPage({ voices = [clone], curated = [], candidates = [], isAdmin = true, fetchImpl } = {}) {
   // The first three state values are the page's fetched voice list, approval
   // list, and verified admin candidates, respectively. Remaining hooks use
   // their real initial values; effects stay deferred just as they do in SSR.
-  const initialStates = [voices, curated, candidates];
+  const states = [voices, curated, candidates];
   let cursor = 0;
   const calls = [];
   const mockReact = {
     ...React,
     useState(initial) {
       const index = cursor++;
-      return [index < initialStates.length ? initialStates[index] : typeof initial === "function" ? initial() : initial, () => {}];
+      if (!(index in states)) states[index] = typeof initial === "function" ? initial() : initial;
+      return [states[index], value => { states[index] = typeof value === "function" ? value(states[index]) : value; }];
     },
     useCallback: callback => callback,
     useEffect: () => {},
@@ -47,10 +48,15 @@ function renderPage({ voices = [clone], curated = [], candidates = [], isAdmin =
   };
   new Function("require", "module", "exports", "fetch", compiled)(componentRequire, viewModule, viewModule.exports, (...args) => {
     calls.push(args);
+    if (fetchImpl) return fetchImpl(...args);
     throw new Error("SSR must not request provider audio or other APIs");
   });
-  const tree = viewModule.exports.default();
-  return { tree, html: renderToStaticMarkup(tree), calls };
+  const rerender = () => {
+    cursor = 0;
+    const tree = viewModule.exports.default();
+    return { tree, html: renderToStaticMarkup(tree), calls, rerender };
+  };
+  return rerender();
 }
 
 function elements(node) {
@@ -133,4 +139,40 @@ test("members retain ordinary voice samples and never render the admin sharing c
   assert.ok(!html.includes("Giọng dùng chung cho tất cả thành viên"));
   assert.ok(elements(tree).some(element => element.type === "audio" && element.props.src === preview));
   assert.deepEqual(calls, []);
+});
+
+test("a member can confirm deletion only for their own personal clone", () => {
+  const personal = { ...clone, isPersonalClone: true };
+  const { tree, rerender, calls } = renderPage({ voices: [personal], isAdmin: false });
+  const trigger = elements(tree).find(element => element.type === "button" && element.props.className === "deleteTrigger");
+  assert.ok(trigger, "an owned clone should provide a deletion action");
+  assert.ok(renderToStaticMarkup(tree).includes("Xóa giọng để tạo giọng khác"));
+  assert.ok(!renderToStaticMarkup(tree).includes("Xác nhận xóa"));
+  trigger.props.onClick();
+  const confirmed = rerender();
+  assert.ok(confirmed.html.includes("không thể khôi phục"));
+  const buttons = elements(confirmed.tree).filter(element => element.type === "button");
+  assert.ok(buttons.some(button => button.props.className === "deleteConfirmButton"));
+  buttons.find(button => button.props.className === "deleteCancel").props.onClick();
+  assert.ok(!rerender().html.includes("Xác nhận xóa"));
+  assert.deepEqual(calls, [], "opening and cancelling confirmation must not call an API");
+});
+
+test("admin and shared voices have no deletion action even when clone metadata is present", () => {
+  const personal = { ...clone, isPersonalClone: true };
+  const admin = renderPage({ voices: [personal], isAdmin: true });
+  assert.ok(!admin.html.includes("Xóa giọng để tạo giọng khác"));
+  const memberShared = renderPage({ voices: [clone], isAdmin: false });
+  assert.ok(!memberShared.html.includes("Xóa giọng để tạo giọng khác"));
+  assert.deepEqual(admin.calls, []);
+  assert.deepEqual(memberShared.calls, []);
+});
+
+test("confirmed member deletion sends DELETE for the encoded owned voice ID", () => {
+  const personal = { ...clone, isPersonalClone: true };
+  const view = renderPage({ voices: [personal], isAdmin: false, fetchImpl: () => new Promise(() => {}) });
+  elements(view.tree).find(element => element.type === "button" && element.props.className === "deleteTrigger").props.onClick();
+  const confirmed = view.rerender();
+  elements(confirmed.tree).find(element => element.type === "button" && element.props.className === "deleteConfirmButton").props.onClick();
+  assert.deepEqual(view.calls, [[`/api/voices/${encodeURIComponent(cloneId)}`, { method: "DELETE" }]]);
 });

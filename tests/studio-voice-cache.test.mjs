@@ -160,16 +160,18 @@ await check("known unavailable clones never reappear through old personal grants
 
 await check("a newly created personal voice remains available while it has no cache row yet", async () => {
   for (const userId of [admin, alice]) {
-    const h = await harness(), id = scoped("justCreatedClone"); h.grant(userId, id, { name: "Giọng vừa tạo" });
+    const h = await harness(), id = scoped("justCreatedClone"); h.grant(userId, id, { name: "Giọng vừa tạo", preview_url: "https://r2-storage.maziao.com/samples/own.wav" });
     const cache = await h.entry("lib/studio-voice-cache.ts"), result = await cache.cachedVoiceList(userId);
     assert.equal(result.voices.length, 1); assert.equal(result.voices[0].voiceId, id); assert.equal(result.voices[0].name, "Giọng vừa tạo");
+    assert.equal(result.voices[0].previewUrl, "https://r2-storage.maziao.com/samples/own.wav");
+    assert.equal(result.voices[0].isPersonalClone, userId === alice ? true : undefined);
     assert.equal(result.voices[0].category, "cloned"); assert.equal(h.writes.length, 0);
   }
 });
 
 await check("members see enabled approved cache entries and their own private clones only", async () => {
   const h = await harness(), shared = scoped("approvedClone"), system = scoped("approvedSystem"), own = scoped("ownPrivateClone");
-  h.cache(shared); h.cache(system, { kind: "system" }); h.cache(own); h.grant(alice, own);
+  h.cache(shared); h.cache(system, { kind: "system" }); h.cache(own); h.grant(alice, own, { preview_url: "https://r2-storage.maziao.com/samples/private.wav" });
   h.cache(scoped("unapprovedClone"), { name: "Hidden unapproved name" });
   h.cache(scoped("disabledClone")); h.approve(scoped("disabledClone"), { enabled: false });
   h.cache(scoped("foreignPrivateClone"), { name: "Hidden foreign name" });
@@ -177,7 +179,10 @@ await check("members see enabled approved cache entries and their own private cl
   const cache = await h.entry("lib/studio-voice-cache.ts"), result = await cache.cachedVoiceList(alice);
   assert.deepEqual(Array.from(result.voices, row => row.voiceId), [shared, system, own]);
   assert.equal(result.voices.find(row => row.voiceId === shared).category, "cloned");
+  assert.equal(result.voices.find(row => row.voiceId === shared).isPersonalClone, undefined);
   assert.equal(result.voices.find(row => row.voiceId === system).category, "library");
+  assert.equal(result.voices.find(row => row.voiceId === own).isPersonalClone, true);
+  assert.equal(result.voices.find(row => row.voiceId === own).previewUrl, "https://r2-storage.maziao.com/samples/private.wav");
   for (const secret of ["Hidden unapproved name", "Hidden foreign name", "foreignPrivateClone"]) assert.ok(!JSON.stringify(result).includes(secret));
   assert.equal(h.writes.length, 0);
 });

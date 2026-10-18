@@ -43,14 +43,26 @@ async function harness() {
       return handle(request);
     },
   });
-  const grant = (userId, voiceId, source = "personal", name = voiceId) => grants.set(`${userId}:${voiceId}`, {
-    user_id: userId, voice_id: voiceId, source, name, authorization_tag: "server-verified",
-  });
+  const grant = (userId, voiceId, source = "personal", name = voiceId, previewUrl) => {
+    const previous = grants.get(`${userId}:${voiceId}`);
+    grants.set(`${userId}:${voiceId}`, {
+      ...previous, user_id: userId, voice_id: voiceId, source, name, authorization_tag: "server-verified",
+      preview_url: previewUrl ?? previous?.preview_url ?? null,
+      preview_checked_at: previewUrl ? new Date(now).toISOString() : previous?.preview_checked_at ?? null,
+    });
+  };
   const server = {
     MAZIAO_MODELS: ["vieten_speech", "lingual_speech_v2"],
     maziaoModel: () => "vieten_speech",
     authorizedVoiceRows: async userId => [...grants.values()].filter(row => row.user_id === userId),
-    saveAuthorizedVoice: async (userId, voiceId, name, source) => grant(userId, voiceId, source, name),
+    saveAuthorizedVoice: async (userId, voiceId, name, source, previewUrl) => grant(userId, voiceId, source, name, previewUrl),
+    savePersonalVoicePreview: async (userId, voiceId, authorizationTag, previewUrl) => {
+      const row = grants.get(`${userId}:${voiceId}`);
+      assert.equal(row?.authorization_tag, authorizationTag);
+      assert.equal(row?.source, "personal");
+      row.preview_url = previewUrl ?? null;
+      row.preview_checked_at = new Date(now).toISOString();
+    },
     saveSharedVoiceList: async (userId, voices) => { for (const voice of voices) grant(userId, voice.voiceId, "shared", voice.name); },
     consumeAiUnits: async (_user, units) => charged.push(units),
     consumeVoiceClone: async (_user, units) => charged.push(units),
@@ -892,11 +904,39 @@ await check("clone requests enforce the short WAV sample and save only a scoped 
   });
   const result = await maziao.cloneMaziaoVoice(h.key, alice, "Alice", [file], "female");
   assert.equal(result.voiceId, scoped("createdClone"));
+  assert.equal(result.previewUrl, "https://r2-storage.maziao.com/samples/createdClone.wav");
   assert.equal(h.grants.get(`${alice}:${scoped("createdClone")}`).source, "personal"); assert.deepEqual(h.charged, [10]);
+  assert.equal(h.grants.get(`${alice}:${scoped("createdClone")}`).preview_url, result.previewUrl);
   const requestCount = h.requests.length;
   for (const duration of [1, 9]) await assert.rejects(maziao.cloneMaziaoVoice(h.key, alice, "Alice", [new File([wavBytes(duration)], "sample.wav")], "female"), { code: "MAZIAO_SAMPLE_DURATION" });
   await assert.rejects(maziao.cloneMaziaoVoice(h.key, alice, "Alice", [file, file], "female"), { code: "MAZIAO_SAMPLE_REQUIRED" });
   assert.equal(h.requests.length, requestCount); assert.deepEqual(h.charged, [10]);
+});
+
+await check("old member clones gain owner-only sample links without a new clone charge", async () => {
+  const h = await harness(), maziao = await provider(h), mine = scoped("oldAlice"), other = scoped("oldBob");
+  h.setMemberRole("member"); h.grant(alice, mine); h.grant(bob, other);
+  h.setHandler(request => {
+    assert.equal(new URL(request.url).pathname, "/api/voices/oldAlice");
+    return Response.json({ data: voice("oldAlice", { previewUrl: "https://unsafe.example/skip.wav" }) });
+  });
+  await maziao.backfillMaziaoPersonalPreviews(alice);
+  assert.equal(h.grants.get(`${alice}:${mine}`).preview_url, "https://r2-storage.maziao.com/voices/oldAlice.wav");
+  assert.equal(h.grants.get(`${bob}:${other}`).preview_url, null);
+  assert.equal(h.requests.length, 1); assert.deepEqual(h.charged, []);
+  await maziao.backfillMaziaoPersonalPreviews(alice);
+  assert.equal(h.requests.length, 1, "saved sample must prevent repeat provider lookups");
+});
+
+await check("missing provider samples are checked once a day and never expose unsafe links", async () => {
+  const h = await harness(), maziao = await provider(h), mine = scoped("noSample");
+  h.setMemberRole("member"); h.grant(alice, mine);
+  h.setHandler(() => Response.json({ data: voice("noSample", { previewUrl: "https://unsafe.example/p.wav", refFile: "https://unsafe.example/r.wav" }) }));
+  await maziao.backfillMaziaoPersonalPreviews(alice);
+  assert.equal(h.grants.get(`${alice}:${mine}`).preview_url, null);
+  assert.ok(h.grants.get(`${alice}:${mine}`).preview_checked_at);
+  await maziao.backfillMaziaoPersonalPreviews(alice);
+  assert.equal(h.requests.length, 1);
 });
 
 console.log(`${passed} isolated Maziao integration tests passed.`);
