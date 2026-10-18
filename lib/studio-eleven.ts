@@ -1,6 +1,6 @@
 import "server-only";
 import { StudioError, cleanText, pcmToWav, type StudioSegment } from "./studio-contract";
-import { authorizedVoiceRows, consumeAiUnits, modelNames, providerKey, providerResponse, saveAuthorizedVoice, saveSharedVoiceList } from "./studio-server";
+import { authorizedVoiceRows, consumeAiUnits, consumeVoiceClone, modelNames, providerKey, providerResponse, saveAuthorizedVoice, saveSharedVoiceList } from "./studio-server";
 import { shortenSegment } from "./studio-deepseek";
 import { removeOwnedMedia, storeNarration } from "./studio-supabase";
 import { assertLibraryEntitlement, libraryCatalog, type LibraryVoice } from "./studio-voice-catalog";
@@ -27,7 +27,7 @@ export async function listVoices(key: string, userId: string): Promise<StudioVoi
 export async function cloneVoice(key: string, userId: string, name: string, files: File[]) {
   const form = new FormData(); form.set("name", name); form.set("description", "Giọng cá nhân do chủ tài khoản thành viên xác nhận quyền sử dụng.");
   for (const file of files) form.append("files", file, file.name || "voice-sample.webm");
-  await consumeAiUnits(userId, 10);
+  await consumeVoiceClone(userId, 10);
   const response = await providerResponse(await fetch(`${BASE}/voices/add`, { method: "POST", headers: { "xi-api-key": key }, body: form, signal: AbortSignal.timeout(90000) }), "ElevenLabs", "voices_write");
   const result = await response.json() as { voice_id?: string; requires_verification?: boolean };
   if (!result.voice_id) throw new StudioError("CLONE_FAILED", "ElevenLabs chưa trả mã giọng. Kiểm tra trước khi thử lại.", 502);
