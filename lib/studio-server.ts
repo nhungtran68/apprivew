@@ -148,7 +148,7 @@ export async function adminCloneCandidates(userId: string) {
   await requireAdmin(userId);
   const rows = await authorizedVoiceRows(userId);
   return rows
-    .filter(row => row.source === "personal" && /^maziao:(vieten_speech|lingual_speech_v2):clone_[a-zA-Z0-9_-]{1,94}$/.test(row.voice_id))
+    .filter(row => row.source === "personal" && /^maziao:(vieten_speech|lingual_speech_v2):[a-zA-Z0-9_-]{1,100}$/.test(row.voice_id))
     .map(row => ({ voice_id: row.voice_id, name: row.name, enabled: false, sort_order: 0, kind: "admin_clone" as const }));
 }
 export async function saveAuthorizedVoice(userId: string, voiceId: string, name: string, source: string) {
