@@ -25,11 +25,11 @@
 .headingText { min-width: 0; flex: 1; }
 .eyebrow { margin: 0 0 8px; color: var(--module-muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; line-height: 1.6; }
 .heading h1 { margin: 0; color: var(--module-ink); font-size: clamp(26px, 3vw, 34px); font-weight: 650; letter-spacing: -.045em; line-height: 1.3; }
-.description { max-width: 640px; margin: 10px 0 0; color: #63716a; font-size: 14px; line-height: 1.8; }
+.description { max-width: 640px; margin: 10px 0 0; color: #667085; font-size: 14px; line-height: 1.8; }
 .moduleIcon { display: grid; flex-shrink: 0; place-items: center; width: 60px; height: 60px; margin-top: 2px; color: #fff; background: linear-gradient(145deg, var(--module-accent), var(--module-accent-end)); border: 1px solid #ffffff26; border-radius: 18px; box-shadow: 0 7px 17px var(--module-halo), inset 0 1px 0 #ffffff24; }
 .stage { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; padding: 7px 10px; margin-top: 8px; color: var(--module-muted); background: var(--module-soft); border: 1px solid var(--module-border); border-radius: 999px; font-size: 11px; font-weight: 500; line-height: 1.4; }
 .stage > span { width: 5px; height: 5px; background: var(--module-accent); border-radius: 50%; }
-.workspace { overflow: hidden; background: var(--module-soft); border: 1px solid var(--module-border); border-radius: 20px; box-shadow: 0 8px 24px #24362e06; }
+.workspace { overflow: hidden; background: var(--module-soft); border: 1px solid var(--module-border); border-radius: 20px; box-shadow: 0 8px 24px #0b47f50a; }
 .preparation { position: relative; display: flex; align-items: center; flex-direction: column; padding: 48px 34px 38px; background: linear-gradient(135deg, var(--module-surface), var(--module-surface-end)); text-align: center; }
 .preparation::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, var(--module-accent), var(--module-accent-end)); }
 .preparationIcon { display: grid; place-items: center; width: 78px; height: 78px; margin-bottom: 27px; color: #fff; background: linear-gradient(145deg, var(--module-accent), var(--module-accent-end)); border: 1px solid #ffffff35; border-radius: 23px; outline: 8px solid #ffffff66; box-shadow: 0 14px 25px var(--module-halo), inset 0 1px 0 #ffffff30; }
