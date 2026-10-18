@@ -126,20 +126,42 @@ export async function listMaziaoVoices(key: string, userId: string): Promise<Stu
   await assertModel(key, model);
   const member = await getMember(userId);
   const curated = member.role === "admin" ? [] : await sharedVoiceCatalog(userId);
-  const approved = new Set(curated.filter(row => row.enabled).map(row => row.voice_id));
+  const approvedSystem = new Set(curated.filter(row => row.enabled && row.kind === "system").map(row => row.voice_id));
+  const approvedAdminClones = curated.filter(row => row.enabled && row.kind === "admin_clone");
   const grants = (await authorizedVoiceRows(userId)).filter(row => row.voice_id.startsWith("maziao:"));
   const owned = grants.filter(row => row.source === "personal");
   const ownedIds = new Set(owned.map(row => row.voice_id));
   const items = await systemVoices(key);
   const seen = new Set<string>();
-  const shared = items.filter(voice => {
+  const sharedSystem = items.filter(voice => {
     if (!rawId(voice.id) || !catalogOwnership(voice) || !compatible(voice)) return false;
     const id = scopedId(model, voice.id);
-    if ((member.role !== "admin" && !approved.has(id)) || seen.has(id) || ownedIds.has(id)) return false;
+    if ((member.role !== "admin" && !approvedSystem.has(id)) || seen.has(id) || ownedIds.has(id)) return false;
     seen.add(id); return true;
   }).slice(0, 20).map(voice => presentVoice(voice, scopedId(model, voice.id as string), false, "Giọng tiếng Việt"));
-  // Resolve only the current member's signed grants. Never return the Maziao
-  // account's /my-voices list, which would mix every app member's private voices.
+
+  // Admin may explicitly publish one of their private clones to every member.
+  // The catalog row is the authorization boundary; we still resolve the live
+  // provider voice on every listing so deleted/incompatible clones disappear.
+  const sharedAdminClones: StudioVoice[] = [];
+  if (member.role !== "admin") {
+    for (const row of approvedAdminClones.slice(0, 25)) {
+      if (ownedIds.has(row.voice_id) || seen.has(row.voice_id)) continue;
+      const parsed = parseMaziaoVoiceId(row.voice_id);
+      try {
+        const voice = await getVoice(key, parsed.id);
+        if (!compatible(voice) || (voiceModel(voice) && voiceModel(voice) !== parsed.model)) continue;
+        seen.add(row.voice_id);
+        sharedAdminClones.push(presentVoice(voice, row.voice_id, false, row.name || "Giọng dùng chung"));
+      } catch (error) {
+        if (!(error instanceof StudioError) || error.code !== "MAZIAO_NOT_FOUND") throw error;
+      }
+    }
+  }
+
+  // Resolve only the current member's signed personal grants. Other members'
+  // clones never become visible unless the administrator explicitly publishes
+  // their own clone through studio_voice_catalog.
   const personal: StudioVoice[] = [];
   for (const row of owned.slice(0, 25)) {
     const parsed = parseMaziaoVoiceId(row.voice_id);
@@ -147,11 +169,10 @@ export async function listMaziaoVoices(key: string, userId: string): Promise<Stu
       const voice = await getVoice(key, parsed.id);
       personal.push(presentVoice(voice, row.voice_id, true, row.name));
     } catch (error) {
-      // A member can delete their clone directly in Maziao. Keep the public
-      // catalog usable, but do not hide permission, network or provider errors.
       if (!(error instanceof StudioError) || error.code !== "MAZIAO_NOT_FOUND") throw error;
     }
   }
+  const shared = [...sharedAdminClones, ...sharedSystem];
   await saveSharedVoiceList(userId, shared);
   return [...personal, ...shared];
 }
@@ -183,10 +204,16 @@ export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
   const voice = await getVoice(key, parsed.id);
   if (grant.source === "shared") {
     const member = await getMember(userId);
-    if (member.role !== "admin" && !(await sharedVoiceCatalog(userId)).some(row => row.enabled && row.voice_id === voiceId)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này chưa được quản trị viên cấp quyền.", 403);
-    if (!catalogOwnership(voice) || !compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
-    const current = await systemVoices(key, cleanText(voice.name, 200) || undefined);
-    if (!current.some(item => item.id === parsed.id && catalogOwnership(item) && compatible(item))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn trong thư viện hệ thống. Hãy tải lại danh sách để chọn giọng khác.", 403);
+    const catalogRow = member.role === "admin" ? undefined : (await sharedVoiceCatalog(userId)).find(row => row.enabled && row.voice_id === voiceId);
+    if (member.role !== "admin" && !catalogRow) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này chưa được quản trị viên cấp quyền.", 403);
+    if (!compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn phù hợp để sử dụng. Hãy tải lại danh sách.", 403);
+    if (catalogRow?.kind === "admin_clone") {
+      if (voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng dùng chung này dùng model khác. Hãy tải lại danh sách giọng.", 422);
+    } else {
+      if (!catalogOwnership(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
+      const current = await systemVoices(key, cleanText(voice.name, 200) || undefined);
+      if (!current.some(item => item.id === parsed.id && catalogOwnership(item) && compatible(item))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn trong thư viện hệ thống. Hãy tải lại danh sách để chọn giọng khác.", 403);
+    }
   }
   if (grant.source === "personal" && voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng này dùng model khác. Hãy tải lại danh sách giọng.", 422);
   return voiceId;

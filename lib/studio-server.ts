@@ -41,7 +41,7 @@ export async function requestUser(request: Request, mutation = false): Promise<s
   const { data, error } = await client.auth.getUser();
   if (error || !data.user) throw new StudioError("SIGN_IN_REQUIRED", "Đăng nhập tài khoản thành viên để sử dụng app.", 401, "/dang-nhap");
   const member = await getMember(data.user.id);
-  if (!member.enabled) throw new StudioError("MEMBER_DISABLED", "Tài khoản đang chờ quản trị viên cấp quyền hoặc đã tạm khóa.", 403, "contact_admin");
+  if (!member.enabled) throw new StudioError("MEMBER_DISABLED", "Tài khoản thành viên đang bị khóa.", 403, "contact_admin");
   return data.user.id;
 }
 export async function requireAdmin(userId: string) {
@@ -115,22 +115,23 @@ export async function consumeVoiceClone(userId: string, units = 10) {
   return Array.isArray(data) ? data[0] : data;
 }
 
-export type SharedVoiceCatalogRow = { voice_id: string; name: string; enabled: boolean; sort_order: number };
+export type SharedVoiceCatalogRow = { voice_id: string; name: string; enabled: boolean; sort_order: number; kind: "system" | "admin_clone" };
 export async function sharedVoiceCatalog(userId: string): Promise<SharedVoiceCatalogRow[]> {
   const member = await getMember(userId);
   const client = await createStudioSupabaseServer();
-  let query = client.from("studio_voice_catalog").select("voice_id,name,enabled,sort_order");
+  let query = client.from("studio_voice_catalog").select("voice_id,name,enabled,sort_order,kind");
   if (member.role !== "admin") query = query.eq("enabled", true);
   const { data, error } = await query.order("sort_order", { ascending: true }).order("name", { ascending: true });
   if (error) return storageError();
   return (data || []) as SharedVoiceCatalogRow[];
 }
-export async function setSharedVoiceCatalog(userId: string, voiceId: string, name: string, enabled: boolean) {
+export async function setSharedVoiceCatalog(userId: string, voiceId: string, name: string, enabled: boolean, kind: "system" | "admin_clone" = "system") {
   await requireAdmin(userId);
   if (!/^maziao:(vieten_speech|lingual_speech_v2):[a-zA-Z0-9_-]{1,100}$/.test(voiceId)) throw new StudioError("INVALID_VOICE", "Chọn một giọng Maziao hợp lệ.");
+  if (kind !== "system" && kind !== "admin_clone") throw new StudioError("INVALID_VOICE", "Loại giọng chia sẻ chưa hợp lệ.");
   const safeName = name.trim().slice(0, 200) || "Giọng tiếng Việt";
   const client = await createStudioSupabaseServer();
-  const { data, error } = await client.from("studio_voice_catalog").upsert({ voice_id: voiceId, name: safeName, enabled, updated_at: new Date().toISOString() }, { onConflict: "voice_id" }).select("voice_id,name,enabled,sort_order").single();
+  const { data, error } = await client.from("studio_voice_catalog").upsert({ voice_id: voiceId, name: safeName, enabled, kind, updated_at: new Date().toISOString() }, { onConflict: "voice_id" }).select("voice_id,name,enabled,sort_order,kind").single();
   if (error) return storageError();
   return data as SharedVoiceCatalogRow;
 }
