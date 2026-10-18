@@ -125,7 +125,7 @@ export async function listMaziaoVoices(key: string, userId: string): Promise<Stu
   const model = maziaoModel();
   await assertModel(key, model);
   const member = await getMember(userId);
-  const curated = await sharedVoiceCatalog(userId);
+  const curated = member.role === "admin" ? [] : await sharedVoiceCatalog(userId);
   const approved = new Set(curated.filter(row => row.enabled).map(row => row.voice_id));
   const grants = (await authorizedVoiceRows(userId)).filter(row => row.voice_id.startsWith("maziao:"));
   const owned = grants.filter(row => row.source === "personal");
