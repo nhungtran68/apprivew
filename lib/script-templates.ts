@@ -7,7 +7,7 @@ export type ScriptTemplateScope = "shared" | "personal";
 export type ScriptTemplateView = {
   id: string;
   title: string;
-  format: StudioFormat;
+  format: StudioFormat | "custom";
   scope: ScriptTemplateScope;
   description: string;
   prompt?: string;
@@ -71,15 +71,15 @@ async function decryptPrompt(id: string, value: string): Promise<string> {
 }
 
 function asTemplate(row: ScriptTemplateRow, prompt?: string): ScriptTemplateView {
-  return { id: row.id, title: row.title, format: validFormat(row.format), scope: row.scope, description: row.description, ...(prompt === undefined ? {} : { prompt }) };
+  return { id: row.id, title: row.title, format: row.format === "custom" ? "custom" : validFormat(row.format), scope: row.scope, description: row.description, ...(prompt === undefined ? {} : { prompt }) };
 }
 
 function inputFields(body: Record<string, unknown>) {
   const title = cleanText(body.title, 121), description = cleanText(body.description, 241), prompt = cleanText(body.prompt, 6001);
-  if (!title || title.length > 120) throw new StudioError("INVALID_TEMPLATE_TITLE", "Tên tiêu đề cần từ 1 đến 120 ký tự.");
+  if (!title || title.length > 120) throw new StudioError("INVALID_TEMPLATE_TITLE", "Tên dạng kịch bản cần từ 1 đến 120 ký tự.");
   if (description.length > 240) throw new StudioError("INVALID_TEMPLATE_DESCRIPTION", "Mô tả tối đa 240 ký tự.");
   if (!prompt || prompt.length > 6000) throw new StudioError("INVALID_TEMPLATE_PROMPT", "Prompt hướng dẫn cần từ 1 đến 6.000 ký tự.");
-  return { title, description, prompt, format: validFormat(body.format) };
+  return { title, description, prompt };
 }
 
 function databaseError(): never {
@@ -112,7 +112,7 @@ export async function createScriptTemplate(userId: string, body: Record<string, 
   const scope: ScriptTemplateScope = member.role === "admin" ? "shared" : "personal";
   const client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_script_templates").insert({
-    id, owner_id: userId, scope, format: fields.format, title: fields.title,
+    id, owner_id: userId, scope, format: "custom", title: fields.title,
     description: fields.description, prompt_ciphertext: await encryptPrompt(id, fields.prompt),
   }).select(templateFields).single();
   if (error || !data) return databaseError();
@@ -123,21 +123,21 @@ async function ownedTemplate(userId: string, id: string): Promise<ScriptTemplate
   const client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_script_templates").select(templateFields).eq("id", templateId(id)).maybeSingle();
   if (error) return databaseError();
-  if (!data) throw new StudioError("TEMPLATE_NOT_FOUND", "Không tìm thấy tiêu đề kịch bản này.", 404);
+  if (!data) throw new StudioError("TEMPLATE_NOT_FOUND", "Không tìm thấy dạng kịch bản này.", 404);
   const row = data as unknown as ScriptTemplateRow, member = await getMember(userId);
   if (row.owner_id !== userId || (row.scope === "shared" && member.role !== "admin"))
-    throw new StudioError("TEMPLATE_FORBIDDEN", "Bạn chỉ có thể sửa hoặc xóa tiêu đề do mình tạo.", 403);
+    throw new StudioError("TEMPLATE_FORBIDDEN", "Bạn chỉ có thể sửa hoặc xóa dạng kịch bản do mình tạo.", 403);
   return row;
 }
 
 export async function updateScriptTemplate(userId: string, id: string, body: Record<string, unknown>): Promise<ScriptTemplateView> {
   const existing = await ownedTemplate(userId, id), fields = inputFields(body), client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_script_templates").update({
-    title: fields.title, format: fields.format, description: fields.description,
+    title: fields.title, format: "custom", description: fields.description,
     prompt_ciphertext: await encryptPrompt(existing.id, fields.prompt), updated_at: new Date().toISOString(),
   }).eq("id", existing.id).eq("owner_id", userId).select(templateFields).maybeSingle();
   if (error) return databaseError();
-  if (!data) throw new StudioError("TEMPLATE_NOT_FOUND", "Tiêu đề kịch bản đã được thay đổi. Hãy tải lại trang.", 404);
+  if (!data) throw new StudioError("TEMPLATE_NOT_FOUND", "Dạng kịch bản đã được thay đổi. Hãy tải lại trang.", 404);
   return asTemplate(data as unknown as ScriptTemplateRow, fields.prompt);
 }
 
@@ -146,15 +146,15 @@ export async function deleteScriptTemplate(userId: string, id: string): Promise<
   const { data, error } = await client.from("studio_script_templates")
     .delete().eq("id", existing.id).eq("owner_id", userId).select("id").maybeSingle();
   if (error) return databaseError();
-  if (!data) throw new StudioError("TEMPLATE_NOT_FOUND", "Tiêu đề kịch bản đã được thay đổi. Hãy tải lại trang.", 404);
+  if (!data) throw new StudioError("TEMPLATE_NOT_FOUND", "Dạng kịch bản đã được thay đổi. Hãy tải lại trang.", 404);
 }
 
-export async function scriptTemplateInstruction(userId: string, id: string): Promise<{ format: StudioFormat; title: string; prompt: string }> {
+export async function scriptTemplateInstruction(userId: string, id: string): Promise<{ title: string; prompt: string }> {
   const client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_script_templates").select(templateFields).eq("id", templateId(id)).maybeSingle();
   if (error) return databaseError();
-  if (!data) throw new StudioError("TEMPLATE_NOT_FOUND", "Tiêu đề kịch bản không còn khả dụng.", 404);
+  if (!data) throw new StudioError("TEMPLATE_NOT_FOUND", "Dạng kịch bản không còn khả dụng.", 404);
   const row = data as unknown as ScriptTemplateRow;
-  if (row.scope !== "shared" && row.owner_id !== userId) throw new StudioError("TEMPLATE_FORBIDDEN", "Bạn không được dùng tiêu đề kịch bản của tài khoản khác.", 403);
-  return { format: validFormat(row.format), title: row.title, prompt: await decryptPrompt(row.id, row.prompt_ciphertext) };
+  if (row.scope !== "shared" && row.owner_id !== userId) throw new StudioError("TEMPLATE_FORBIDDEN", "Bạn không được dùng dạng kịch bản của tài khoản khác.", 403);
+  return { title: row.title, prompt: await decryptPrompt(row.id, row.prompt_ciphertext) };
 }

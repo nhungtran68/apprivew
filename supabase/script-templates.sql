@@ -7,7 +7,9 @@ create table if not exists public.studio_script_templates (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
   scope text not null check (scope in ('shared','personal')),
-  format text not null check (format in ('review','story','tips','sales')),
+  -- New script types have an arbitrary title and their own encrypted prompt.
+  -- Legacy types remain valid for previously saved rows.
+  format text not null check (format in ('review','story','tips','sales','custom')),
   title text not null check (char_length(btrim(title)) between 1 and 120),
   description text not null default '' check (char_length(description) <= 240),
   prompt_ciphertext text not null check (

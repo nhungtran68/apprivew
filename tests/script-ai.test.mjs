@@ -11,7 +11,7 @@ const admin = "11111111-1111-4111-8111-111111111111";
 const alice = "22222222-2222-4222-8222-222222222222";
 const bob = "33333333-3333-4333-8333-333333333333";
 const privatePrompt = "Mở đầu bằng một câu hỏi gần gũi. Dùng trải nghiệm thật do người dùng cung cấp. Kết thúc bằng lời mời nhẹ nhàng, không nói quá công dụng.";
-const fields = (title, format = "review", prompt = privatePrompt) => ({ title, format, prompt, description: "Một góc nhìn hữu ích" });
+const fields = (title, prompt = privatePrompt) => ({ title, prompt, description: "Một góc nhìn hữu ích" });
 
 async function fixture() {
   const rows = new Map();
@@ -171,10 +171,11 @@ async function fixture() {
 test("admin shared prompt is encrypted at rest and omitted from a member's template API", async () => {
   const h = await fixture();
   const route = await h.entry("app/api/script-templates/route.ts");
-  const created = await route.POST(h.request("/api/script-templates", "POST", fields("Review sản phẩm")));
+  const created = await route.POST(h.request("/api/script-templates", "POST", { ...fields("Review sản phẩm"), format: "story" }));
   assert.equal(created.status, 201);
   const adminTemplate = (await created.json()).template;
   assert.equal(adminTemplate.scope, "shared");
+  assert.equal(adminTemplate.format, "custom");
   assert.equal(adminTemplate.prompt, privatePrompt);
   const saved = h.rows.get(adminTemplate.id);
   assert.match(saved.prompt_ciphertext, /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
@@ -191,21 +192,23 @@ test("admin shared prompt is encrypted at rest and omitted from a member's templ
   assert.equal((await (await route.GET(h.request("/api/script-templates", "GET"))).json()).templates[0].prompt, privatePrompt);
 });
 
-test("members can edit/delete only their personal titles; shared and foreign titles resist mutation", async () => {
+test("members can edit/delete only their personal script types; shared and foreign types resist mutation", async () => {
   const h = await fixture();
   const listRoute = await h.entry("app/api/script-templates/route.ts");
   const itemRoute = await h.entry("app/api/script-templates/[id]/route.ts");
   const shared = (await (await listRoute.POST(h.request("/api/script-templates", "POST", fields("Mẫu quản trị")))).json()).template;
   h.as(alice);
-  const created = await listRoute.POST(h.request("/api/script-templates", "POST", fields("Mẫu của Alice", "story", "Kể chuyện thật, không bịa thông tin.")));
+  const created = await listRoute.POST(h.request("/api/script-templates", "POST", fields("Mẫu của Alice", "Kể chuyện thật, không bịa thông tin.")));
   assert.equal(created.status, 201);
   const personal = (await created.json()).template;
   assert.equal(personal.scope, "personal");
+  assert.equal(personal.format, "custom");
   assert.equal(personal.prompt, "Kể chuyện thật, không bịa thông tin.");
   const context = id => ({ params: Promise.resolve({ id }) });
-  const edited = await itemRoute.PATCH(h.request(`/api/script-templates/${personal.id}`, "PATCH", fields("Alice đã sửa", "tips", "Viết ba mẹo ngắn.")), context(personal.id));
+  const edited = await itemRoute.PATCH(h.request(`/api/script-templates/${personal.id}`, "PATCH", fields("Alice đã sửa", "Viết ba mẹo ngắn.")), context(personal.id));
   assert.equal(edited.status, 200);
   assert.equal((await edited.json()).template.title, "Alice đã sửa");
+  assert.equal(h.rows.get(personal.id).format, "custom");
   const blockedShared = await itemRoute.PATCH(h.request(`/api/script-templates/${shared.id}`, "PATCH", fields("Cố sửa mẫu quản trị")), context(shared.id));
   assert.equal(blockedShared.status, 403);
   assert.equal((await itemRoute.DELETE(h.request(`/api/script-templates/${shared.id}`, "DELETE"), context(shared.id))).status, 403);
@@ -219,13 +222,15 @@ test("members can edit/delete only their personal titles; shared and foreign tit
   assert.equal(h.rows.get(shared.id).title, "Mẫu quản trị");
 });
 
-test("script generation uses a shared template privately, charges once, and also works without a template", async () => {
+test("script generation uses a custom type privately, charges once, and keeps legacy no-template mode", async () => {
   const h = await fixture();
   const listRoute = await h.entry("app/api/script-templates/route.ts");
   const generate = await h.entry("app/api/script-generate/route.ts");
   const shared = (await (await listRoute.POST(h.request("/api/script-templates", "POST", fields("Review uy tín")))).json()).template;
+  // Existing data may still carry one of the four formats from the old UI.
+  h.rows.get(shared.id).format = "review";
   h.as(alice);
-  const input = { templateId: shared.id, format: "review", title: "Nho tươi", brief: "Giới thiệu chùm nho có trong ảnh cho khách mới.", durationSeconds: 30 };
+  const input = { templateId: shared.id, format: "sales", title: "Nho tươi", brief: "Giới thiệu chùm nho có trong ảnh cho khách mới.", durationSeconds: 30 };
   const first = await generate.POST(h.request("/api/script-generate", "POST", input));
   assert.equal(first.status, 200);
   assert.match((await first.json()).script, /lời thoại/);
@@ -233,6 +238,7 @@ test("script generation uses a shared template privately, charges once, and also
   const payload = JSON.parse(h.providerCalls[0].init.body);
   assert.equal(h.providerCalls[0].url, "https://api.deepseek.com/chat/completions");
   assert.ok(payload.messages[0].content.includes(privatePrompt));
+  assert.ok(payload.messages[0].content.includes("Review uy tín"));
   assert.ok(!payload.messages[1].content.includes(privatePrompt));
   assert.ok(h.logs.every(line => !line.includes(privatePrompt)));
   const second = await generate.POST(h.request("/api/script-generate", "POST", { ...input, templateId: undefined }));
@@ -241,21 +247,23 @@ test("script generation uses a shared template privately, charges once, and also
   assert.ok(!JSON.parse(h.providerCalls[1].init.body).messages[0].content.includes(privatePrompt));
 });
 
-test("generation rejects foreign personal titles and format mismatches before spending credit", async () => {
+test("generation rejects foreign personal types but ignores an old format when a type is selected", async () => {
   const h = await fixture();
   const listRoute = await h.entry("app/api/script-templates/route.ts");
   const generate = await h.entry("app/api/script-generate/route.ts");
   h.as(alice);
-  const personal = (await (await listRoute.POST(h.request("/api/script-templates", "POST", fields("Kể chuyện", "story")))).json()).template;
+  const personal = (await (await listRoute.POST(h.request("/api/script-templates", "POST", fields("Kể chuyện")))).json()).template;
   const base = { templateId: personal.id, format: "story", title: "Một câu chuyện", brief: "Chia sẻ trải nghiệm thật của cửa hàng.", durationSeconds: 20 };
   h.as(bob);
   const denied = await generate.POST(h.request("/api/script-generate", "POST", base));
   assert.equal(denied.status, 404);
   h.as(alice);
-  const mismatch = await generate.POST(h.request("/api/script-generate", "POST", { ...base, format: "review" }));
-  assert.equal(mismatch.status, 409);
   assert.equal(h.charges.length, 0);
   assert.equal(h.providerCalls.length, 0);
+  const oldFormat = await generate.POST(h.request("/api/script-generate", "POST", { ...base, format: "review" }));
+  assert.equal(oldFormat.status, 200);
+  assert.equal(h.charges.length, 1);
+  assert.equal(h.providerCalls.length, 1);
 });
 
 test("provider output copying a private template is withheld after one charged attempt", async () => {
