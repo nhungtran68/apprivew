@@ -57,7 +57,6 @@ export default function VoiceAiPage() {
   useEffect(() => () => { if (activeSrc.current) URL.revokeObjectURL(activeSrc.current); }, []);
 
   const visible = voices.filter(voice => (group === "all" || (group === "personal" ? voice.category === "cloned" : voice.category !== "cloned")) && (!search.trim() || voice.name.toLocaleLowerCase("vi").includes(search.toLocaleLowerCase("vi").trim())));
-  const selectedVoice = voices.find(voice => voice.voiceId === selected);
   const cloning = account.status === "ready" ? (account.account as typeof account.account & { voiceCloning?: { used: number; limit: number; remaining: number | null; unlimited: boolean } })?.voiceCloning : undefined;
 
   async function readScript(file: File) {
@@ -78,7 +77,7 @@ export default function VoiceAiPage() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Không tạo được giọng đọc.");
       if (activeSrc.current) URL.revokeObjectURL(activeSrc.current);
-      activeSrc.current = ""; setAudioSrc(""); setAudio(result); setNotice("Maziao đã tạo lời đọc. Bấm Nghe hoặc Tải MP3/WAV để nhận tệp.");
+      activeSrc.current = ""; setAudioSrc(""); setAudio(result); setNotice("Đã tạo lời đọc. Bấm Nghe hoặc Tải MP3/WAV để nhận tệp.");
       account.refresh();
     } catch (err) { setError(friendlyError(err)); }
     finally { setBusy(""); }
@@ -139,10 +138,9 @@ export default function VoiceAiPage() {
     <nav className={styles.breadcrumb}><Link href="/">Tổng quan</Link><span>/</span><span>Tạo giọng nói AI</span></nav>
     <header className={styles.hero}>
       <div className={styles.heroIcon}><PlatformIcon name="voice" size={30}/></div>
-      <div><span className={styles.kicker}>CÔNG CỤ SÁNG TẠO ÂM THANH</span><h1>Tạo giọng nói AI</h1><p>Chọn giọng, nhập lời thoại và tạo âm thanh tiếng Việt với Maziao.</p></div>
-      <span className={styles.provider}>MAZIAO AI</span>
+      <div><span className={styles.kicker}>CÔNG CỤ SÁNG TẠO ÂM THANH</span><h1>Tạo giọng nói AI</h1><p>Chọn giọng, nhập lời thoại và tạo âm thanh tiếng Việt tự nhiên.</p></div>
     </header>
-    {account.status !== "ready" ? <section className={styles.notice}><strong>{loading ? "Đang kiểm tra tài khoản…" : account.status === "anonymous" ? "Cần đăng nhập để tạo giọng" : "Tài khoản chưa sẵn sàng"}</strong><p>{account.message || "Đăng nhập để xem thư viện giọng và sử dụng Maziao."}</p>{account.status === "anonymous" ? <Link href="/dang-nhap">Đăng nhập →</Link> : <button onClick={account.refresh}>Thử lại</button>}</section> :
+    {account.status !== "ready" ? <section className={styles.notice}><strong>{loading ? "Đang kiểm tra tài khoản…" : account.status === "anonymous" ? "Cần đăng nhập để tạo giọng" : "Tài khoản chưa sẵn sàng"}</strong><p>{account.message || "Đăng nhập để xem thư viện giọng và tạo âm thanh."}</p>{account.status === "anonymous" ? <Link href="/dang-nhap">Đăng nhập →</Link> : <button onClick={account.refresh}>Thử lại</button>}</section> :
     <>
       {error && <div className={styles.error} role="alert">{error}</div>}
       {notice && <div className={styles.success} role="status">{notice}</div>}
@@ -151,8 +149,7 @@ export default function VoiceAiPage() {
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>01</span><h2>Chọn giọng nói</h2></div><button className={styles.textButton} onClick={() => void load()} disabled={Boolean(busy)}><PlatformIcon name="refresh" size={17}/> Làm mới</button></div>
             <div className={styles.filterBar}><input aria-label="Tìm kiếm giọng nói" placeholder="Tìm giọng theo tên..." value={search} onChange={e => setSearch(e.target.value)}/><select aria-label="Nhóm giọng" value={group} onChange={e => setGroup(e.target.value)}><option value="all">Tất cả giọng</option><option value="shared">Giọng thư viện</option><option value="personal">Giọng cá nhân</option></select></div>
-            {busy === "loading" ? <p className={styles.muted}>Đang tải giọng nói…</p> : visible.length ? <div className={styles.voiceGrid}>{visible.map(voice => <button key={voice.voiceId} type="button" className={selected === voice.voiceId ? styles.voiceSelected : styles.voiceItem} onClick={() => { setSelected(voice.voiceId); setAudio(null); setAudioSrc(""); }}><span className={styles.voiceAvatar}><PlatformIcon name="voice" size={22}/></span><span><strong>{voice.name}</strong><small>{voice.category === "cloned" ? "Giọng cá nhân" : "Giọng Maziao"}</small></span>{selected === voice.voiceId && <PlatformIcon name="check" size={19}/>}</button>)}</div> : <p className={styles.muted}>Chưa có giọng được cấp quyền trong nhóm này. {isAdmin ? "Hãy làm mới danh sách Maziao." : "Quản trị viên sẽ chọn giọng phù hợp cho bạn."}</p>}
-            {selectedVoice?.previewUrl && <audio controls className={styles.player} src={selectedVoice.previewUrl}>Trình duyệt chưa hỗ trợ nghe thử.</audio>}
+            {busy === "loading" ? <p className={styles.muted}>Đang tải giọng nói…</p> : visible.length ? <div className={styles.voiceGrid}>{visible.map(voice => <article key={voice.voiceId} className={selected === voice.voiceId ? styles.voiceSelected : styles.voiceItem}><button type="button" className={styles.voiceSelectButton} onClick={() => { setSelected(voice.voiceId); setAudio(null); setAudioSrc(""); }}><span className={styles.voiceAvatar}><PlatformIcon name="voice" size={22}/></span><span className={styles.voiceCopy}><strong>{voice.name}</strong><small>{voice.category === "cloned" ? "Giọng cá nhân" : "Giọng thư viện"}</small></span>{selected === voice.voiceId && <PlatformIcon name="check" size={19}/>}</button>{voice.previewUrl ? <audio aria-label={`Nghe thử ${voice.name}`} controls preload="none" className={styles.voicePreview} src={voice.previewUrl}>Trình duyệt chưa hỗ trợ nghe thử.</audio> : <span className={styles.previewUnavailable}>Chưa có bản nghe thử</span>}</article>)}</div> : <p className={styles.muted}>Chưa có giọng được cấp quyền trong nhóm này. {isAdmin ? "Hãy làm mới danh sách giọng." : "Quản trị viên sẽ chọn giọng phù hợp cho bạn."}</p>}
           </section>
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>02</span><h2>Nhập lời thoại</h2></div><span className={styles.counter}>{text.length.toLocaleString("vi-VN")} / {MAX_SCRIPT.toLocaleString("vi-VN")}</span></div>
@@ -161,9 +158,9 @@ export default function VoiceAiPage() {
           </section>
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>03</span><h2>Tạo và tải giọng đọc</h2></div></div>
-            <p className={styles.muted}>Chi phí AI sẽ tính theo số ký tự và tác vụ thực tế. Lời thoại dưới 100 ký tự có thể bị Maziao từ chối ở model Vieten.</p>
+            <p className={styles.muted}>Chi phí AI sẽ tính theo số ký tự và tác vụ thực tế. Lời thoại dưới 100 ký tự có thể chưa đủ điều kiện xử lý ở model tiếng Việt hiện tại.</p>
             <button className={styles.generate} onClick={() => void generate()} disabled={Boolean(busy) || !selected || !text.trim()}>{busy === "speech" ? "Đang tạo giọng, vui lòng chờ…" : "Tạo giọng nói AI"} <PlatformIcon name="arrow" size={19}/></button>
-            {audio && <div className={styles.result}><strong>Đã tạo lời đọc • {audio.duration.toFixed(1)} giây</strong><div className={styles.resultButtons}><button onClick={() => void downloadAudio(false)} disabled={Boolean(busy)}>Nghe lời đọc</button><button onClick={() => void downloadAudio(true)} disabled={Boolean(busy)}>Tải MP3 / WAV</button></div>{audioSrc && <audio controls src={audioSrc} className={styles.player}/>}<p className={styles.muted}>Nếu mất mạng khi tải, bấm lại để nhận chính tệp đã tạo, không gửi lại Maziao.</p></div>}
+            {audio && <div className={styles.result}><strong>Đã tạo lời đọc • {audio.duration.toFixed(1)} giây</strong><div className={styles.resultButtons}><button onClick={() => void downloadAudio(false)} disabled={Boolean(busy)}>Nghe lời đọc</button><button onClick={() => void downloadAudio(true)} disabled={Boolean(busy)}>Tải MP3 / WAV</button></div>{audioSrc && <audio controls src={audioSrc} className={styles.player}/>}<p className={styles.muted}>Nếu mất mạng khi tải, bấm lại để nhận chính tệp đã tạo, không tạo lại từ đầu.</p></div>}
           </section>
         </div>
         <aside className={styles.sidebar}>
@@ -184,7 +181,7 @@ export default function VoiceAiPage() {
           </section>
         </aside>
       </div>
-      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng Maziao hệ thống và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{voices.map(voice => { const enabled=curated.some(item => item.voice_id === voice.voiceId && item.enabled); const isClone=voice.category === "cloned"; return <label className={styles.catalogRow} key={voice.voiceId}><span><strong>{voice.name}</strong><small>{isClone ? "Giọng nhân bản của quản trị viên" : "Giọng hệ thống Maziao"} · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small></span><input type="checkbox" checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice,e.target.checked)}/></label>; })}</div></section>}
+      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{voices.map(voice => { const enabled=curated.some(item => item.voice_id === voice.voiceId && item.enabled); const isClone=voice.category === "cloned"; return <label className={styles.catalogRow} key={voice.voiceId}><span><strong>{voice.name}</strong><small>{isClone ? "Giọng nhân bản của quản trị viên" : "Giọng thư viện"} · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small></span><input type="checkbox" checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice,e.target.checked)}/></label>; })}</div></section>}
     </>}
   </main>;
 }

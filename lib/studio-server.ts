@@ -64,7 +64,7 @@ export async function getConfig(userId: string) {
 }
 export async function providerKey(_userId: string, provider: "deepseek" | "eleven" | "maziao"): Promise<{ key: string; personal: boolean }> {
   const key = provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : provider === "maziao" ? process.env.MAZIAO_API_KEY : process.env.ELEVENLABS_API_KEY;
-  if (!key) throw new StudioError("API_KEY_REQUIRED", `Quản trị viên chưa kết nối ${provider === "deepseek" ? "DeepSeek" : provider === "maziao" ? "Maziao" : "ElevenLabs"} cho app.`, 503, "contact_admin");
+  if (!key) throw new StudioError("API_KEY_REQUIRED", `Quản trị viên chưa kết nối ${provider === "deepseek" ? "dịch vụ viết nội dung" : "dịch vụ giọng nói"} cho app.`, 503, "contact_admin");
   return { key, personal: false };
 }
 export async function saveSettings(userId: string, body: Record<string, unknown>) {
@@ -127,7 +127,7 @@ export async function sharedVoiceCatalog(userId: string): Promise<SharedVoiceCat
 }
 export async function setSharedVoiceCatalog(userId: string, voiceId: string, name: string, enabled: boolean, kind: "system" | "admin_clone" = "system") {
   await requireAdmin(userId);
-  if (!/^maziao:(vieten_speech|lingual_speech_v2):[a-zA-Z0-9_-]{1,100}$/.test(voiceId)) throw new StudioError("INVALID_VOICE", "Chọn một giọng Maziao hợp lệ.");
+  if (!/^maziao:(vieten_speech|lingual_speech_v2):[a-zA-Z0-9_-]{1,100}$/.test(voiceId)) throw new StudioError("INVALID_VOICE", "Chọn một giọng hợp lệ.");
   if (kind !== "system" && kind !== "admin_clone") throw new StudioError("INVALID_VOICE", "Loại giọng chia sẻ chưa hợp lệ.");
   const safeName = name.trim().slice(0, 200) || "Giọng tiếng Việt";
   const client = await createStudioSupabaseServer();
