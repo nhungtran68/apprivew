@@ -1,12 +1,13 @@
 import { adminCloneCandidates, apiError, getMember, json, limitedJson, requestUser, setSharedVoiceCatalog, sharedVoiceCatalog } from "@/lib/studio-server";
 import { StudioError } from "@/lib/studio-contract";
+import { cachedAdminCandidates } from "@/lib/studio-voice-cache";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     const userId = await requestUser(request);
     const [voices, member] = await Promise.all([sharedVoiceCatalog(userId), getMember(userId)]);
-    const candidates = member.role === "admin" ? await adminCloneCandidates(userId) : [];
+    const candidates = member.role === "admin" ? await cachedAdminCandidates(userId) : [];
     return json({ voices, candidates });
   } catch (error) { return apiError(error); }
 }
