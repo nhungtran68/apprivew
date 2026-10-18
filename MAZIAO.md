@@ -36,10 +36,11 @@ Không nhập token vào chat, không thêm tiền tố `Bearer ` vào Value và
 ## Kiểm chứng
 
 - Hợp đồng đối chiếu tài liệu API chính thức và mã client công khai của Maziao, không đoán endpoint.
-- 32 kiểm thử Maziao và 10 kiểm thử MP3 ngoại tuyến đã đạt: cách ly giọng thành viên, quyền chia sẻ cũ, model/ID, tác vụ và timeout, không gửi lại POST khi lỗi, WAV/MP3, thời lượng, tạo lại đúng đoạn, dọn tệp và chặn URL ngoài nhà cung cấp. Giọng cá nhân đã xóa không làm mất thư viện; lỗi quyền hoặc kết nối vẫn được báo.
+- 49 kiểm thử Maziao, 12 kiểm thử cache/đồng bộ, 6 kiểm thử giao diện nghe mẫu và 10 kiểm thử MP3 ngoại tuyến đã đạt. Bao gồm cách ly giọng thành viên, thu hồi quyền, kiểm tra sở hữu mới cho cả hai model, tác vụ và timeout, không gửi lại POST khi lỗi, WAV/MP3, thời lượng, tạo lại đúng đoạn, dọn tệp và chặn URL ngoài nhà cung cấp. Giọng cá nhân đã xóa không làm mất thư viện; lỗi quyền hoặc kết nối vẫn được báo.
 - Bộ kiểm tra hiện có vẫn đạt; TypeScript và production build đạt.
 - Thử thật: đã kết nối khóa, đọc được 20 giọng tiếng Việt. Câu 67 ký tự bị từ chối; câu 100 ký tự tạo được MP3 24 kHz mono, dài 5,568 giây. Kết quả ban đầu bị app từ chối do giả định WAV; đã khôi phục chính tác vụ cũ để sửa, không tạo thêm TTS.
 - Đã ghép MP3 thật thành MP4 mẫu 15 giây: H.264/yuv420p, 640×360, 30 fps, AAC 48 kHz stereo. Chưa thử nhân bản bằng bản thu riêng của người dùng hoặc đăng lên CapCut/Facebook trên điện thoại thật.
 - Sau sửa trên Production, MP3 được lưu/tải đúng MIME và đuôi `.mp3`, byte khớp hoàn toàn. Yêu cầu 99 ký tự bị chặn mà hạn mức không đổi. Tệp và tài khoản QA đã dọn; công cụ khôi phục tạm không có trong mã cuối.
+- Kiểm tra Production ngày 18/10: thành viên tạm nhìn thấy đúng 6 giọng được cấp, tạo Adam Biểu Cảm từ đoạn 110 ký tự thành MP3 dài 6,84 giây, tải được 109.869 byte; nhà cung cấp báo 110 credit, 1 tác vụ. Tệp thử, tài khoản và phiên đăng nhập tạm đã dọn. Admin cũng tạo và nghe được cùng giọng. Không khẳng định đã tái hiện chính xác nguyên nhân của thông báo lỗi thành viên cũ.
 
 Nguồn: https://app.maziao.com/api-docs và https://app.maziao.com/api-documentation.md .

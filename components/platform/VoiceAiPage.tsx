@@ -210,9 +210,9 @@ export default function VoiceAiPage() {
         return <article className={styles.catalogRow} key={voice.voiceId}>
           <span><strong>{voice.name}</strong>
             {!isClone && <small>Giọng thư viện · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small>}
-            {voice.previewUrl ? <audio controls preload="none" aria-label={`Nghe thử ${voice.name}`} className={styles.voicePreview} src={voice.previewUrl}/> : <small>Chưa có bản nghe thử</small>}
           </span>
           <input type="checkbox" aria-label={`Cho thành viên dùng giọng ${voice.name}`} checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice, e.target.checked)}/>
+          {voice.previewUrl ? <audio controls preload="none" aria-label={`Nghe thử ${voice.name}`} className={styles.catalogPreview} src={voice.previewUrl}/> : <small className={styles.catalogPreview}>Chưa có bản nghe thử</small>}
         </article>;
       })}</div></section>}
     </>}

@@ -92,6 +92,21 @@ test("playing a sample cannot toggle sharing through a wrapping checkbox label",
   assert.equal(checkbox.props.checked, false);
 });
 
+test("sharing card samples occupy their own row instead of shrinking inside the title beside the checkbox", () => {
+  const { tree } = renderPage();
+  const [row] = catalogRows(tree);
+  const children = React.Children.toArray(row.props.children);
+  const title = children.find(element => elements(element).some(child => child.type === "strong"));
+  const checkbox = children.find(element => element.type === "input" && element.props.type === "checkbox");
+  const sample = children.find(element => element.type === "audio");
+  assert.ok(title, "the title remains an independent grid item");
+  assert.ok(checkbox, "sharing remains an independent control beside the title");
+  assert.ok(sample, "the player must be a direct card child so it can span the full mobile card width");
+  assert.ok(!elements(title).some(element => element.type === "audio"), "the player must never inherit the title's narrow grid column");
+  assert.equal(sample.props.className, "catalogPreview");
+  assert.equal(sample.props.src, preview);
+});
+
 test("verified admin candidates supply the sample even when the older display list calls the clone a library voice", () => {
   const { tree, html, calls } = renderPage({
     voices: [{ ...clone, category: "library", previewUrl: undefined }],
