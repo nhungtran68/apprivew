@@ -26,11 +26,11 @@ export function apiError(error: unknown): Response {
   if (error instanceof StudioError) return json({ error: error.message, code: error.code, action: error.action, ...(error.code === "AUTH_NOT_CONFIGURED" ? { authReady: false } : {}) }, error.status);
   return json({ error: "Chưa hoàn tất xử lý. Vui lòng thử lại.", code: "INTERNAL_ERROR" }, 500);
 }
-export type StudioMember = { user_id: string; email: string; display_name: string; role: "admin" | "member"; enabled: boolean; ai_units_limit: number; ai_units_used: number };
+export type StudioMember = { user_id: string; email: string; display_name: string; role: "admin" | "member"; enabled: boolean; ai_units_limit: number; ai_units_used: number; voice_clone_limit: number; voice_clone_used: number };
 function storageError(): never { throw new StudioError("STORAGE_UNAVAILABLE", "Chưa đọc được dữ liệu thành viên. Quản trị viên cần chạy migration Supabase và kiểm tra kết nối.", 503); }
 export async function getMember(userId: string): Promise<StudioMember> {
   const client = await createStudioSupabaseServer();
-  const { data, error } = await client.from("studio_members").select("user_id,email,display_name,role,enabled,ai_units_limit,ai_units_used").eq("user_id", userId).maybeSingle();
+  const { data, error } = await client.from("studio_members").select("user_id,email,display_name,role,enabled,ai_units_limit,ai_units_used,voice_clone_limit,voice_clone_used").eq("user_id", userId).maybeSingle();
   if (error) return storageError();
   if (!data) throw new StudioError("MEMBERSHIP_REQUIRED", "Tài khoản chưa được cấp quyền thành viên. Hãy liên hệ quản trị viên.", 403, "contact_admin");
   return data as StudioMember;
@@ -60,7 +60,7 @@ export async function readSettings(userId: string) {
 export async function getConfig(userId: string) {
   const [{ profile }, member] = await Promise.all([readSettings(userId), getMember(userId)]);
   const provider = voiceProvider();
-  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: profile.name || member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), maziaoConfigured: Boolean(process.env.MAZIAO_API_KEY), voiceProvider: provider, voiceConfigured: Boolean(provider === "maziao" ? process.env.MAZIAO_API_KEY : process.env.ELEVENLABS_API_KEY), ...modelNames(), maziaoModel: maziaoModel(), profile, quota: { limit: member.ai_units_limit, used: member.ai_units_used, reserved: 0, remaining: Math.max(0, member.ai_units_limit - member.ai_units_used) } };
+  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: profile.name || member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), maziaoConfigured: Boolean(process.env.MAZIAO_API_KEY), voiceProvider: provider, voiceConfigured: Boolean(provider === "maziao" ? process.env.MAZIAO_API_KEY : process.env.ELEVENLABS_API_KEY), ...modelNames(), maziaoModel: maziaoModel(), profile, quota: { limit: member.ai_units_limit, used: member.ai_units_used, reserved: 0, remaining: Math.max(0, member.ai_units_limit - member.ai_units_used) }, voiceCloning: { used: member.voice_clone_used, limit: member.voice_clone_limit, remaining: member.role === "admin" ? null : Math.max(0, member.voice_clone_limit - member.voice_clone_used), unlimited: member.role === "admin" } };
 }
 export async function providerKey(_userId: string, provider: "deepseek" | "eleven" | "maziao"): Promise<{ key: string; personal: boolean }> {
   const key = provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : provider === "maziao" ? process.env.MAZIAO_API_KEY : process.env.ELEVENLABS_API_KEY;
@@ -101,6 +101,40 @@ async function voiceTag(userId: string, voiceId: string, source: string) { retur
 async function validVoiceTag(userId: string, row: VoiceRow) {
   try { return await crypto.subtle.verify("HMAC", await signingKey(), base64ToBytes(row.authorization_tag), voiceMessage(userId, row.voice_id, row.source)); } catch { return false; }
 }
+export async function consumeVoiceClone(userId: string, units = 10) {
+  if (!userId) throw new StudioError("SIGN_IN_REQUIRED", "Cần đăng nhập.", 401, "/dang-nhap");
+  if (!Number.isInteger(units) || units < 1 || units > 10000) throw new StudioError("INVALID_AI_UNITS", "Số lượt xử lý không hợp lệ.");
+  const client = await createStudioSupabaseServer();
+  const { data, error } = await client.rpc("consume_studio_voice_clone", { p_units: units });
+  if (error) {
+    if (error.message?.includes("VOICE_CLONE_LIMIT")) throw new StudioError("VOICE_CLONE_LIMIT", "Bạn đã dùng hết 3 lượt nhân bản giọng được cấp. Hãy liên hệ quản trị viên nếu cần thêm.", 429, "contact_admin");
+    if (error.message?.includes("QUOTA_EXCEEDED")) throw new StudioError("QUOTA_EXCEEDED", "Bạn đã hết lượt xử lý AI. Hãy liên hệ quản trị viên để được cấp thêm.", 429, "contact_admin");
+    if (error.message?.includes("MEMBER_DISABLED")) throw new StudioError("MEMBER_DISABLED", "Tài khoản chưa được cấp quyền xử lý AI.", 403, "contact_admin");
+    return storageError();
+  }
+  return Array.isArray(data) ? data[0] : data;
+}
+
+export type SharedVoiceCatalogRow = { voice_id: string; name: string; enabled: boolean; sort_order: number };
+export async function sharedVoiceCatalog(userId: string): Promise<SharedVoiceCatalogRow[]> {
+  const member = await getMember(userId);
+  const client = await createStudioSupabaseServer();
+  let query = client.from("studio_voice_catalog").select("voice_id,name,enabled,sort_order");
+  if (member.role !== "admin") query = query.eq("enabled", true);
+  const { data, error } = await query.order("sort_order", { ascending: true }).order("name", { ascending: true });
+  if (error) return storageError();
+  return (data || []) as SharedVoiceCatalogRow[];
+}
+export async function setSharedVoiceCatalog(userId: string, voiceId: string, name: string, enabled: boolean) {
+  await requireAdmin(userId);
+  if (!/^maziao:(vieten_speech|lingual_speech_v2):[a-zA-Z0-9_-]{1,100}$/.test(voiceId)) throw new StudioError("INVALID_VOICE", "Chọn một giọng Maziao hợp lệ.");
+  const safeName = name.trim().slice(0, 200) || "Giọng tiếng Việt";
+  const client = await createStudioSupabaseServer();
+  const { data, error } = await client.from("studio_voice_catalog").upsert({ voice_id: voiceId, name: safeName, enabled, updated_at: new Date().toISOString() }, { onConflict: "voice_id" }).select("voice_id,name,enabled,sort_order").single();
+  if (error) return storageError();
+  return data as SharedVoiceCatalogRow;
+}
+
 export async function authorizedVoiceRows(userId: string): Promise<VoiceRow[]> {
   const client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_voices").select("voice_id,name,source,authorization_tag").eq("user_id", userId);
@@ -123,7 +157,7 @@ export async function saveSharedVoiceList(userId: string, voices: { voiceId: str
 export async function listMembers(userId: string) {
   await requireAdmin(userId);
   const client = await createStudioSupabaseServer();
-  const { data, error } = await client.from("studio_members").select("user_id,email,display_name,role,enabled,ai_units_limit,ai_units_used,created_at").order("created_at", { ascending: false }).limit(250);
+  const { data, error } = await client.from("studio_members").select("user_id,email,display_name,role,enabled,ai_units_limit,ai_units_used,voice_clone_limit,voice_clone_used,created_at").order("created_at", { ascending: false }).limit(250);
   if (error) return storageError();
   return data || [];
 }
@@ -133,10 +167,12 @@ export async function updateMember(userId: string, body: Record<string, unknown>
   const changes: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if ("enabled" in body) { if (typeof body.enabled !== "boolean") throw new StudioError("INVALID_MEMBER", "Trạng thái không hợp lệ."); changes.enabled = body.enabled; }
   if ("aiUnitsLimit" in body) { const limit = body.aiUnitsLimit; if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 0 || limit > 100000) throw new StudioError("INVALID_QUOTA", "Hạn mức cần là số nguyên từ 0 đến 100.000."); changes.ai_units_limit = limit; }
+  if ("voiceCloneLimit" in body) { const limit = body.voiceCloneLimit; if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 0 || limit > 100) throw new StudioError("INVALID_CLONE_LIMIT", "Hạn mức nhân bản giọng cần là số nguyên từ 0 đến 100."); changes.voice_clone_limit = limit; }
   if (body.resetUsage === true) changes.ai_units_used = 0;
+  if (body.resetVoiceClones === true) changes.voice_clone_used = 0;
   if (body.userId === userId && changes.enabled === false) throw new StudioError("ADMIN_SELF_DISABLE", "Không thể tự khóa quản trị viên đang đăng nhập.");
   const client = await createStudioSupabaseServer();
-  const { data, error } = await client.from("studio_members").update(changes).eq("user_id", body.userId).select("user_id,email,display_name,role,enabled,ai_units_limit,ai_units_used").maybeSingle();
+  const { data, error } = await client.from("studio_members").update(changes).eq("user_id", body.userId).select("user_id,email,display_name,role,enabled,ai_units_limit,ai_units_used,voice_clone_limit,voice_clone_used").maybeSingle();
   if (error) return storageError();
   if (!data) throw new StudioError("MEMBER_NOT_FOUND", "Không tìm thấy thành viên.", 404);
   return data;

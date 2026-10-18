@@ -1,6 +1,6 @@
 import "server-only";
 import { StudioError, cleanText, type StudioSegment } from "./studio-contract";
-import { MAZIAO_MODELS, authorizedVoiceRows, consumeAiUnits, maziaoModel, providerKey, saveAuthorizedVoice, saveSharedVoiceList, type MaziaoModel } from "./studio-server";
+import { MAZIAO_MODELS, authorizedVoiceRows, consumeAiUnits, consumeVoiceClone, getMember, sharedVoiceCatalog, maziaoModel, providerKey, saveAuthorizedVoice, saveSharedVoiceList, type MaziaoModel } from "./studio-server";
 import { shortenSegment } from "./studio-deepseek";
 import { removeOwnedMedia, storeNarration } from "./studio-supabase";
 import { inspectWav } from "./studio-wav";
@@ -124,6 +124,9 @@ async function systemVoices(key: string, search?: string): Promise<ProviderVoice
 export async function listMaziaoVoices(key: string, userId: string): Promise<StudioVoice[]> {
   const model = maziaoModel();
   await assertModel(key, model);
+  const member = await getMember(userId);
+  const curated = member.role === "admin" ? [] : await sharedVoiceCatalog(userId);
+  const approved = new Set(curated.filter(row => row.enabled).map(row => row.voice_id));
   const grants = (await authorizedVoiceRows(userId)).filter(row => row.voice_id.startsWith("maziao:"));
   const owned = grants.filter(row => row.source === "personal");
   const ownedIds = new Set(owned.map(row => row.voice_id));
@@ -132,7 +135,7 @@ export async function listMaziaoVoices(key: string, userId: string): Promise<Stu
   const shared = items.filter(voice => {
     if (!rawId(voice.id) || !catalogOwnership(voice) || !compatible(voice)) return false;
     const id = scopedId(model, voice.id);
-    if (seen.has(id) || ownedIds.has(id)) return false;
+    if ((member.role !== "admin" && !approved.has(id)) || seen.has(id) || ownedIds.has(id)) return false;
     seen.add(id); return true;
   }).slice(0, 20).map(voice => presentVoice(voice, scopedId(model, voice.id as string), false, "Giọng tiếng Việt"));
   // Resolve only the current member's signed grants. Never return the Maziao
@@ -163,7 +166,7 @@ export async function cloneMaziaoVoice(key: string, userId: string, name: string
   const form = new FormData();
   form.set("name", name); form.set("gender", gender); form.set("model", model); form.set("language", "vi");
   form.set("previewText", ""); form.set("removeNoise", "0"); form.set("refFile", sample, "voice-sample.wav");
-  await consumeAiUnits(userId, 10);
+  await consumeVoiceClone(userId, 10);
   const result = await api(key, "/voices", { method: "POST", body: form }, Date.now() + 90000);
   const voice = result.data as ProviderVoice | undefined;
   if (!voice || !rawId(voice.id)) throw invalidResponse();
@@ -179,6 +182,8 @@ export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
   const { key } = await providerKey(userId, "maziao");
   const voice = await getVoice(key, parsed.id);
   if (grant.source === "shared") {
+    const member = await getMember(userId);
+    if (member.role !== "admin" && !(await sharedVoiceCatalog(userId)).some(row => row.enabled && row.voice_id === voiceId)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này chưa được quản trị viên cấp quyền.", 403);
     if (!catalogOwnership(voice) || !compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
     const current = await systemVoices(key, cleanText(voice.name, 200) || undefined);
     if (!current.some(item => item.id === parsed.id && catalogOwnership(item) && compatible(item))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn trong thư viện hệ thống. Hãy tải lại danh sách để chọn giọng khác.", 403);
@@ -219,11 +224,11 @@ function resultUrls(job: SpeechJob, count: number): string[] {
   if (!Array.isArray(result) || result.length !== count || result.some(item => !safeMediaUrl(item))) throw invalidResponse();
   return result as string[];
 }
-async function synthesizeBatch(key: string, userId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[]): Promise<Audio[]> {
+async function synthesizeBatch(key: string, userId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[], settings = { speed: 1, pitch: 1, volume: 1 }): Promise<Audio[]> {
   const parsed = parseMaziaoVoiceId(voiceId);
   await consumeAiUnits(userId, Math.max(1, Math.ceil(segments.reduce((sum, segment) => sum + segment.text.length, 0) / 100)));
   const started = Date.now();
-  const result = await api(key, "/tts/submit", { method: "POST", body: JSON.stringify({ mode: "multiParts", parts: segments.map(segment => ({ text: segment.text, voiceId: parsed.id, speed: 1, pitch: 1 })), config: { volume: 1, pitch: 1, export_srt: false }, modelId: parsed.model }) }, deadline);
+  const result = await api(key, "/tts/submit", { method: "POST", body: JSON.stringify({ mode: "multiParts", parts: segments.map(segment => ({ text: segment.text, voiceId: parsed.id, speed: settings.speed, pitch: settings.pitch })), config: { volume: settings.volume, pitch: settings.pitch, export_srt: false }, modelId: parsed.model }) }, deadline);
   const data = result.data as { taskId?: unknown; totalCost?: unknown } | undefined;
   if (!data || !rawId(data.taskId)) throw invalidResponse();
   // Actual provider credits, never estimated as 1 character = 1 credit.
@@ -284,4 +289,20 @@ export async function generateMaziaoSpeech(input: { key: string; userId: string;
     }
     return { segments: results, duration: input.duration, voiceId: input.voiceId, sampleRate: audio[0].sampleRate, channels: audio[0].channels, provider: "maziao", usage: { credits: costs.every(cost => cost !== null) ? costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0) : null, jobs: costs.length } };
   } catch (error) { await removeOwnedMedia(input.userId, stored).catch(() => {}); throw error; }
+}
+
+/**
+ * Standalone voice-over is not tied to a video timeline. It preserves the
+ * complete script and never shortens/retries a paid result to fit a scene.
+ */
+export async function generateMaziaoVoiceOver(input: { key: string; userId: string; voiceId: string; text: string; speed: number; volume: number; pitch: number }) {
+  const parsed = parseMaziaoVoiceId(input.voiceId);
+  if (parsed.model === "vieten_speech" && input.text.length < 100) throw new StudioError("MAZIAO_TEXT_TOO_SHORT", "Model này yêu cầu tối thiểu 100 ký tự. Hãy nhập thêm lời thoại trước khi tạo.", 422, "script");
+  const deadline = Date.now() + 240000;
+  await assertModel(input.key, parsed.model, deadline);
+  const segments: StudioSegment[] = [{ start: 0, end: 180, text: input.text }];
+  const costs: (number | null)[] = [];
+  const [audio] = await synthesizeBatch(input.key, input.userId, input.voiceId, segments, deadline, costs, { speed: input.speed, pitch: input.pitch, volume: input.volume });
+  const media = await storeNarration(input.userId, audio.bytes, 0, audio.mime);
+  return { ...media, audioMime: audio.mime, duration: audio.duration, voiceId: input.voiceId, provider: "maziao", usage: { credits: costs[0] ?? null, jobs: costs.length } };
 }
