@@ -122,21 +122,34 @@ async function systemVoices(key: string, search?: string): Promise<ProviderVoice
 }
 
 async function adminAccountVoices(key: string): Promise<ProviderVoice[]> {
-  // The authenticated voice listing may expose account-owned clones differently
-  // across provider revisions. Probe read-only list variants and keep only rows
-  // that have an explicit owner. These voices are returned to admins only.
-  const attempts: Array<string | undefined> = [undefined, "custom", "user"];
+  // Account-created voices belong to the administrator's upstream account.
+  // Prefer the dedicated account route; keep read-only list fallbacks for
+  // provider revisions that expose the same rows through /voices filters.
   const collected = new Map<string, ProviderVoice>();
-  for (const type of attempts) {
-    const query = new URLSearchParams({ language: "vi", limit: "100", offset: "0" });
-    if (type) query.set("type", type);
+  const add = (rows: unknown) => {
+    if (!Array.isArray(rows)) return;
+    for (const voice of rows) {
+      if (!voice || typeof voice !== "object" || Array.isArray(voice)) continue;
+      const row = voice as ProviderVoice;
+      if (!rawId(row.id) || !compatible(row)) continue;
+      collected.set(row.id, row);
+    }
+  };
+  try {
+    const result = await api(key, "/my-voices");
+    const data = result.data;
+    if (Array.isArray(data)) add(data);
+    else if (data && typeof data === "object" && !Array.isArray(data)) add((data as { items?: unknown }).items);
+  } catch (error) {
+    if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND"].includes(error.code)) throw error;
+  }
+  if (collected.size) return [...collected.values()];
+
+  for (const type of ["custom", "user"]) {
+    const query = new URLSearchParams({ language: "vi", type, limit: "100", offset: "0" });
     try {
       const result = await api(key, `/voices?${query}`), data = result.data as { items?: ProviderVoice[] } | undefined;
-      if (!Array.isArray(data?.items)) continue;
-      for (const voice of data.items) {
-        if (!voice || typeof voice !== "object" || Array.isArray(voice) || !rawId(voice.id) || catalogOwnership(voice) || !compatible(voice)) continue;
-        collected.set(voice.id, voice);
-      }
+      add(data?.items);
       if (collected.size) break;
     } catch (error) {
       if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND"].includes(error.code)) throw error;
