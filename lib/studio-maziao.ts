@@ -16,14 +16,14 @@ type ProviderModel = { id?: unknown; support_cloning?: unknown; supported_langua
 type SpeechJob = { id?: unknown; status?: unknown; resultUrl?: unknown; resultUrls?: unknown; totalTasks?: unknown; completedTasks?: unknown };
 type Audio = { bytes: Uint8Array; mime: "audio/wav" | "audio/mpeg"; duration: number; sampleRate: number; channels: number };
 
-const invalidResponse = () => new StudioError("MAZIAO_INVALID_RESPONSE", "Maziao trả kết quả chưa hợp lệ. Vui lòng thử lại sau.", 502);
+const invalidResponse = () => new StudioError("MAZIAO_INVALID_RESPONSE", "Hệ thống giọng nói trả kết quả chưa hợp lệ. Vui lòng thử lại sau.", 502);
 const rawId = (value: unknown): value is string => typeof value === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
 const scopedId = (model: MaziaoModel, id: string) => `maziao:${model}:${id}`;
 const belowObservedMinimum = (model: MaziaoModel, segments: StudioSegment[]) => model === "vieten_speech" && segments.reduce((sum, segment) => sum + segment.text.length, 0) < 100;
-const minimumTimingError = () => new StudioError("TIMING_NEEDS_EDIT", "Maziao cần ít nhất 100 ký tự cho lần tạo lại với model tiếng Việt này. Hãy chỉnh kịch bản để khớp cảnh rồi tạo lại; app không tự thêm lời.", 422, "script");
+const minimumTimingError = () => new StudioError("TIMING_NEEDS_EDIT", "Hệ thống giọng nói cần ít nhất 100 ký tự cho lần tạo lại với model tiếng Việt này. Hãy chỉnh kịch bản để khớp cảnh rồi tạo lại; app không tự thêm lời.", 422, "script");
 export function parseMaziaoVoiceId(value: string) {
   const [provider, model, id, extra] = value.split(":");
-  if (provider !== "maziao" || extra !== undefined || !MAZIAO_MODELS.some(item => item === model) || !rawId(id)) throw new StudioError("INVALID_VOICE", "Chọn một giọng Maziao trong danh sách của bạn.");
+  if (provider !== "maziao" || extra !== undefined || !MAZIAO_MODELS.some(item => item === model) || !rawId(id)) throw new StudioError("INVALID_VOICE", "Chọn một giọng trong danh sách của bạn.");
   return { model: model as MaziaoModel, id };
 }
 
@@ -46,19 +46,19 @@ async function boundedBytes(response: Response, maximum: number): Promise<Uint8A
 }
 
 async function api(key: string, path: string, init: RequestInit = {}, deadline = Date.now() + 30000): Promise<Record<string, unknown>> {
-  if (Date.now() >= deadline) throw new StudioError("MAZIAO_TIMEOUT", "Maziao đang xử lý lâu. Kiểm tra tác vụ trong Maziao trước khi tạo lại để tránh tốn credit hai lần.", 504);
+  if (Date.now() >= deadline) throw new StudioError("MAZIAO_TIMEOUT", "Hệ thống giọng nói đang xử lý lâu. Kiểm tra tác vụ hiện tại trước khi tạo lại để tránh tốn credit hai lần.", 504);
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, { ...init, headers: { Authorization: `Bearer ${key}`, ...(init.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}) }, redirect: "error", signal: AbortSignal.timeout(Math.min(30000, Math.max(1, deadline - Date.now()))) });
-  } catch { throw new StudioError("MAZIAO_UNAVAILABLE", "Chưa nhận được phản hồi từ Maziao. Nếu vừa tạo lời đọc, kiểm tra tác vụ Maziao trước khi tạo lại để tránh trừ credit lặp.", 502); }
+  } catch { throw new StudioError("MAZIAO_UNAVAILABLE", "Chưa nhận được phản hồi từ hệ thống giọng nói. Nếu vừa tạo lời đọc, kiểm tra tác vụ hiện tại trước khi tạo lại để tránh trừ credit lặp.", 502); }
   if ([401, 403].includes(response.status)) {
     await response.body?.cancel();
-    throw new StudioError("MAZIAO_AUTH", "Maziao từ chối kết nối. Quản trị viên cần kiểm tra MAZIAO_API_KEY và quyền API của gói trả phí.", 422, "contact_admin");
+    throw new StudioError("MAZIAO_AUTH", "Hệ thống giọng nói từ chối kết nối. Quản trị viên cần kiểm tra cấu hình API và quyền của gói đang dùng.", 422, "contact_admin");
   }
-  if (response.status === 402) { await response.body?.cancel(); throw new StudioError("MAZIAO_BALANCE", "Tài khoản Maziao chưa đủ credit hoặc chưa có quyền API. Quản trị viên cần kiểm tra gói và số dư.", 422, "contact_admin"); }
-  if (response.status === 429) { await response.body?.cancel(); throw new StudioError("MAZIAO_LIMIT", "Maziao đang giới hạn số tác vụ cùng lúc. Hãy chờ tác vụ hiện tại xong rồi thử lại.", 429); }
-  if (response.status === 404) { await response.body?.cancel(); throw new StudioError("MAZIAO_NOT_FOUND", "Giọng Maziao này không còn tồn tại. Hãy tải lại danh sách và chọn giọng khác.", 422); }
-  if (!response.ok) { await response.body?.cancel(); throw new StudioError("MAZIAO_REJECTED", response.status >= 500 ? "Maziao đang gián đoạn. Vui lòng thử lại sau." : "Maziao chưa chấp nhận dữ liệu. Kiểm tra giọng, model và mẫu thu 3–8 giây.", response.status >= 500 ? 502 : 422); }
+  if (response.status === 402) { await response.body?.cancel(); throw new StudioError("MAZIAO_BALANCE", "Tài khoản dịch vụ giọng nói chưa đủ credit hoặc chưa có quyền API. Quản trị viên cần kiểm tra gói và số dư.", 422, "contact_admin"); }
+  if (response.status === 429) { await response.body?.cancel(); throw new StudioError("MAZIAO_LIMIT", "Hệ thống đang giới hạn số tác vụ cùng lúc. Hãy chờ tác vụ hiện tại xong rồi thử lại.", 429); }
+  if (response.status === 404) { await response.body?.cancel(); throw new StudioError("MAZIAO_NOT_FOUND", "Giọng này không còn tồn tại. Hãy tải lại danh sách và chọn giọng khác.", 422); }
+  if (!response.ok) { await response.body?.cancel(); throw new StudioError("MAZIAO_REJECTED", response.status >= 500 ? "Hệ thống giọng nói đang gián đoạn. Vui lòng thử lại sau." : "Hệ thống chưa chấp nhận dữ liệu. Kiểm tra giọng, model và mẫu thu 3–8 giây.", response.status >= 500 ? 502 : 422); }
   let result: Record<string, unknown>;
   try {
     const parsed = JSON.parse(new TextDecoder().decode(await boundedBytes(response, MAX_JSON)));
@@ -67,9 +67,9 @@ async function api(key: string, path: string, init: RequestInit = {}, deadline =
   } catch { throw invalidResponse(); }
   // Never reflect provider messages: they can include the submitted text, file URL or token.
   if (Array.isArray(result.errors) && result.errors.length) {
-    if (result.errors.some(item => item === "errors.limit.modelPaidOnly")) throw new StudioError("MAZIAO_PLAN_REQUIRED", "Model Maziao này cần gói trả phí có API. Quản trị viên cần kiểm tra tài khoản.", 422, "contact_admin");
-    if (result.errors.some(item => item === "errors.limit.concurrency")) throw new StudioError("MAZIAO_LIMIT", "Maziao đang có tác vụ chưa xong. Vui lòng chờ rồi thử lại.", 429);
-    throw new StudioError("MAZIAO_REJECTED", "Maziao chưa chấp nhận yêu cầu. Kiểm tra hạn mức tài khoản, giọng và model đang dùng.", 422);
+    if (result.errors.some(item => item === "errors.limit.modelPaidOnly")) throw new StudioError("MAZIAO_PLAN_REQUIRED", "Model giọng nói này cần gói trả phí có API. Quản trị viên cần kiểm tra tài khoản.", 422, "contact_admin");
+    if (result.errors.some(item => item === "errors.limit.concurrency")) throw new StudioError("MAZIAO_LIMIT", "Hệ thống đang có tác vụ chưa xong. Vui lòng chờ rồi thử lại.", 429);
+    throw new StudioError("MAZIAO_REJECTED", "Hệ thống chưa chấp nhận yêu cầu. Kiểm tra hạn mức tài khoản, giọng và model đang dùng.", 422);
   }
   return result;
 }
@@ -78,7 +78,7 @@ async function assertModel(key: string, model: MaziaoModel, deadline?: number) {
   const result = await api(key, "/configs", {}, deadline), data = result.data as { ttsModels?: ProviderModel[] } | undefined;
   const config = Array.isArray(data?.ttsModels) ? data.ttsModels.find(item => item?.id === model) : undefined;
   const languages = config?.supported_languages;
-  if (!config || config.support_cloning !== true || !Array.isArray(languages) || !languages.includes("vi")) throw new StudioError("MAZIAO_MODEL_UNAVAILABLE", "Model Maziao đang chọn chưa hỗ trợ nhân bản tiếng Việt trong tài khoản này. Quản trị viên cần kiểm tra MAZIAO_MODEL.", 422, "contact_admin");
+  if (!config || config.support_cloning !== true || !Array.isArray(languages) || !languages.includes("vi")) throw new StudioError("MAZIAO_MODEL_UNAVAILABLE", "Model đang chọn chưa hỗ trợ nhân bản tiếng Việt trong tài khoản này. Quản trị viên cần kiểm tra cấu hình model.", 422, "contact_admin");
 }
 
 function safeMediaUrl(value: unknown): string | undefined {
@@ -103,7 +103,7 @@ const compatible = (voice: ProviderVoice) => {
   return (voice.language === "vi" || voice.language === "vi-VN") && typeof refFile === "string" && Boolean(refFile.trim()) && typeof refText === "string" && Boolean(refText.trim());
 };
 function presentVoice(voice: ProviderVoice, id: string, personal: boolean, fallback: string): StudioVoice {
-  return { voiceId: id, name: cleanText(voice.name, 200) || fallback, category: personal ? "cloned" : "library", group: personal ? "personal" : "vietnamese", language: "vi", gender: voice.gender === "male" || voice.gender === "female" ? voice.gender : undefined, previewUrl: safeMediaUrl(voice.previewUrl ?? voice.preview_url) };
+  return { voiceId: id, name: cleanText(voice.name, 200) || fallback, category: personal ? "cloned" : "library", group: personal ? "personal" : "vietnamese", language: "vi", gender: voice.gender === "male" || voice.gender === "female" ? voice.gender : undefined, previewUrl: safeMediaUrl(voice.previewUrl ?? voice.preview_url) || safeMediaUrl(voice.refFile ?? voice.ref_file) };
 }
 async function getVoice(key: string, id: string, deadline?: number): Promise<ProviderVoice> {
   const result = await api(key, `/voices/${encodeURIComponent(id)}`, {}, deadline);
@@ -121,6 +121,36 @@ async function systemVoices(key: string, search?: string): Promise<ProviderVoice
   return data.items.filter(voice => Boolean(voice && typeof voice === "object" && !Array.isArray(voice)));
 }
 
+async function adminAccountVoices(key: string): Promise<ProviderVoice[]> {
+  // The authenticated voice listing may expose account-owned clones differently
+  // across provider revisions. Probe read-only list variants and keep only rows
+  // that have an explicit owner. These voices are returned to admins only.
+  const attempts: Array<string | undefined> = [undefined, "custom", "user"];
+  const collected = new Map<string, ProviderVoice>();
+  for (const type of attempts) {
+    const query = new URLSearchParams({ language: "vi", limit: "100", offset: "0" });
+    if (type) query.set("type", type);
+    try {
+      const result = await api(key, `/voices?${query}`), data = result.data as { items?: ProviderVoice[] } | undefined;
+      if (!Array.isArray(data?.items)) continue;
+      for (const voice of data.items) {
+        if (!voice || typeof voice !== "object" || Array.isArray(voice) || !rawId(voice.id) || catalogOwnership(voice) || !compatible(voice)) continue;
+        collected.set(voice.id, voice);
+      }
+      if (collected.size) break;
+    } catch (error) {
+      if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND"].includes(error.code)) throw error;
+    }
+  }
+  return [...collected.values()];
+}
+
+function scopedProviderVoiceId(voice: ProviderVoice, fallback: MaziaoModel) {
+  const candidate = voiceModel(voice);
+  const model = typeof candidate === "string" && MAZIAO_MODELS.some(item => item === candidate) ? candidate as MaziaoModel : fallback;
+  return scopedId(model, voice.id as string);
+}
+
 export async function listMaziaoVoices(key: string, userId: string): Promise<StudioVoice[]> {
   const model = maziaoModel();
   await assertModel(key, model);
@@ -132,6 +162,17 @@ export async function listMaziaoVoices(key: string, userId: string): Promise<Stu
   const owned = grants.filter(row => row.source === "personal");
   const ownedIds = new Set(owned.map(row => row.voice_id));
   const items = await systemVoices(key);
+  if (member.role === "admin") {
+    const providerClones = await adminAccountVoices(key);
+    for (const voice of providerClones) {
+      const id = scopedProviderVoiceId(voice, model);
+      if (!ownedIds.has(id)) {
+        await saveAuthorizedVoice(userId, id, cleanText(voice.name, 200) || "Giọng của tôi", "personal");
+        owned.push({ voice_id: id, name: cleanText(voice.name, 200) || "Giọng của tôi", source: "personal", authorization_tag: "" });
+        ownedIds.add(id);
+      }
+    }
+  }
   const seen = new Set<string>();
   const sharedSystem = items.filter(voice => {
     if (!rawId(voice.id) || !catalogOwnership(voice) || !compatible(voice)) return false;
@@ -178,9 +219,9 @@ export async function listMaziaoVoices(key: string, userId: string): Promise<Stu
 }
 
 export async function cloneMaziaoVoice(key: string, userId: string, name: string, files: File[], gender: "male" | "female") {
-  if (files.length !== 1 || files[0].size > 1024 * 1024) throw new StudioError("MAZIAO_SAMPLE_REQUIRED", "Maziao cần một bản thu WAV 3–8 giây, tối đa 1 MB.", 422);
+  if (files.length !== 1 || files[0].size > 1024 * 1024) throw new StudioError("MAZIAO_SAMPLE_REQUIRED", "Hệ thống cần một bản thu WAV 3–8 giây, tối đa 1 MB.", 422);
   const sample = files[0], info = inspectWav(new Uint8Array(await sample.arrayBuffer()));
-  if (info.duration < 2.8 || info.duration > 8.2 || info.channels !== 1 || info.encoding !== 1 || info.bits !== 16) throw new StudioError("MAZIAO_SAMPLE_DURATION", "Mẫu giọng Maziao cần 3–8 giây. Hãy chọn tệp khác để app chuẩn hóa lại.", 422);
+  if (info.duration < 2.8 || info.duration > 8.2 || info.channels !== 1 || info.encoding !== 1 || info.bits !== 16) throw new StudioError("MAZIAO_SAMPLE_DURATION", "Mẫu giọng cần 3–8 giây. Hãy chọn tệp khác để app chuẩn hóa lại.", 422);
   if (gender !== "male" && gender !== "female") throw new StudioError("INVALID_GENDER", "Chọn giọng nam hoặc nữ để nhân bản.");
   const model = maziaoModel();
   await assertModel(key, model);
@@ -221,13 +262,13 @@ export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
 
 async function fetchAudio(value: unknown, deadline: number): Promise<Audio> {
   const url = safeMediaUrl(value);
-  if (!url) throw new StudioError("MAZIAO_AUDIO_URL", "Đường dẫn âm thanh Maziao chưa hợp lệ.", 502);
+  if (!url) throw new StudioError("MAZIAO_AUDIO_URL", "Đường dẫn âm thanh chưa hợp lệ.", 502);
   let response: Response;
   try {
     // No Authorization header or cookies leave the provider API origin.
     response = await fetch(url, { credentials: "omit", redirect: "error", signal: AbortSignal.timeout(Math.max(1, Math.min(30000, deadline - Date.now()))) });
-  } catch { throw new StudioError("MAZIAO_AUDIO_DOWNLOAD", "Chưa tải được lời đọc Maziao. Kiểm tra kết nối và tác vụ trước khi tạo lại.", 502); }
-  if (!response.ok) { await response.body?.cancel(); throw new StudioError("MAZIAO_AUDIO_DOWNLOAD", "Maziao chưa cho tải tệp lời đọc. Kiểm tra tác vụ trước khi tạo lại.", 502); }
+  } catch { throw new StudioError("MAZIAO_AUDIO_DOWNLOAD", "Chưa tải được lời đọc. Kiểm tra kết nối và tác vụ trước khi tạo lại.", 502); }
+  if (!response.ok) { await response.body?.cancel(); throw new StudioError("MAZIAO_AUDIO_DOWNLOAD", "Hệ thống chưa cho tải tệp lời đọc. Kiểm tra tác vụ trước khi tạo lại.", 502); }
   const bytes = await boundedBytes(response, MAX_AUDIO);
   const isWav = new TextDecoder().decode(bytes.subarray(0, 4)) === "RIFF";
   let info: { duration: number; sampleRate: number; channels: number };
@@ -237,7 +278,7 @@ async function fetchAudio(value: unknown, deadline: number): Promise<Audio> {
   } catch {
     // This is a paid job's output, not a member's recording sample. Keep the
     // recovery guidance distinct so a parser failure does not invite a new job.
-    throw new StudioError("INVALID_AUDIO", "Maziao đã nhận tác vụ nhưng tệp lời đọc chưa hợp lệ. Liên hệ quản trị viên kiểm tra tác vụ trước khi tạo lại.", 422, "contact_admin");
+    throw new StudioError("INVALID_AUDIO", "Hệ thống đã nhận tác vụ nhưng tệp lời đọc chưa hợp lệ. Liên hệ quản trị viên kiểm tra tác vụ trước khi tạo lại.", 422, "contact_admin");
   }
   return { bytes, mime: isWav ? "audio/wav" : "audio/mpeg", duration: info.duration, sampleRate: info.sampleRate, channels: info.channels };
 }
@@ -271,18 +312,18 @@ async function synthesizeBatch(key: string, userId: string, voiceId: string, seg
       for (const url of urls) audio.push(await fetchAudio(url, deadline));
       return audio;
     }
-    if (job.status === "failed") throw new StudioError("MAZIAO_TASK_FAILED", "Maziao không tạo được lời đọc. Kiểm tra giọng và trạng thái tác vụ trước khi thử lại.", 422);
+    if (job.status === "failed") throw new StudioError("MAZIAO_TASK_FAILED", "Hệ thống không tạo được lời đọc. Kiểm tra giọng và trạng thái tác vụ trước khi thử lại.", 422);
     if (!["pending", "processing", "saving", "exportingSrt"].includes(String(job.status))) throw invalidResponse();
     await new Promise(resolve => setTimeout(resolve, Math.min(6000, Math.max(0, deadline - Date.now()))));
   }
-  throw new StudioError("MAZIAO_TIMEOUT", "Maziao chưa xử lý xong trong thời gian chờ. Kiểm tra tác vụ trong Maziao trước khi tạo lại để tránh trừ credit lặp.", 504);
+  throw new StudioError("MAZIAO_TIMEOUT", "Hệ thống chưa xử lý xong trong thời gian chờ. Kiểm tra tác vụ hiện tại trước khi tạo lại để tránh trừ credit lặp.", 504);
 }
 
 export async function generateMaziaoSpeech(input: { key: string; userId: string; voiceId: string; segments: StudioSegment[]; duration: number }) {
   const parsed = parseMaziaoVoiceId(input.voiceId), deadline = Date.now() + 240000;
   // Live vieten_speech requests reject short totals. Keep this observed limit
   // scoped to that engine; never pad the member's script or assume other models.
-  if (belowObservedMinimum(parsed.model, input.segments)) throw new StudioError("MAZIAO_TEXT_TOO_SHORT", "Model Maziao tiếng Việt này cần ít nhất 100 ký tự cho mỗi lần tạo lời đọc. Hãy chỉnh kịch bản; app không tự thêm lời.", 422, "script");
+  if (belowObservedMinimum(parsed.model, input.segments)) throw new StudioError("MAZIAO_TEXT_TOO_SHORT", "Model tiếng Việt này cần ít nhất 100 ký tự cho mỗi lần tạo lời đọc. Hãy chỉnh kịch bản; app không tự thêm lời.", 422, "script");
   await assertModel(input.key, parsed.model, deadline);
   const segments = input.segments.map(segment => ({ ...segment }));
   const costs: (number | null)[] = [];
