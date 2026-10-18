@@ -1,5 +1,8 @@
 import { apiError, json, providerKey, requestUser } from "@/lib/studio-server";
 import { StudioError, bytesToBase64 } from "@/lib/studio-contract";
+import { inspectWav } from "@/lib/studio-wav";
+import { inspectMp3 } from "@/lib/studio-mp3";
+import { storeNarration } from "@/lib/studio-supabase";
 
 // TEMPORARY recovery of one exact QA job. Never submits or recreates speech.
 export const runtime = "nodejs";
@@ -98,6 +101,11 @@ export async function POST(request: Request) {
     const response = await fetch(url, { credentials: "omit", redirect: "error", signal: AbortSignal.timeout(30000) });
     const mime = (response.headers.get("content-type") || "application/octet-stream").split(";")[0].slice(0, 80);
     const bytes = await bounded(response, 2 * 1024 * 1024);
-    return json({ found: true, id, status: status(current), credits: cost, mime, bytes: bytes.length, header64hex: Array.from(bytes.subarray(0, 64), byte => byte.toString(16).padStart(2, "0")).join(""), audioBase64: bytesToBase64(bytes) });
+    const isWav = new TextDecoder().decode(bytes.subarray(0, 4)) === "RIFF";
+    const info = isWav ? inspectWav(bytes) : await inspectMp3(bytes);
+    if (info.duration <= 0 || info.duration > 15) throw failure();
+    const audioMime = isWav ? "audio/wav" : "audio/mpeg";
+    const media = await storeNarration(userId, bytes, 0, audioMime);
+    return json({ found: true, id, status: status(current), credits: cost, mime, bytes: bytes.length, format: info, segment: { start: 0, end: 15, text: EXPECTED, ...media, audioMime, duration: info.duration, revised: false }, header64hex: Array.from(bytes.subarray(0, 64), byte => byte.toString(16).padStart(2, "0")).join(""), audioBase64: bytesToBase64(bytes) });
   } catch (error) { return apiError(error instanceof StudioError ? error : failure()); }
 }

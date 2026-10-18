@@ -5,3 +5,5 @@ minimumReleaseAgeExclude:
   - '@supabase/realtime-js@2.118.0'
   - '@supabase/storage-js@2.118.0'
   - '@supabase/supabase-js@2.118.0'
+  - music-metadata@12.2.2
+  - strtok3@10.6.0

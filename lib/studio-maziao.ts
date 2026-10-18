@@ -4,6 +4,7 @@ import { MAZIAO_MODELS, authorizedVoiceRows, consumeAiUnits, maziaoModel, provid
 import { shortenSegment } from "./studio-deepseek";
 import { removeOwnedMedia, storeNarration } from "./studio-supabase";
 import { inspectWav } from "./studio-wav";
+import { inspectMp3 } from "./studio-mp3";
 import type { StudioVoice } from "./studio-eleven";
 
 const BASE = "https://app.maziao.com/api";
@@ -13,7 +14,7 @@ const MAX_JSON = 1024 * 1024;
 type ProviderVoice = { id?: unknown; name?: unknown; userId?: unknown; user_id?: unknown; language?: unknown; gender?: unknown; modelId?: unknown; model_id?: unknown; previewUrl?: unknown; preview_url?: unknown; refFile?: unknown; ref_file?: unknown; refText?: unknown; ref_text?: unknown };
 type ProviderModel = { id?: unknown; support_cloning?: unknown; supported_languages?: unknown };
 type SpeechJob = { id?: unknown; status?: unknown; resultUrl?: unknown; resultUrls?: unknown; totalTasks?: unknown; completedTasks?: unknown };
-type Audio = { wav: Uint8Array; duration: number; sampleRate: number; channels: number };
+type Audio = { bytes: Uint8Array; mime: "audio/wav" | "audio/mpeg"; duration: number; sampleRate: number; channels: number };
 
 const invalidResponse = () => new StudioError("MAZIAO_INVALID_RESPONSE", "Maziao trả kết quả chưa hợp lệ. Vui lòng thử lại sau.", 502);
 const rawId = (value: unknown): value is string => typeof value === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
@@ -195,9 +196,11 @@ async function fetchAudio(value: unknown, deadline: number): Promise<Audio> {
     response = await fetch(url, { credentials: "omit", redirect: "error", signal: AbortSignal.timeout(Math.max(1, Math.min(30000, deadline - Date.now()))) });
   } catch { throw new StudioError("MAZIAO_AUDIO_DOWNLOAD", "Chưa tải được lời đọc Maziao. Kiểm tra kết nối và tác vụ trước khi tạo lại.", 502); }
   if (!response.ok) { await response.body?.cancel(); throw new StudioError("MAZIAO_AUDIO_DOWNLOAD", "Maziao chưa cho tải tệp lời đọc. Kiểm tra tác vụ trước khi tạo lại.", 502); }
-  const wav = await boundedBytes(response, MAX_AUDIO), info = inspectWav(wav);
+  const bytes = await boundedBytes(response, MAX_AUDIO);
+  const isWav = new TextDecoder().decode(bytes.subarray(0, 4)) === "RIFF";
+  const info = isWav ? inspectWav(bytes) : await inspectMp3(bytes);
   if (info.duration > 180) throw invalidResponse();
-  return { wav, duration: info.duration, sampleRate: info.sampleRate, channels: info.channels };
+  return { bytes, mime: isWav ? "audio/wav" : "audio/mpeg", duration: info.duration, sampleRate: info.sampleRate, channels: info.channels };
 }
 
 function resultUrls(job: SpeechJob, count: number): string[] {
@@ -269,8 +272,8 @@ export async function generateMaziaoSpeech(input: { key: string; userId: string;
   try {
     const results = [];
     for (const [index, segment] of segments.entries()) {
-      const media = await storeNarration(input.userId, audio[index].wav, index); stored.push(media.audioPath);
-      results.push({ ...segment, ...media, audioMime: "audio/wav", duration: audio[index].duration, revised: segment.text !== input.segments[index].text });
+      const media = await storeNarration(input.userId, audio[index].bytes, index, audio[index].mime); stored.push(media.audioPath);
+      results.push({ ...segment, ...media, audioMime: audio[index].mime, duration: audio[index].duration, revised: segment.text !== input.segments[index].text });
     }
     return { segments: results, duration: input.duration, voiceId: input.voiceId, sampleRate: audio[0].sampleRate, channels: audio[0].channels, provider: "maziao", usage: { credits: costs.every(cost => cost !== null) ? costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0) : null, jobs: costs.length } };
   } catch (error) { await removeOwnedMedia(input.userId, stored).catch(() => {}); throw error; }

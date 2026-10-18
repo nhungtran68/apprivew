@@ -13,7 +13,7 @@ let sequence = 0;
 
 async function harness() {
   const key = `offline-maziao-secret-${++sequence}`;
-  const requests = [], grants = new Map(), charged = [], deleted = [], media = new Map(), waits = [], shortened = [], usage = [];
+  const requests = [], grants = new Map(), charged = [], deleted = [], media = new Map(), storedMimes = new Map(), mp3Reads = [], waits = [], shortened = [], usage = [];
   let handle = async () => { throw new Error("Unexpected provider request"); };
   let failStorageAt;
   let now = 1700000000000;
@@ -56,18 +56,29 @@ async function harness() {
     [path.join(root, "lib/studio-deepseek.ts"), {
       shortenSegment: async (_key, segment, _duration, charge) => { await charge?.(); shortened.push(segment.text); return segment.text.length > 10 ? segment.text.slice(0, 10) : segment.text; },
     }],
+    [path.join(root, "lib/studio-mp3.ts"), {
+      // Pipeline tests isolate metadata parsing at this boundary. The separate
+      // MP3 parser suite tests real frame validation and music-metadata itself.
+      inspectMp3: async bytes => {
+        mp3Reads.push(bytes);
+        const fixture = syntheticMpegFrames();
+        if (bytes.length !== fixture.length || bytes.some((byte, index) => byte !== fixture[index])) throw Object.assign(new Error("Invalid test MP3 payload"), { code: "INVALID_AUDIO", status: 422 });
+        return { duration: 8 * 576 / 24000, sampleRate: 24000, channels: 1 };
+      },
+    }],
     [path.join(root, "lib/studio-supabase.ts"), {
       removeOwnedMedia: async (userId, paths) => {
         for (const name of paths) {
           assert.ok(name.startsWith(`${userId}/`));
-          deleted.push(name); media.delete(name);
+          deleted.push(name); media.delete(name); storedMimes.delete(name);
         }
       },
-      storeNarration: async (userId, bytes, index) => {
+      storeNarration: async (userId, bytes, index, mime = "audio/wav") => {
         if (index === failStorageAt) throw new Error("Simulated storage failure");
-        const audioPath = `${userId}/narration/${index}.wav`;
-        media.set(audioPath, bytes);
-        return { audioPath, audioUrl: `https://audio.example.invalid/${index}.wav` };
+        const extension = mime === "audio/mpeg" ? "mp3" : "wav";
+        const audioPath = `${userId}/narration/${index}.${extension}`;
+        media.set(audioPath, bytes); storedMimes.set(audioPath, mime);
+        return { audioPath, audioUrl: `https://audio.example.invalid/${index}.${extension}` };
       },
     }],
   ]);
@@ -106,7 +117,13 @@ async function harness() {
     return module.namespace;
   }
   const wav = await entry("lib/studio-wav.ts");
-  return { key, requests, grants, grant, charged, deleted, media, waits, shortened, usage, wav, entry, setHandler(handler) { handle = handler; }, failStorageAt(index) { failStorageAt = index; } };
+  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, wav, entry, setHandler(handler) { handle = handler; }, failStorageAt(index) { failStorageAt = index; } };
+}
+
+function syntheticMpegFrames() {
+  const bytes = new Uint8Array(8 * 384);
+  for (let offset = 0; offset < bytes.length; offset += 384) bytes.set([0xff, 0xf3, 0xc4, 0xc0], offset);
+  return bytes;
 }
 
 function wavBytes(duration = 1, { sampleRate = 24000, channels = 1, bits = 16, junk = false } = {}) {
@@ -430,6 +447,60 @@ await check("accepted job IDs and actual credits remain logged when audio valida
   assert.equal(h.usage.length, 1); assert.equal(h.usage[0].taskId, "task_1"); assert.equal(h.usage[0].credits, 35.25);
   for (const secret of [h.key, exactMinimumText, "https://", "remainingCredits"]) assert.ok(!JSON.stringify(h.usage).includes(secret));
   assert.equal(h.media.size, 0);
+});
+
+await check("MP3 payloads use actual audio MIME and extension despite a WAV URL and content-type", async () => {
+  const h = await harness(), maziao = await provider(h), mp3 = syntheticMpegFrames();
+  const valid = speechHandler(h, { durations: [1] });
+  h.setHandler(request => isApi(request) ? valid(request) : new Response(mp3, { headers: { "content-type": "audio/wav" } }));
+  const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: [{ start: 0, end: 20, text: exactMinimumText }], duration: 20 });
+  assert.equal(result.segments[0].audioMime, "audio/mpeg");
+  assert.equal(result.segments[0].audioPath, `${alice}/narration/0.mp3`);
+  assert.equal(h.storedMimes.get(result.segments[0].audioPath), "audio/mpeg");
+  assert.deepEqual(h.media.get(result.segments[0].audioPath), mp3);
+  assert.equal(h.mp3Reads.length, 1); assert.deepEqual(h.mp3Reads[0], mp3);
+  assert.equal(result.sampleRate, 24000); assert.equal(result.channels, 1);
+  assert.equal(result.segments[0].duration, 8 * 576 / 24000);
+  assert.equal(result.usage.jobs, 1); assert.equal(h.shortened.length, 0);
+  assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+  const download = h.requests.find(request => !isApi(request));
+  assert.ok(download.url.endsWith(".wav")); assert.equal(download.headers, undefined); assert.equal(download.credentials, "omit");
+});
+
+await check("a mixed WAV and MP3 batch stores each segment's verified MIME and original bytes", async () => {
+  const h = await harness(), maziao = await provider(h), mp3 = syntheticMpegFrames(), wav = wavBytes(1);
+  const valid = speechHandler(h);
+  h.setHandler(request => {
+    if (isApi(request)) return valid(request);
+    return new Response(request.url.endsWith("_0.wav") ? wav : mp3, { headers: { "content-type": "application/octet-stream" } });
+  });
+  const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: sampleSegments(), duration: 7 });
+  assert.deepEqual(Array.from(result.segments, segment => segment.audioMime), ["audio/wav", "audio/mpeg"]);
+  assert.deepEqual(Array.from(result.segments, segment => segment.audioPath), [`${alice}/narration/0.wav`, `${alice}/narration/1.mp3`]);
+  assert.deepEqual(h.media.get(result.segments[0].audioPath), wav); assert.deepEqual(h.media.get(result.segments[1].audioPath), mp3);
+  assert.deepEqual([...h.storedMimes.values()], ["audio/wav", "audio/mpeg"]);
+  assert.equal(h.mp3Reads.length, 1); assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+});
+
+await check("malformed MP3 or non-audio data never stores narration or silently resubmits a paid job", async () => {
+  for (const bytes of [syntheticMpegFrames().subarray(0, 10), new TextEncoder().encode("<html>Provider error</html>")]) {
+    const h = await harness(), maziao = await provider(h);
+    const valid = speechHandler(h, { durations: [1], totalCost: 35.25 });
+    h.setHandler(request => isApi(request) ? valid(request) : new Response(bytes, { headers: { "content-type": "audio/mpeg" } }));
+    await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: [sampleSegments()[0]], duration: 3 }), { code: "INVALID_AUDIO" });
+    assert.equal(h.media.size, 0); assert.equal(h.storedMimes.size, 0); assert.equal(h.shortened.length, 0);
+    assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+    assert.equal(h.usage.length, 1); assert.equal(h.usage[0].taskId, "task_1"); assert.equal(h.usage[0].credits, 35.25);
+  }
+});
+
+await check("partial storage failure also removes a previously stored MP3 narration", async () => {
+  const h = await harness(), maziao = await provider(h), valid = speechHandler(h);
+  h.setHandler(request => isApi(request) ? valid(request) : new Response(request.url.endsWith("_0.wav") ? syntheticMpegFrames() : wavBytes(1)));
+  h.failStorageAt(1);
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: sampleSegments(), duration: 7 }), /Simulated storage failure/);
+  assert.equal(h.media.size, 0); assert.equal(h.storedMimes.size, 0); assert.deepEqual(h.deleted, [`${alice}/narration/0.mp3`]);
+  assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
 });
 
 await check("unvalidated provider task IDs are never logged, polled or used for recovery", async () => {

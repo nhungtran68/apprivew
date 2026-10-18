@@ -47,10 +47,11 @@ export async function removeOwnedMedia(userId: string, paths: string[]) {
   await client.storage.from(STUDIO_MEDIA_BUCKET).remove(safe);
 }
 
-export async function storeNarration(userId: string, wav: Uint8Array, index: number) {
+export async function storeNarration(userId: string, audio: Uint8Array, index: number, mime: "audio/wav" | "audio/mpeg" = "audio/wav") {
   const client = await createStudioSupabaseServer();
-  const path = `${userId}/narration/${crypto.randomUUID()}-${index}.wav`;
-  const { error } = await client.storage.from(STUDIO_MEDIA_BUCKET).upload(path, wav, { contentType: "audio/wav", upsert: false, cacheControl: "0" });
+  const extension = mime === "audio/mpeg" ? "mp3" : "wav";
+  const path = `${userId}/narration/${crypto.randomUUID()}-${index}.${extension}`;
+  const { error } = await client.storage.from(STUDIO_MEDIA_BUCKET).upload(path, audio, { contentType: mime, upsert: false, cacheControl: "0" });
   if (error) throw new StudioError("AUDIO_STORE_FAILED", "Chưa lưu được lời đọc. Hãy kiểm tra kho tệp của app.", 503);
   const signed = await client.storage.from(STUDIO_MEDIA_BUCKET).createSignedUrl(path, 300);
   if (signed.error || !signed.data?.signedUrl) {

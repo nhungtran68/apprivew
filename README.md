@@ -20,9 +20,11 @@ Giọng cá nhân được cấp quyền riêng theo thành viên bằng HMAC v�
 
 Trình duyệt chuẩn hóa mẫu nhân bản thành WAV mono 24 kHz/16-bit, lấy tối đa 8 giây đầu, yêu cầu bản gốc có ít nhất 3 giây. Server kiểm tra lại WAV, thời lượng và giới hạn 1 MB. Người dùng xác nhận quyền dùng giọng và chọn nam/nữ. Mẫu tạm trong Supabase được dọn sau yêu cầu; giọng đã nhân bản được Maziao giữ để tạo lời đọc.
 
-Lời đọc dùng `multiParts`: gửi các đoạn trong một tác vụ, kiểm tra trạng thái mỗi 6 giây rồi tải WAV. Không tự gửi lại tác vụ khi lỗi mạng hoặc hết thời gian chờ. Server đo thời lượng WAV thực; chỉ rút gọn và tạo lại các đoạn vượt cảnh, tối đa hai lần, không cắt mất lời để ép khớp. Luồng Maziao chờ tối đa 240 giây; kiểm tra tác vụ trên Maziao trước khi tạo lại nếu quá lâu.
+Lời đọc dùng `multiParts`: gửi các đoạn trong một tác vụ, kiểm tra trạng thái mỗi 6 giây rồi nhận MP3 hoặc WAV. Server xác minh định dạng từ byte thực, đo thời lượng, giữ đúng MIME và đuôi tệp trong kho riêng; không giả định mọi kết quả là WAV. Không tự gửi lại tác vụ khi lỗi mạng hoặc hết thời gian chờ. Chỉ rút gọn và tạo lại các đoạn vượt cảnh, tối đa hai lần, không cắt mất lời để ép khớp. Luồng Maziao chờ tối đa 240 giây; quản trị viên kiểm tra tác vụ trước khi tạo lại nếu quá lâu.
 
-Log `studio_voice_usage` ghi model, số ký tự, số đoạn và `totalCost` credit thực do Maziao trả, không ghi token, lời thoại, mẫu giọng hoặc URL cá nhân. Không mặc định 1 ký tự luôn bằng 1 credit; không quy đổi tiền khi chưa đối chiếu gói đã mua. Hạn mức AI nội bộ độc lập với credit Maziao.
+Model `vieten_speech` yêu cầu tổng lời thoại tối thiểu 100 ký tự cho một lần gửi theo kết quả thử thật. App báo trước và chặn yêu cầu quá ngắn trước khi trừ hạn mức hoặc gửi TTS; không tự thêm lời để đủ ký tự. Lần tạo lại ngắn hơn giới hạn cũng dừng để sửa kịch bản. Chưa suy rộng giới hạn này sang từng đoạn riêng hoặc model khác.
+
+Log `studio_voice_usage` ghi model, mã tác vụ đã kiểm tra, số ký tự, số đoạn và `totalCost` credit thực do Maziao trả, không ghi token, lời thoại, mẫu giọng hoặc URL cá nhân. Kết quả thành công cộng credit của các lần tạo lại; chi phí thiếu được giữ là chưa biết. Không mặc định 1 ký tự luôn bằng 1 credit; không quy đổi tiền khi chưa đối chiếu gói đã mua. Hạn mức AI nội bộ độc lập với credit Maziao.
 
 Tài liệu: [Maziao API](https://app.maziao.com/api-docs), [hợp đồng API](https://app.maziao.com/api-documentation.md).
 
