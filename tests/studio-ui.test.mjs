@@ -13,7 +13,7 @@ import ts from "typescript";
 
 const sourcePath = fileURLToPath(new URL("../components/Studio.tsx", import.meta.url));
 const source = readFileSync(sourcePath, "utf8");
-const exportsForTests = "\nexport {restoreArchive,freshProject,applyProjectChanges,applySegmentChange,scriptKey,intentKey,safeProfile,applySavedProfile,configurationFrom,affectsExport,voiceScriptMinimumHint};";
+const exportsForTests = "\nexport {restoreArchive,freshProject,applyProjectChanges,applySegmentChange,scriptKey,intentKey,safeProfile,applySavedProfile,configurationFrom,affectsExport,voiceScriptMinimumHint,pendingSpeechSegments,withoutSpeechPaths};";
 const compiled = ts.transpileModule(source + exportsForTests, {
   fileName: sourcePath,
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -28,7 +28,24 @@ const downloadModule = { exports: {} };
 new Function("module", "exports", downloadCompiled)(downloadModule, downloadModule.exports);
 const componentRequire = (specifier) => specifier === "@/lib/video-download" ? downloadModule.exports : baseRequire(specifier);
 new Function("require", "module", "exports", compiled)(componentRequire, evaluated, evaluated.exports);
-const { restoreArchive, freshProject, applyProjectChanges, applySegmentChange, scriptKey, intentKey, safeProfile, applySavedProfile, configurationFrom, affectsExport, voiceScriptMinimumHint, default: Studio } = evaluated.exports;
+const { restoreArchive, freshProject, applyProjectChanges, applySegmentChange, scriptKey, intentKey, safeProfile, applySavedProfile, configurationFrom, affectsExport, voiceScriptMinimumHint, pendingSpeechSegments, withoutSpeechPaths, default: Studio } = evaluated.exports;
+
+function renderStudioState(projectState, configuration = {}) {
+  const initialProject = `{ ...freshProject("current-user"), source: new Blob(["video"], { type: "video/mp4" }), ...${JSON.stringify(projectState)} }`;
+  const initialConfig = { userId: "current-user", deepseek: true, eleven: false, voiceProvider: "maziao", voiceConfigured: true, maziaoConfigured: true, ...configuration };
+  const configuredSource = source.replace('useState<Project>(() => freshProject("local"))', `useState<Project>(() => (${initialProject}))`)
+    .replace('useState<Configuration>({ userId: "local", deepseek: false, eleven: false })', `useState<Configuration>(${JSON.stringify(initialConfig)})`);
+  const output = ts.transpileModule(configuredSource, { fileName: sourcePath, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const viewModule = { exports: {} };
+  new Function("require", "module", "exports", output)(componentRequire, viewModule, viewModule.exports);
+  return renderToString(React.createElement(viewModule.exports.default));
+}
+
+function buttonsWithLabel(html, label) {
+  return Array.from(html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g))
+    .filter(match => match[2].replace(/<[^>]*>/g, "").trim() === label)
+    .map(match => ({ attributes: match[1], disabled: /\bdisabled(?:\s|=|$)/.test(match[1]) }));
+}
 
 const audio = { start: 0, end: 3, text: "Lời kể thử nghiệm", audioBase64: "AQID", audioMime: "audio/wav", duration: 1 };
 const archive = {
@@ -60,18 +77,45 @@ test("archive imports reject narration timelines extending beyond the clip", () 
 });
 
 test("changing a voice invalidates its previously generated audio without mutating the old project", () => {
-  const changed = applyProjectChanges(project, { voiceId: "voice-two" });
+  const pending = { ...project, segments: [{ ...audio, audioPath: "current-user/narration/paid.wav" }] };
+  const changed = applyProjectChanges(pending, { voiceId: "voice-two" });
   assert.equal(changed.segments[0].audioBase64, undefined);
+  assert.equal(changed.segments[0].audioPath, undefined, "a voice change must not retain a recovery path for the old voice");
   assert.equal(changed.segments[0].text, audio.text);
-  assert.equal(project.segments[0].audioBase64, "AQID");
-  assert.equal(applyProjectChanges(project, { voiceId: "voice-one" }).segments[0].audioBase64, "AQID");
+  assert.equal(pending.segments[0].audioBase64, "AQID");
+  assert.equal(pending.segments[0].audioPath, "current-user/narration/paid.wav");
+  assert.equal(applyProjectChanges(pending, { voiceId: "voice-one" }).segments[0].audioBase64, "AQID");
+  assert.equal(applyProjectChanges(pending, { voiceId: "voice-one" }).segments[0].audioPath, "current-user/narration/paid.wav");
 });
 
 test("editing script text removes the old voice bytes and measured duration", () => {
-  const changed = applySegmentChange(audio, { text: "Lời kể đã chỉnh" });
+  const pending = { ...audio, audioPath: "current-user/narration/paid.wav" };
+  const changed = applySegmentChange(pending, { text: "Lời kể đã chỉnh" });
   assert.equal(changed.audioBase64, undefined);
   assert.equal(changed.audioMime, undefined);
   assert.equal(changed.duration, undefined);
+  assert.equal(changed.audioPath, undefined, "the old text's paid speech is not the edited narration");
+  assert.equal(pending.audioPath, "current-user/narration/paid.wav");
+  assert.equal(applySegmentChange(pending, { text: pending.text }).audioPath, pending.audioPath);
+});
+
+test("editing or removing part of an undelivered batch clears every stale recovery path but timing edits preserve delivery", () => {
+  const segments = [
+    { ...audio, audioBase64: undefined, audioPath: "current-user/narration/first.wav" },
+    { ...audio, start: 3, end: 6, text: "Đoạn thứ hai", audioPath: "current-user/narration/second.wav" },
+  ];
+  const pending = { ...project, duration: 6, segments };
+  const edited = applyProjectChanges(pending, { segments: [applySegmentChange(segments[0], { text: "Lời đã thay đổi" }), segments[1]] });
+  assert.ok(edited.segments.every(segment => segment.audioPath === undefined), "mixed old paths and newly edited missing audio must not trap recovery");
+  assert.equal(edited.segments[0].text, "Lời đã thay đổi");
+  assert.equal(edited.segments[1].audioBase64, audio.audioBase64, "unchanged local audio survives an edit to another segment");
+  const removed = applyProjectChanges(pending, { segments: [segments[1]] });
+  assert.equal(removed.segments[0].audioPath, undefined);
+  const timingOnly = applyProjectChanges(pending, { segments: [applySegmentChange(segments[0], { end: 2.5 }), segments[1]] });
+  assert.deepEqual(timingOnly.segments.map(segment => segment.audioPath), segments.map(segment => segment.audioPath));
+  const received = applyProjectChanges(pending, { segments: segments.map(segment => ({ ...segment, audioBase64: "AQID" })) });
+  assert.deepEqual(received.segments.map(segment => segment.audioPath), segments.map(segment => segment.audioPath), "receiving bytes must retain paths until the durable save succeeds");
+  assert.ok(pending.segments.every(segment => segment.audioPath), "edits do not mutate the earlier saved project");
 });
 
 test("adjusting a timing boundary preserves audio for the exporter to measure against the new interval", () => {
@@ -128,6 +172,87 @@ test("only Vieten voices require 100 cleaned characters across the whole script,
   assert.equal(voiceScriptMinimumHint("maziao:vieten_speech:voice-1", [{ ...segments[0], text: "a".repeat(50) }, segments[1]]), "");
   for (const voiceId of ["maziao:lingual_speech_v2:voice-1", "eleven-voice", "", "maziao:vieten_speech:"]) assert.equal(voiceScriptMinimumHint(voiceId, segments), "");
   assert.deepEqual(segments, original);
+});
+
+test("pending paid speech keeps current-user paths and timing while discarding signed URLs and provider extras", () => {
+  const input = [
+    { start: 0, end: 3, text: "Lời đọc thứ nhất", audioPath: "current-user/narration/one.mp3", audioMime: "audio/mpeg", duration: 1.5, audioUrl: "https://private.invalid/one.mp3?token=never-persist", providerSecret: "never-persist", audioBase64: "unvalidated-response-data" },
+    { start: 3, end: 6, text: "Lời đọc thứ hai", audioPath: "current-user/narration/two.wav", audioMime: "audio/wav", duration: 2 },
+  ];
+  const original = structuredClone(input);
+  const pending = pendingSpeechSegments(input, 6, "current-user");
+  assert.equal(pending.length, 2);
+  for (const [index, item] of pending.entries()) {
+    assert.equal(item.start, input[index].start); assert.equal(item.end, input[index].end); assert.equal(item.text, input[index].text);
+    assert.equal(item.audioPath, input[index].audioPath); assert.equal(item.audioMime, input[index].audioMime); assert.equal(item.duration, input[index].duration);
+    assert.equal(item.audioUrl, undefined); assert.equal(item.providerSecret, undefined); assert.equal(item.audioBase64, undefined);
+  }
+  assert.ok(!JSON.stringify(pending).includes("never-persist"));
+  assert.deepEqual(input, original);
+});
+
+test("pending paid speech rejects foreign or unsafe paths, invalid timelines and oversized batches", () => {
+  const valid = { start: 0, end: 3, text: "Lời đọc", audioPath: "current-user/narration/paid.mp3", audioMime: "audio/mpeg" };
+  for (const value of [undefined, {}, [], Array.from({ length: 17 }, () => valid), [null],
+    [{ ...valid, audioPath: "other-user/narration/paid.mp3" }],
+    [{ ...valid, audioPath: "current-user/../other-user/paid.mp3" }],
+    [{ ...valid, audioPath: "current-user/narration/paid.mp3?token=private" }],
+    [{ ...valid, audioPath: undefined }],
+    [{ ...valid, start: -1 }], [{ ...valid, start: NaN }], [{ ...valid, end: Infinity }],
+    [{ ...valid, end: 3.1 }], [{ ...valid, start: 2, end: 2 }], [{ ...valid, text: "x".repeat(2401) }],
+  ]) assert.throws(() => pendingSpeechSegments(value, 3, "current-user"));
+  const maximum = Array.from({ length: 16 }, (_, index) => ({ ...valid, start: index, end: index + 1, audioPath: `current-user/narration/${index}.mp3` }));
+  assert.equal(pendingSpeechSegments(maximum, 16, "current-user").length, 16);
+});
+
+test("archive transfer preserves inline MP3 and editable duration but drops every account's recovery paths", () => {
+  const paid = { ...audio, audioMime: "audio/mpeg", audioPath: "current-user/narration/paid.mp3" };
+  const portable = withoutSpeechPaths([paid]);
+  assert.equal(portable[0].audioPath, undefined); assert.equal(portable[0].audioBase64, paid.audioBase64); assert.equal(portable[0].audioMime, "audio/mpeg");
+  assert.equal(paid.audioPath, "current-user/narration/paid.mp3", "preparing a backup must not clear the live project's recovery state");
+  const restored = restoreArchive({ ...archive, project: { ...archive.project, manualDuration: true, segments: [{ ...paid, audioUrl: "https://private.invalid/paid.mp3?token=never-import" }] } }, "another-user");
+  assert.equal(restored.userId, "another-user"); assert.equal(restored.manualDuration, true);
+  assert.equal(restored.segments[0].audioBase64, paid.audioBase64); assert.equal(restored.segments[0].mimeType, "audio/mpeg");
+  assert.equal(restored.segments[0].audioPath, undefined); assert.equal(restored.segments[0].audioUrl, undefined);
+  const noBytes = restoreArchive({ ...archive, project: { ...archive.project, segments: [{ ...paid, audioBase64: undefined }] } }, "another-user");
+  assert.equal(noBytes.segments[0].text, paid.text); assert.equal(noBytes.segments[0].audioPath, undefined); assert.equal(noBytes.segments[0].audioBase64, undefined);
+  const legacyUnknown = restoreArchive({ ...archive, project: { ...archive.project, duration: 0, segments: [] } }, "current-user");
+  assert.equal(legacyUnknown.manualDuration, true, "an old archive with no measured duration must still offer manual correction");
+});
+
+test("the actual pending speech screen offers download-only recovery despite a short Vieten script or unavailable provider", () => {
+  for (const [voiceConfigured, voiceId] of [[true, "maziao:vieten_speech:voice-1"], [false, "maziao:vieten_speech:voice-1"], [false, ""]]) {
+    const html = renderStudioState({ duration: 20, step: 3, voiceId, segments: [{ start: 0, end: 20, text: "Lời đọc đã tạo", audioPath: "current-user/narration/paid.mp3", audioMime: "audio/mpeg" }] }, { voiceConfigured, maziaoConfigured: voiceConfigured });
+    const retry = buttonsWithLabel(html, "Tải lại lời đọc");
+    assert.equal(retry.length, 1, "there is one clear action to receive the completed speech");
+    assert.ok(retry.some(button => button.attributes.includes("primary")), "the main action must recover the paid audio");
+    assert.ok(retry.every(button => !button.disabled));
+    assert.equal(buttonsWithLabel(html, "Tạo giọng đọc").length, 0);
+    assert.equal(buttonsWithLabel(html, "Tạo lại giọng đọc").length, 0);
+    assert.equal(html.includes("Giọng này cần ít nhất 100 ký tự lời thoại."), false, "generation limits cannot block delivery of an existing result");
+  }
+});
+
+test("the actual speech screen offers saving existing bytes after local persistence fails without offering a new generation", () => {
+  const html = renderStudioState({ duration: 3, step: 3, voiceId: "maziao:vieten_speech:voice-1", segments: [{ ...audio, audioMime: "audio/mpeg", audioPath: "current-user/narration/paid.mp3" }] }, { voiceConfigured: false, maziaoConfigured: false });
+  const save = buttonsWithLabel(html, "Lưu lại lời đọc");
+  assert.ok(save.length > 0); assert.ok(save.every(button => !button.disabled));
+  assert.equal(buttonsWithLabel(html, "Tải lại lời đọc").length, 0);
+  assert.equal(buttonsWithLabel(html, "Tạo giọng đọc").length, 0);
+  assert.equal(buttonsWithLabel(html, "Tạo lại giọng đọc").length, 0);
+  assert.ok(html.includes("data:audio/mpeg;base64,AQID"), "the paid audio stays available to preview in the current page");
+});
+
+test("the actual duration editor stays available after the first digit, multidigit entry and correction", () => {
+  for (const duration of [0, 3, 30, 30.5, 25]) {
+    const html = renderStudioState({ duration, manualDuration: true, step: 1, intent: "Lời kể về khu vườn" });
+    const field = html.match(/<input\b[^>]*id="manual-duration"[^>]*>/)?.[0];
+    assert.equal(typeof field, "string", `the field remains editable at ${duration} seconds`);
+    assert.ok(field.includes(`value="${duration || ""}"`));
+    assert.ok(!field.includes("disabled"));
+  }
+  const measured = renderStudioState({ duration: 30, manualDuration: false, step: 1 });
+  assert.equal(measured.includes('id="manual-duration"'), false, "a reliably measured clip does not require a manual duration field");
 });
 
 test("the actual speech screen explains Vieten's short-script limit while leaving manual audio and other models available", () => {

@@ -1,5 +1,28 @@
 # Kiểm chứng Supabase và AI
 
+## Khôi phục lời đọc đã tạo và nhập thời lượng — 18/10/2026
+
+Tiếp tục từ `main` tại `0d22ec72cf1775d93ed53c1775a245e5cd0ee7be` (09:15 giờ Việt Nam). Đợt trước đã hoàn thiện MP3 Maziao; lần này sửa mất kết quả khi tải lời đọc bị gián đoạn và ô thời lượng biến mất sau chữ số đầu.
+
+- **127 kiểm tra ngoại tuyến đạt:** 31 backend, 25 UI/dự án, 10 tải/chuẩn hóa mẫu, 8 lưu/chia sẻ MP4, 11 ElevenLabs, 32 Maziao, 10 MP3. TypeScript và production build đạt. Bản dựng cục bộ dùng cờ có sẵn `STUDIO_BUILD_IN_PROCESS=1` vì môi trường chạy không đọc được đầu ra tiến trình TypeScript riêng; không đổi cấu hình build mặc định của repo. Các bài Supabase/Next.js tích hợp của đợt trước vẫn ghi riêng bên dưới.
+- Kết quả `/api/speech` thành công được giữ bằng đường dẫn tệp của đúng tài khoản trong dự án trước khi tải. Không lưu URL ký tạm hoặc dữ liệu thừa của nhà cung cấp. Tải lỗi không xóa các đoạn đã tạo, kể cả các đoạn chưa kịp tải.
+- **Tải lại lời đọc** chỉ cấp URL mới và đọc tệp đã có; không gọi lại `/api/speech`, Maziao hoặc ElevenLabs. Chỉ dọn tệp riêng sau khi âm thanh đã ghi thành công vào IndexedDB. Ghi bộ nhớ thất bại giữ byte trong trang và đường dẫn khôi phục, có **Lưu lại lời đọc** để thử ghi lại. Các lượt ghi dự án được xếp thứ tự để bản lưu cũ không ghi đè âm thanh vừa nhận.
+- Sửa lời/đổi giọng hoặc bỏ đoạn làm mất hiệu lực tham chiếu cũ; đổi riêng mốc thời gian vẫn giữ âm thanh để bộ xuất kiểm tra. Bản sao `.loike` giữ byte âm thanh đã tải và bỏ đường dẫn riêng theo tài khoản. Ô nhập thời lượng dùng cờ riêng nên vẫn hiện khi nhập hoặc sửa `30` / `30.5`.
+
+### Ba kiểm tra tương tác trên Chrome 155
+
+Chạy ứng dụng Next.js thật cục bộ với API tài khoản, giọng và Supabase được mô phỏng; tệp MP3 là âm tổng hợp do FFmpeg tạo cục bộ. Không dùng khóa thật, tài khoản Production hoặc dịch vụ AI trả phí.
+
+1. **Lỗi HTTP 503 khi tải MP3 → tải lại trang → tải lại lời đọc:** trước lỗi, dự án đã lưu đường dẫn đúng chủ và không có URL ký tạm. Sau mở lại, đúng **1 yêu cầu tạo giọng**, **2 lượt tải âm thanh** (lỗi + thành công), **1 lần xóa tệp**. Kiểm tra tại thời điểm xóa xác nhận byte MP3 đã lưu đúng trong IndexedDB. Mở trang lần nữa vẫn có âm thanh để nghe.
+2. **Giả lập `QuotaExceededError` khi ghi byte → lưu lại:** tệp riêng không bị xóa. Khi bộ nhớ ghi lại được, bấm **Lưu lại lời đọc** thành công với tổng **1 yêu cầu tạo giọng và 1 lượt tải âm thanh**; không tạo hoặc tải thêm. Tệp chỉ xóa khi byte đã được lưu.
+3. **Nhập thời lượng bằng từng phím:** nhập `15`, xóa rồi nhập `30`; ô vẫn hiện. Dự án lưu `duration=30`, tải lại trang vẫn chỉnh được. Không có yêu cầu AI hoặc âm thanh.
+
+Không có lỗi JavaScript trong ba luồng. Màn hình khôi phục có `scrollWidth` bằng chiều rộng viewport ở **375 và 1.280 px**; nút tải lại trên điện thoại nằm phía trên thanh điều hướng. Ảnh QA dùng font dự phòng cục bộ. Đây là trình duyệt mô phỏng kích thước màn hình, chưa phải thử trên điện thoại vật lý.
+
+### Giới hạn còn lại của lần sửa
+
+Khôi phục áp dụng khi phản hồi tạo giọng thành công đã đến trình duyệt và dự án đã lưu được: cùng tài khoản, thiết bị và trình duyệt. Không khôi phục tác vụ bị mất phản hồi `/api/speech`, không chuyển tệp chưa tải qua bản sao `.loike`. Mất mạng trước phản hồi hoặc Maziao quá thời gian chờ vẫn cần kiểm tra tác vụ ở nhà cung cấp. Các kiểm chứng giọng người dùng thật, video thực 15–90 giây, SMTP, CapCut/Facebook và đối soát chi phí vẫn chưa hoàn thành.
+
 ## Tích hợp Maziao — hoàn thiện 18/10/2026
 
 - **116 kiểm tra ngoại tuyến đạt** (31 backend, 18 UI, 6 tải/chuẩn hóa mẫu, 8 lưu/chia sẻ MP4, 11 ElevenLabs, 32 Maziao, 10 MP3). TypeScript và production build đạt. Không có khóa Maziao trong mã trình duyệt hoặc GitHub; không tự chuyển sang ElevenLabs khi Maziao lỗi.

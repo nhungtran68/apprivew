@@ -8,7 +8,7 @@ const origin = "https://offline.supabase.invalid", bytes = new Uint8Array([82, 7
 const paths = ["first", "second", "third"].map(name => `${alice}/narration/${name}.wav`);
 let state;
 function reset() {
-  state = { userId: alice, authError: null, authThrows: false, removeError: null, removeThrows: false, removals: [], fetches: [], fetch: async () => new Response(bytes, { headers: { "content-type": "audio/wav" } }), audioDuration: 6, decodeFails: false, contextClosed: 0, renderRequests: [] };
+  state = { userId: alice, authError: null, authThrows: false, removeError: null, removeThrows: false, removals: [], signError: null, signThrows: false, signResult: undefined, signings: [], fetches: [], fetch: async () => new Response(bytes, { headers: { "content-type": "audio/wav" } }), audioDuration: 6, decodeFails: false, contextClosed: 0, renderRequests: [] };
 }
 reset();
 const client = {
@@ -18,11 +18,19 @@ const client = {
   } },
   storage: { from(bucket) {
     assert.equal(bucket, "studio-media");
-    return { async remove(removed) {
-      state.removals.push([...removed]);
-      if (state.removeThrows) throw new Error("private-storage-detail");
-      return { data: [], error: state.removeError };
-    } };
+    return {
+      async remove(removed) {
+        state.removals.push([...removed]);
+        if (state.removeThrows) throw new Error("private-storage-detail");
+        return { data: [], error: state.removeError };
+      },
+      async createSignedUrl(path, expiresIn) {
+        state.signings.push({ path, expiresIn });
+        if (state.signThrows) throw new Error("private-signing-detail");
+        if (state.signResult !== undefined) return state.signResult;
+        return { data: { signedUrl: `${origin}/storage/v1/object/sign/studio-media/${path}?token=fresh-${state.signings.length}` }, error: state.signError };
+      },
+    };
   } },
 };
 class TestFileReader {
@@ -74,33 +82,106 @@ const segment = (path, index = 0) => ({ start: index * 2, end: index * 2 + 2, te
 let passed = 0;
 async function check(name, test) { reset(); await test(); passed++; console.log(`PASS ${name}`); }
 
-await check("failed first HTTP or network download still attempts removal of every owned segment", async () => {
-  for (const fail of [async () => new Response("offline failure", { status: 503 }), async () => { throw new Error("offline network failure"); }]) {
-    reset(); state.fetch = fail;
-    await assert.rejects(downloadSpeechSegments(paths.map(segment)));
-    assert.equal(state.fetches.length, 1, "later segments should not be downloaded after the first failure");
-    assert.deepEqual(state.removals, [paths], "the failed and not-yet-downloaded objects must all be cleaned");
+await check("first or middle download interruptions preserve every paid object and recovery reference", async () => {
+  for (const failedIndex of [0, 1]) {
+    for (const fail of [async () => new Response("offline failure", { status: 503 }), async () => { throw new Error("private-network-detail"); }]) {
+      reset();
+      state.fetch = async () => state.fetches.length === failedIndex + 1 ? fail() : new Response(bytes);
+      const input = paths.map(segment), original = structuredClone(input);
+      await assert.rejects(downloadSpeechSegments(input), error => {
+        assert.match(error.message, /Tải lại lời đọc/);
+        assert.ok(!error.message.includes("private-"));
+        return true;
+      });
+      assert.equal(state.fetches.length, failedIndex + 1, "downloads stop at the first failure");
+      assert.deepEqual(state.removals, [], "no paid object may be deleted after an interrupted delivery");
+      assert.deepEqual(state.signings, [], "supplied valid URLs do not need signing");
+      assert.deepEqual(input, original, "the caller's saved recovery references remain intact");
+    }
   }
 });
 
-await check("cleanup never removes foreign paths and signed downloads must match the current owner and app origin", async () => {
+await check("path-only retry signs fresh owner-scoped URLs and returns exact MP3 bytes without generating speech", async () => {
+  const mp3Bytes = new Uint8Array([255, 243, 132, 0, 3, 2, 1]);
+  const input = paths.map((path, index) => ({ ...segment(path.replace(/\.wav$/, ".mp3"), index), audioMime: "audio/mpeg" }));
+  state.fetch = async () => state.fetches.length === 2 ? new Response("interrupted", { status: 503 }) : new Response(mp3Bytes);
+  await assert.rejects(downloadSpeechSegments(input));
+  assert.deepEqual(state.removals, []);
+  const recovered = input.map(({ audioUrl, ...rest }) => rest);
+  const previousFetches = state.fetches.length;
+  state.fetch = async () => new Response(mp3Bytes, { headers: { "content-type": "audio/mpeg" } });
+  const downloaded = await downloadSpeechSegments(recovered);
+  assert.deepEqual(state.signings, recovered.map(audio => ({ path: audio.audioPath, expiresIn: 300 })));
+  assert.equal(state.fetches.length - previousFetches, recovered.length);
+  assert.deepEqual(state.removals, [], "success still waits for the caller to persist bytes before cleanup");
+  for (const [index, audio] of downloaded.entries()) {
+    assert.equal(audio.audioBase64, Buffer.from(mp3Bytes).toString("base64"));
+    assert.equal(audio.mimeType, "audio/mpeg"); assert.equal(audio.audioMime, "audio/mpeg");
+    assert.equal(audio.start, input[index].start); assert.equal(audio.end, input[index].end); assert.equal(audio.duration, input[index].duration);
+    assert.equal(audio.audioPath, undefined); assert.equal(audio.audioUrl, undefined);
+  }
+  for (const request of state.fetches) {
+    const url = new URL(request.url);
+    assert.equal(url.origin, origin, "the retry only uses the existing private Storage objects");
+    assert.ok(url.pathname.startsWith(`/storage/v1/object/sign/studio-media/${alice}/narration/`));
+    assert.ok(!request.options.method || request.options.method === "GET", "no TTS/provider submission is made");
+  }
+  assert.ok(state.fetches.slice(previousFetches).every(request => new URL(request.url).searchParams.get("token").startsWith("fresh-")));
+  assert.ok(recovered.every(audio => audio.audioUrl === undefined), "fresh signed URLs are never written back to the saved references");
+});
+
+await check("all owned paths and supplied signed URLs are validated before any signing or download", async () => {
+  const foreign = `${bob}/narration/foreign.wav`;
+  for (const invalid of [
+    segment(foreign),
+    { ...segment(foreign), audioUrl: undefined },
+    { ...segment(`${alice}/../foreign.wav`), audioUrl: undefined },
+    { ...segment(paths[0]), audioPath: undefined, audioUrl: undefined },
+    { ...segment(paths[0]), audioUrl: `https://untrusted.example.invalid/storage/v1/object/sign/studio-media/${paths[0]}` },
+    { ...segment(paths[0]), audioUrl: `${origin}/storage/v1/object/sign/studio-media/${foreign}?token=offline` },
+    { ...segment(paths[0]), audioUrl: `${origin}/storage/v1/object/sign/studio-media/${paths[0]}#unexpected-fragment` },
+    { ...segment(paths[0]), audioUrl: `${origin.replace("https://", "https://name:password@")}/storage/v1/object/sign/studio-media/${paths[0]}` },
+    { ...segment(paths[0]), audioUrl: "" },
+  ]) {
+    reset();
+    await assert.rejects(downloadSpeechSegments([{ ...segment(paths[1], 1), audioUrl: undefined }, invalid]));
+    assert.equal(state.fetches.length, 0, "invalid/foreign signed paths must be rejected before any download");
+    assert.deepEqual(state.signings, [], "even an earlier valid path must not be signed before validation finishes");
+    assert.deepEqual(state.removals, [], "validation failure is never permission to delete paid files");
+  }
+});
+
+await check("signing failures and untrusted signing results keep paid objects and hide SDK details", async () => {
+  for (const failure of ["signError", "signThrows", "missingUrl", "foreignOrigin", "foreignPath"]) {
+    reset();
+    if (failure === "signError") state.signError = { message: "private-signing-detail" };
+    if (failure === "signThrows") state.signThrows = true;
+    if (failure === "missingUrl") state.signResult = { data: {}, error: null };
+    if (failure === "foreignOrigin") state.signResult = { data: { signedUrl: `https://untrusted.invalid/storage/v1/object/sign/studio-media/${paths[0]}?token=private-token` }, error: null };
+    if (failure === "foreignPath") state.signResult = { data: { signedUrl: `${origin}/storage/v1/object/sign/studio-media/${bob}/narration/voice.wav?token=private-token` }, error: null };
+    await assert.rejects(downloadSpeechSegments([{ ...segment(paths[0]), audioUrl: undefined }]), error => {
+      assert.ok(error.message.length > 20);
+      assert.ok(!error.message.includes("private-") && !error.message.includes("token="));
+      return true;
+    });
+    assert.equal(state.signings.length, 1); assert.deepEqual(state.fetches, []); assert.deepEqual(state.removals, []);
+  }
+});
+
+await check("path-only recovery requires a currently authenticated owner before signing or fetching", async () => {
+  for (const failure of ["authError", "authThrows", "noUser"]) {
+    reset();
+    if (failure === "noUser") state.userId = null;
+    else state[failure] = failure.endsWith("Throws") ? true : { message: `private-${failure}-detail` };
+    await assert.rejects(downloadSpeechSegments([{ ...segment(paths[0]), audioUrl: undefined }]), error => !error.message.includes("private-"));
+    assert.deepEqual(state.signings, []); assert.deepEqual(state.fetches, []); assert.deepEqual(state.removals, []);
+  }
+});
+
+await check("explicit cleanup filters foreign paths and reports auth/storage failures safely", async () => {
   const foreign = `${bob}/narration/foreign.wav`;
   await cleanupAnalysisMedia({ samplePaths: [paths[0], foreign, `${alice}/../foreign.wav`, paths[0]] });
   assert.deepEqual(state.removals, [[paths[0]]], "cleanup filters foreign/traversal paths and deduplicates own paths");
-  for (const invalid of [
-    segment(foreign),
-    { ...segment(paths[0]), audioUrl: `https://untrusted.example.invalid/storage/v1/object/sign/studio-media/${paths[0]}` },
-    { ...segment(paths[0]), audioUrl: `${origin}/storage/v1/object/sign/studio-media/${foreign}?token=offline` },
-  ]) {
-    reset();
-    await assert.rejects(downloadSpeechSegments([invalid, segment(paths[1], 1)]));
-    assert.equal(state.fetches.length, 0, "invalid/foreign signed paths must be rejected before any download");
-    assert.ok(state.removals.flat().every(path => path.startsWith(`${alice}/`) && !path.includes("..")));
-    assert.ok(state.removals.flat().includes(paths[1]), "valid later owned objects still need cleanup");
-  }
-});
-
-await check("explicit cleanup reports auth/storage failures safely while paid downloaded audio survives cleanup failure", async () => {
   for (const failure of ["authError", "authThrows", "noUser", "removeError", "removeThrows"]) {
     reset();
     if (failure === "noUser") state.userId = null;
@@ -112,13 +193,9 @@ await check("explicit cleanup reports auth/storage failures safely while paid do
       return true;
     });
   }
-  reset(); state.removeError = { message: "private-storage-detail" };
-  const downloaded = await downloadSpeechSegments([segment(paths[0])]);
-  assert.equal(downloaded[0].audioBase64, Buffer.from(bytes).toString("base64"));
-  assert.deepEqual(state.removals, [[paths[0]]], "best-effort cleanup must still be attempted");
 });
 
-await check("successful downloads return exact base64 without signed URLs and remove all temporary objects", async () => {
+await check("successful downloads strip cloud references and wait for explicit cleanup after local persistence", async () => {
   const downloaded = await downloadSpeechSegments(paths.map(segment));
   assert.equal(downloaded.length, paths.length);
   for (const [index, audio] of downloaded.entries()) {
@@ -127,13 +204,30 @@ await check("successful downloads return exact base64 without signed URLs and re
     assert.equal(audio.text, `Offline segment ${index}`);
     assert.equal(audio.audioUrl, undefined); assert.equal(audio.audioPath, undefined);
   }
-  assert.deepEqual(state.removals, [paths]);
+  assert.deepEqual(state.removals, []);
+  assert.deepEqual(state.signings, []);
   assert.equal(state.fetches.length, paths.length);
   for (const request of state.fetches) {
     assert.equal(new URL(request.url).origin, origin);
     assert.equal(request.options.credentials, "omit");
     assert.equal(request.options.redirect, "error", "redirects cannot escape the approved storage origin");
   }
+  // The caller has now persisted these returned bytes; cleanup is a separate act.
+  await cleanupAnalysisMedia(paths);
+  assert.deepEqual(state.removals, [paths]);
+});
+
+await check("already downloaded audio retries locally, retains MP3 MIME, and drops every private reference", async () => {
+  state.userId = null; state.authThrows = true;
+  const audioBase64 = Buffer.from(bytes).toString("base64");
+  const input = [{ ...segment(paths[0]), audioBase64, audioMime: "audio/mpeg" }, { ...segment(paths[1], 1), audioBase64, audioMime: undefined, mimeType: "audio/mpeg" }];
+  const downloaded = await downloadSpeechSegments(input);
+  for (const audio of downloaded) {
+    assert.equal(audio.audioBase64, audioBase64); assert.equal(audio.mimeType, "audio/mpeg");
+    assert.equal(audio.audioUrl, undefined); assert.equal(audio.audioPath, undefined);
+  }
+  assert.deepEqual(state.fetches, []); assert.deepEqual(state.signings, []); assert.deepEqual(state.removals, []);
+  assert.equal(input[0].audioPath, paths[0], "the caller still knows what to clean after a durable save");
 });
 
 await check("Maziao samples become server-readable mono 24 kHz PCM WAV and long recordings stop at eight seconds", async () => {
