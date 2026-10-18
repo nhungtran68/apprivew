@@ -1,4 +1,4 @@
-import { createScriptTemplate, listScriptTemplates } from "@/lib/script-templates";
+import { createScriptTemplate, listBuiltinScriptTypes, listScriptTemplates } from "@/lib/script-templates";
 import { apiError, json, limitedJson, requestUser } from "@/lib/studio-server";
 
 export const runtime = "nodejs";
@@ -7,7 +7,8 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     const userId = await requestUser(request);
-    return json({ templates: await listScriptTemplates(userId) });
+    const [templates, builtins] = await Promise.all([listScriptTemplates(userId), listBuiltinScriptTypes(userId)]);
+    return json({ templates, builtins });
   } catch (error) { return apiError(error); }
 }
 

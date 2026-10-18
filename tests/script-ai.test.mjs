@@ -15,6 +15,7 @@ const fields = (title, prompt = privatePrompt) => ({ title, prompt, description:
 
 async function fixture() {
   const rows = new Map();
+  const builtinRows = new Map();
   const charges = [];
   const providerCalls = [];
   const logs = [];
@@ -80,9 +81,41 @@ async function fixture() {
     }
   }
 
+  class BuiltinQuery {
+    constructor(action = "select", values = null) {
+      this.action = action;
+      this.values = values;
+      this.filters = [];
+    }
+    select() { return this; }
+    eq(key, value) { this.filters.push([key, value]); return this; }
+    upsert(values, { onConflict }) { assert.equal(onConflict, "format"); return new BuiltinQuery("upsert", values); }
+    maybeSingle() { const result = this.execute(); return Promise.resolve({ data: result.data[0] || null, error: result.error }); }
+    single() { return this.maybeSingle(); }
+    then(resolve, reject) { return Promise.resolve(this.execute()).then(resolve, reject); }
+    execute() {
+      const member = members.get(identity);
+      if (!member?.enabled) return { data: [], error: null };
+      if (this.action === "upsert") {
+        if (member.role !== "admin" || this.values.owner_id !== identity)
+          return { data: [], error: { code: "42501" } };
+        const row = { ...this.values };
+        builtinRows.set(row.format, row);
+        return { data: [structuredClone(row)], error: null };
+      }
+      const data = [...builtinRows.values()].filter(row => this.filters.every(([key, value]) => row[key] === value));
+      return { data: structuredClone(data), error: null };
+    }
+  }
+
   const serverMock = {
     getMember: async userId => {
       if (userId !== identity || !members.get(userId)?.enabled) throw new Error("Member unavailable");
+      return members.get(userId);
+    },
+    requireAdmin: async userId => {
+      if (userId !== identity || members.get(userId)?.role !== "admin" || !members.get(userId)?.enabled)
+        throw Object.assign(new Error("Chỉ quản trị viên được quản lý dạng kịch bản."), { code: "ADMIN_REQUIRED", status: 403 });
       return members.get(userId);
     },
     requestUser: async (request, mutation = false) => {
@@ -110,8 +143,9 @@ async function fixture() {
   const mocks = new Map([
     [studioServer, serverMock],
     [studioSupabase, { createStudioSupabaseServer: async () => ({ from: table => {
-      assert.equal(table, "studio_script_templates");
-      return new Query();
+      if (table === "studio_script_templates") return new Query();
+      if (table === "studio_script_builtin_styles") return new BuiltinQuery();
+      assert.fail(`Unexpected table ${table}`);
     } }) }],
     [studioProfile, { projectProfile: async () => ({ channel: "Cửa hàng của tôi", tone: "Chân thành" }) }],
   ]);
@@ -162,7 +196,7 @@ async function fixture() {
     ...(["GET", "DELETE"].includes(method) ? {} : { body: JSON.stringify(body) }),
   });
   return {
-    entry, request, rows, charges, providerCalls, logs, members,
+    entry, request, rows, builtinRows, charges, providerCalls, logs, members,
     as(userId) { identity = userId; },
     setScript(script) { providerScript = script; },
   };
@@ -190,6 +224,43 @@ test("admin shared prompt is encrypted at rest and omitted from a member's templ
   assert.ok(!JSON.stringify(body).includes("prompt_ciphertext"));
   h.as(admin);
   assert.equal((await (await route.GET(h.request("/api/script-templates", "GET"))).json()).templates[0].prompt, privatePrompt);
+});
+
+test("four built-in types belong to admin; member uses the saved private prompt without seeing or editing it", async () => {
+  const h = await fixture();
+  const listRoute = await h.entry("app/api/script-templates/route.ts");
+  const builtinRoute = await h.entry("app/api/script-builtins/[format]/route.ts");
+  const generate = await h.entry("app/api/script-generate/route.ts");
+  const defaults = (await (await listRoute.GET(h.request("/api/script-templates", "GET"))).json()).builtins;
+  assert.deepEqual(defaults.map(item => item.format), ["review", "story", "tips", "sales"]);
+  assert.ok(defaults.every(item => item.prompt === ""));
+  const context = format => ({ params: Promise.resolve({ format }) });
+  const updated = await builtinRoute.PATCH(h.request("/api/script-builtins/review", "PATCH", fields("Review theo vấn đề")), context("review"));
+  assert.equal(updated.status, 200);
+  assert.equal((await updated.json()).builtin.prompt, privatePrompt);
+  assert.equal(h.builtinRows.get("review").title, "Review theo vấn đề");
+  assert.match(h.builtinRows.get("review").prompt_ciphertext, /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+  assert.ok(!JSON.stringify(h.builtinRows.get("review")).includes(privatePrompt));
+
+  h.as(alice);
+  const memberList = (await (await listRoute.GET(h.request("/api/script-templates", "GET"))).json()).builtins;
+  assert.equal(memberList.find(item => item.format === "review").title, "Review theo vấn đề");
+  assert.ok(memberList.every(item => item.prompt === undefined));
+  assert.ok(!JSON.stringify(memberList).includes(privatePrompt));
+  assert.equal((await builtinRoute.PATCH(h.request("/api/script-builtins/review", "PATCH", fields("Cố sửa")), context("review"))).status, 403);
+  assert.equal((await builtinRoute.PATCH(h.request("/api/script-builtins/fake", "PATCH", fields("Cố sửa")), context("fake"))).status, 403);
+  const response = await generate.POST(h.request("/api/script-generate", "POST", {
+    format: "review", title: "Cây giống", brief: "Giới thiệu cây giống cho người mới trồng ban công.", durationSeconds: 30,
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(h.charges.length, 1);
+  const payload = JSON.parse(h.providerCalls[0].init.body);
+  assert.ok(payload.messages[0].content.includes(privatePrompt));
+  assert.ok(payload.messages[0].content.includes("Review theo vấn đề"));
+  assert.match(payload.messages[0].content, /đừng chỉ tường thuật/i);
+  assert.match(payload.messages[0].content, /không tự nhận đã dùng sản phẩm/i);
+  assert.ok(!payload.messages[1].content.includes(privatePrompt));
+  assert.ok(h.logs.every(line => !line.includes(privatePrompt)));
 });
 
 test("members can edit/delete only their personal script types; shared and foreign types resist mutation", async () => {

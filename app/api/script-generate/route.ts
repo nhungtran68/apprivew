@@ -1,5 +1,5 @@
 import { generateStandaloneScript } from "@/lib/script-generation";
-import { scriptTemplateInstruction } from "@/lib/script-templates";
+import { builtinScriptTypeInstruction, scriptTemplateInstruction } from "@/lib/script-templates";
 import { StudioError, cleanText, validDuration, validFormat, type StudioFormat } from "@/lib/studio-contract";
 import { projectProfile } from "@/lib/studio-profile";
 import { apiError, consumeAiUnits, json, limitedJson, providerKey, requestUser } from "@/lib/studio-server";
@@ -16,12 +16,16 @@ export async function POST(request: Request) {
     if (!title || title.length > 120) throw new StudioError("SCRIPT_TITLE_REQUIRED", "Nhập tiêu đề kịch bản, tối đa 120 ký tự.");
     if (brief.length < 5 || brief.length > 5000) throw new StudioError("SCRIPT_BRIEF_REQUIRED", "Cho AI biết sản phẩm, người xem và điều bạn muốn chia sẻ (5–5.000 ký tự).");
     const durationSeconds = validDuration(body.durationSeconds);
-    let style: { kind: "builtin"; format: StudioFormat } | { kind: "custom"; name: string; prompt: string };
+    let style: { kind: "builtin"; format: StudioFormat; name: string; prompt: string } | { kind: "custom"; name: string; prompt: string };
     if (body.templateId !== undefined && body.templateId !== null && body.templateId !== "") {
       if (typeof body.templateId !== "string") throw new StudioError("INVALID_TEMPLATE", "Chọn mẫu kịch bản hợp lệ.");
       const template = await scriptTemplateInstruction(userId, body.templateId);
       style = { kind: "custom", name: template.title, prompt: template.prompt };
-    } else style = { kind: "builtin", format: validFormat(body.format) };
+    } else {
+      const format = validFormat(body.format);
+      const builtIn = await builtinScriptTypeInstruction(userId, format);
+      style = { kind: "builtin", format, name: builtIn.name, prompt: builtIn.prompt };
+    }
     const [{ key }, profile] = await Promise.all([providerKey(userId, "deepseek"), projectProfile(userId, undefined)]);
     const script = await generateStandaloneScript(key, {
       style, title, brief, durationSeconds, profile,

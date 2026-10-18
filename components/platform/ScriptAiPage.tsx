@@ -15,7 +15,15 @@ type ScriptType = {
   /** The API includes this only for the owner. */
   prompt?: string;
 };
+type BuiltInType = {
+  format: ScriptFormat;
+  title: string;
+  description: string;
+  /** The API includes this only for the administrator. */
+  prompt?: string;
+};
 type TypeEditor = { id?: string; title: string; description: string; prompt: string };
+type BuiltInEditor = { format: ScriptFormat; title: string; description: string; prompt: string };
 type Selection = { kind: "builtIn"; format: ScriptFormat } | { kind: "custom"; id: string };
 
 const builtInTypes: { id: ScriptFormat; label: string; note: string; mark: string }[] = [
@@ -47,6 +55,9 @@ function ScriptAiWorkspace() {
   const account = useAccount();
   const isAdmin = account.account?.isAdmin === true;
   const [selection, setSelection] = useState<Selection>({ kind: "builtIn", format: "review" });
+  const [builtins, setBuiltins] = useState<BuiltInType[]>(builtInTypes.map(item => ({
+    format: item.id, title: item.label, description: item.note,
+  })));
   const [types, setTypes] = useState<ScriptType[]>([]);
   const [typesLoading, setTypesLoading] = useState(true);
   const [title, setTitle] = useState("");
@@ -54,6 +65,7 @@ function ScriptAiWorkspace() {
   const [durationSeconds, setDurationSeconds] = useState(30);
   const [script, setScript] = useState("");
   const [editor, setEditor] = useState<TypeEditor | null>(null);
+  const [builtInEditor, setBuiltInEditor] = useState<BuiltInEditor | null>(null);
   const [deleteId, setDeleteId] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -66,6 +78,16 @@ function ScriptAiWorkspace() {
       const data = await jsonResult(response);
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Không tải được các dạng kịch bản.");
       const next = Array.isArray(data.templates) ? data.templates as ScriptType[] : [];
+      const loadedBuiltins = Array.isArray(data.builtins) ? data.builtins as BuiltInType[] : [];
+      setBuiltins(builtInTypes.map(item => {
+        const saved = loadedBuiltins.find(value => value.format === item.id);
+        return {
+          format: item.id,
+          title: typeof saved?.title === "string" ? saved.title : item.label,
+          description: typeof saved?.description === "string" ? saved.description : item.note,
+          ...(isAdmin && typeof saved?.prompt === "string" ? { prompt: saved.prompt } : {}),
+        };
+      }));
       setTypes(next);
       setSelection(previous => previous.kind === "custom" && !next.some(item => item.id === previous.id)
         ? { kind: "builtIn", format: "review" }
@@ -73,7 +95,7 @@ function ScriptAiWorkspace() {
     } catch (cause) {
       setError(friendlyError(cause, "Không tải được các dạng kịch bản."));
     } finally { setTypesLoading(false); }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => { void loadTypes(); }, [loadTypes]);
 
@@ -83,6 +105,7 @@ function ScriptAiWorkspace() {
     setSelection({ kind: "builtIn", format });
     setScript("");
     setEditor(null);
+    setBuiltInEditor(null);
     setDeleteId("");
     setError("");
     setNotice("");
@@ -93,6 +116,7 @@ function ScriptAiWorkspace() {
     // The video topic stays independent of the selected script type.
     setScript("");
     setEditor(null);
+    setBuiltInEditor(null);
     setDeleteId("");
     setError("");
     setNotice("");
@@ -100,6 +124,7 @@ function ScriptAiWorkspace() {
 
   function startNewType() {
     setEditor({ title: "", description: "", prompt: "" });
+    setBuiltInEditor(null);
     setDeleteId("");
     setError("");
     setNotice("");
@@ -108,9 +133,43 @@ function ScriptAiWorkspace() {
   function startEditType(item: ScriptType) {
     if (typeof item.prompt !== "string") return;
     setEditor({ id: item.id, title: item.title, description: item.description || "", prompt: item.prompt });
+    setBuiltInEditor(null);
     setDeleteId("");
     setError("");
     setNotice("");
+  }
+
+  function startEditBuiltIn(item: BuiltInType) {
+    if (!isAdmin) return;
+    setSelection({ kind: "builtIn", format: item.format });
+    setScript("");
+    setBuiltInEditor({ format: item.format, title: item.title, description: item.description, prompt: item.prompt || "" });
+    setEditor(null);
+    setDeleteId("");
+    setError("");
+    setNotice("");
+  }
+
+  async function saveBuiltIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!isAdmin || !builtInEditor || busy) return;
+    const cleanTitle = builtInEditor.title.trim();
+    const cleanPrompt = builtInEditor.prompt.trim();
+    if (!cleanTitle || !cleanPrompt) { setError("Hãy nhập tên dạng kịch bản và prompt hướng dẫn AI."); return; }
+    setBusy("saveBuiltin"); setError(""); setNotice("");
+    try {
+      const response = await fetch(`/api/script-builtins/${builtInEditor.format}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: cleanTitle, description: builtInEditor.description.trim(), prompt: cleanPrompt }),
+      });
+      const data = await jsonResult(response);
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Chưa lưu được dạng kịch bản.");
+      setBuiltInEditor(null);
+      await loadTypes();
+      setNotice("Đã cập nhật dạng kịch bản dùng chung.");
+    } catch (cause) { setError(friendlyError(cause, "Chưa lưu được dạng kịch bản.")); }
+    finally { setBusy(""); }
   }
 
   async function saveType(event: FormEvent<HTMLFormElement>) {
@@ -190,7 +249,22 @@ function ScriptAiWorkspace() {
         <section className={styles.card} aria-labelledby="format-title">
           <div className={styles.sectionHeading}><span className={styles.step}>1</span><div><h2 id="format-title">Chọn dạng kịch bản</h2><p>Mỗi dạng có cách viết riêng. Bạn cũng có thể thêm dạng mới kèm hướng dẫn cho AI.</p></div></div>
           <div className={styles.formatGrid} role="group" aria-label="Dạng kịch bản">
-            {builtInTypes.map(item => <button key={item.id} type="button" className={`${styles.formatButton} ${selection.kind === "builtIn" && selection.format === item.id ? styles.activeFormat : ""}`} aria-pressed={selection.kind === "builtIn" && selection.format === item.id} onClick={() => chooseBuiltIn(item.id)}><span className={styles.formatMark}>{item.mark}</span><strong>{item.label}</strong><small>{item.note}</small></button>)}
+            {builtInTypes.map(item => {
+              const current = builtins.find(value => value.format === item.id) || { format: item.id, title: item.label, description: item.note };
+              const active = selection.kind === "builtIn" && selection.format === item.id;
+              return <div key={item.id} className={`${styles.builtInType} ${active ? styles.activeFormat : ""}`}>
+                <button type="button" className={styles.formatButton} aria-pressed={active} onClick={() => chooseBuiltIn(item.id)}><span className={styles.formatMark}>{item.mark}</span><strong>{current.title}</strong><small>{current.description}</small><span className={styles.sharedBadge}>Dùng chung</span></button>
+                {isAdmin && <div className={styles.builtInActions}><button type="button" disabled={typesLoading || !!busy} onClick={() => startEditBuiltIn(current)} aria-label={`Sửa dạng ${current.title} và prompt hướng dẫn`}>Sửa</button></div>}
+              </div>;
+            })}
+            {isAdmin && builtInEditor && <form className={`${styles.editor} ${styles.builtInEditor}`} onSubmit={saveBuiltIn}>
+              <div className={styles.editorTop}><div><h3>Chỉnh sửa dạng kịch bản có sẵn</h3><p>Tên và mô tả hiển thị cho mọi thành viên; prompt chỉ quản trị viên xem được.</p></div><button type="button" aria-label="Đóng biểu mẫu" onClick={() => setBuiltInEditor(null)}>×</button></div>
+              <label className={styles.field}>Tên dạng kịch bản<input required maxLength={120} value={builtInEditor.title} onChange={event => setBuiltInEditor({ ...builtInEditor, title: event.target.value })} /></label>
+              <label className={styles.field}>Mô tả ngắn <span>(không bắt buộc)</span><input maxLength={240} value={builtInEditor.description} onChange={event => setBuiltInEditor({ ...builtInEditor, description: event.target.value })} /></label>
+              <label className={styles.field}>Prompt hướng dẫn AI<textarea required rows={7} maxLength={6000} value={builtInEditor.prompt} onChange={event => setBuiltInEditor({ ...builtInEditor, prompt: event.target.value })} placeholder="Nêu cấu trúc, giọng điệu, cách mở đầu và kết thúc cho dạng kịch bản này. Chỉ dùng thông tin người dùng cung cấp; không bịa trải nghiệm hay kết quả." /></label>
+              <p className={styles.editorHint}>Prompt được áp dụng khi bất kỳ thành viên nào chọn dạng này để tạo kịch bản.</p>
+              <div className={styles.editorActions}><button type="button" onClick={() => setBuiltInEditor(null)}>Hủy</button><button type="submit" disabled={!!busy}>{busy === "saveBuiltin" ? "Đang lưu…" : "Lưu thay đổi"}</button></div>
+            </form>}
             {types.map(item => {
               const canManage = typeof item.prompt === "string";
               const active = selection.kind === "custom" && selection.id === item.id;

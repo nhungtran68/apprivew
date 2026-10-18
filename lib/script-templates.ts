@@ -1,6 +1,6 @@
 import "server-only";
-import { StudioError, cleanText, validFormat, type StudioFormat } from "./studio-contract";
-import { getMember } from "./studio-server";
+import { STUDIO_FORMATS, StudioError, cleanText, validFormat, type StudioFormat } from "./studio-contract";
+import { getMember, requireAdmin } from "./studio-server";
 import { createStudioSupabaseServer } from "./studio-supabase";
 
 export type ScriptTemplateScope = "shared" | "personal";
@@ -12,6 +12,38 @@ export type ScriptTemplateView = {
   description: string;
   prompt?: string;
 };
+
+export type BuiltinScriptTypeView = {
+  format: StudioFormat;
+  title: string;
+  description: string;
+  prompt?: string;
+};
+
+const builtinDefaults: Record<StudioFormat, { title: string; description: string }> = {
+  review: { title: "Review sản phẩm", description: "Chia sẻ trải nghiệm chân thật" },
+  story: { title: "Kể chuyện", description: "Tạo sự gần gũi, cảm xúc" },
+  tips: { title: "Mẹo & hướng dẫn", description: "Đưa kiến thức hữu ích" },
+  sales: { title: "Bán hàng", description: "Nêu lợi ích, mời hành động" },
+};
+
+type BuiltinScriptTypeRow = {
+  format: StudioFormat;
+  owner_id: string;
+  title: string;
+  description: string;
+  prompt_ciphertext: string;
+};
+
+const builtinFields = "format,owner_id,title,description,prompt_ciphertext";
+
+function builtinFormat(value: unknown): StudioFormat {
+  if (typeof value !== "string" || !STUDIO_FORMATS.some((format) => format === value))
+    throw new StudioError("INVALID_FORMAT", "Chọn một trong bốn dạng kịch bản có sẵn.");
+  return value as StudioFormat;
+}
+
+function builtinPromptId(format: StudioFormat): string { return `builtin:${format}`; }
 
 type ScriptTemplateRow = ScriptTemplateView & {
   owner_id: string;
@@ -84,6 +116,51 @@ function inputFields(body: Record<string, unknown>) {
 
 function databaseError(): never {
   throw new StudioError("SCRIPT_STORAGE_UNAVAILABLE", "Chưa đọc hoặc lưu được mẫu kịch bản. Quản trị viên cần kiểm tra cơ sở dữ liệu.", 503, "contact_admin");
+}
+
+export async function listBuiltinScriptTypes(userId: string): Promise<BuiltinScriptTypeView[]> {
+  const member = await getMember(userId), client = await createStudioSupabaseServer();
+  const { data, error } = await client.from("studio_script_builtin_styles").select(builtinFields);
+  if (error) return databaseError();
+  const rows = new Map((data as BuiltinScriptTypeRow[] || []).map((row) => [row.format, row]));
+  return Promise.all(STUDIO_FORMATS.map(async (format) => {
+    const row = rows.get(format), defaults = builtinDefaults[format];
+    const prompt = member.role === "admin"
+      ? row ? await decryptPrompt(builtinPromptId(format), row.prompt_ciphertext) : ""
+      : undefined;
+    return {
+      format,
+      title: row?.title || defaults.title,
+      description: row?.description ?? defaults.description,
+      ...(prompt === undefined ? {} : { prompt }),
+    };
+  }));
+}
+
+export async function updateBuiltinScriptType(userId: string, rawFormat: unknown, body: Record<string, unknown>): Promise<BuiltinScriptTypeView> {
+  await requireAdmin(userId);
+  const format = builtinFormat(rawFormat), fields = inputFields(body), client = await createStudioSupabaseServer();
+  const { data, error } = await client.from("studio_script_builtin_styles").upsert({
+    format,
+    owner_id: userId,
+    title: fields.title,
+    description: fields.description,
+    prompt_ciphertext: await encryptPrompt(builtinPromptId(format), fields.prompt),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "format" }).select(builtinFields).single();
+  if (error || !data) return databaseError();
+  return { format, title: fields.title, description: fields.description, prompt: fields.prompt };
+}
+
+export async function builtinScriptTypeInstruction(userId: string, rawFormat: unknown): Promise<{ name: string; prompt: string }> {
+  const format = builtinFormat(rawFormat), client = await createStudioSupabaseServer();
+  const { data, error } = await client.from("studio_script_builtin_styles")
+    .select(builtinFields).eq("format", format).maybeSingle();
+  if (error) return databaseError();
+  const row = data as BuiltinScriptTypeRow | null;
+  return row
+    ? { name: row.title, prompt: await decryptPrompt(builtinPromptId(format), row.prompt_ciphertext) }
+    : { name: builtinDefaults[format].title, prompt: "" };
 }
 
 export async function listScriptTemplates(userId: string): Promise<ScriptTemplateView[]> {
