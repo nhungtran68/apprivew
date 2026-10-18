@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
-type Account = { userId: string; name: string; isAdmin: boolean; quota?: { used: number; limit: number } };
+type Account = { userId: string; name: string; isAdmin: boolean; quota?: { used: number; limit: number }; voiceCloning?: { used: number; limit: number; remaining: number | null; unlimited: boolean } };
 type AccountState = { status: "loading" | "ready" | "anonymous" | "restricted" | "unavailable" | "error"; account?: Account; message?: string };
 type AccountContextValue = AccountState & { refresh: () => void };
 const AccountContext = createContext<AccountContextValue>({ status: "loading", refresh: () => {} });
@@ -36,6 +36,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           name: typeof data.memberName === "string" && data.memberName.trim() ? data.memberName.trim() : "Thành viên",
           isAdmin: data.isAdmin === true,
           ...(validQuota ? { quota: { used: data.quota.used, limit: data.quota.limit } } : {}),
+          ...(data.voiceCloning && Number.isFinite(data.voiceCloning.used) && Number.isFinite(data.voiceCloning.limit) ? { voiceCloning: { used: data.voiceCloning.used, limit: data.voiceCloning.limit, remaining: data.voiceCloning.remaining, unlimited: data.voiceCloning.unlimited === true } } : {}),
         } });
       } catch {
         if (!controller.signal.aborted) setState({ status: "error", message: "Chưa tải được thông tin tài khoản. Vui lòng thử lại." });
