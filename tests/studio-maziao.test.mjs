@@ -510,7 +510,7 @@ await check("malformed MP3 or non-audio data never stores narration or silently 
     h.setHandler(request => isApi(request) ? valid(request) : new Response(bytes, { headers: { "content-type": "audio/mpeg" } }));
     await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: [sampleSegments()[0]], duration: 3 }), error => {
       assert.equal(error.code, "INVALID_AUDIO"); assert.equal(error.status, 422); assert.equal(error.action, "contact_admin");
-      assert.match(error.message, /Maziao đã nhận tác vụ/); assert.match(error.message, /quản trị viên kiểm tra tác vụ trước khi tạo lại/);
+      assert.match(error.message, /Hệ thống đã nhận tác vụ/); assert.match(error.message, /quản trị viên kiểm tra tác vụ trước khi tạo lại/);
       for (const privateValue of [h.key, "<html>", "Provider error", "https://", sampleSegments()[0].text]) assert.ok(!error.message.includes(privateValue));
       return true;
     });
