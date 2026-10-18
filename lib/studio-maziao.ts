@@ -224,11 +224,11 @@ function resultUrls(job: SpeechJob, count: number): string[] {
   if (!Array.isArray(result) || result.length !== count || result.some(item => !safeMediaUrl(item))) throw invalidResponse();
   return result as string[];
 }
-async function synthesizeBatch(key: string, userId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[]): Promise<Audio[]> {
+async function synthesizeBatch(key: string, userId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[], settings = { speed: 1, pitch: 1, volume: 1 }): Promise<Audio[]> {
   const parsed = parseMaziaoVoiceId(voiceId);
   await consumeAiUnits(userId, Math.max(1, Math.ceil(segments.reduce((sum, segment) => sum + segment.text.length, 0) / 100)));
   const started = Date.now();
-  const result = await api(key, "/tts/submit", { method: "POST", body: JSON.stringify({ mode: "multiParts", parts: segments.map(segment => ({ text: segment.text, voiceId: parsed.id, speed: 1, pitch: 1 })), config: { volume: 1, pitch: 1, export_srt: false }, modelId: parsed.model }) }, deadline);
+  const result = await api(key, "/tts/submit", { method: "POST", body: JSON.stringify({ mode: "multiParts", parts: segments.map(segment => ({ text: segment.text, voiceId: parsed.id, speed: settings.speed, pitch: settings.pitch })), config: { volume: settings.volume, pitch: settings.pitch, export_srt: false }, modelId: parsed.model }) }, deadline);
   const data = result.data as { taskId?: unknown; totalCost?: unknown } | undefined;
   if (!data || !rawId(data.taskId)) throw invalidResponse();
   // Actual provider credits, never estimated as 1 character = 1 credit.
@@ -289,4 +289,20 @@ export async function generateMaziaoSpeech(input: { key: string; userId: string;
     }
     return { segments: results, duration: input.duration, voiceId: input.voiceId, sampleRate: audio[0].sampleRate, channels: audio[0].channels, provider: "maziao", usage: { credits: costs.every(cost => cost !== null) ? costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0) : null, jobs: costs.length } };
   } catch (error) { await removeOwnedMedia(input.userId, stored).catch(() => {}); throw error; }
+}
+
+/**
+ * Standalone voice-over is not tied to a video timeline. It preserves the
+ * complete script and never shortens/retries a paid result to fit a scene.
+ */
+export async function generateMaziaoVoiceOver(input: { key: string; userId: string; voiceId: string; text: string; speed: number; volume: number; pitch: number }) {
+  const parsed = parseMaziaoVoiceId(input.voiceId);
+  if (parsed.model === "vieten_speech" && input.text.length < 100) throw new StudioError("MAZIAO_TEXT_TOO_SHORT", "Model này yêu cầu tối thiểu 100 ký tự. Hãy nhập thêm lời thoại trước khi tạo.", 422, "script");
+  const deadline = Date.now() + 240000;
+  await assertModel(input.key, parsed.model, deadline);
+  const segments: StudioSegment[] = [{ start: 0, end: 180, text: input.text }];
+  const costs: (number | null)[] = [];
+  const [audio] = await synthesizeBatch(input.key, input.userId, input.voiceId, segments, deadline, costs, { speed: input.speed, pitch: input.pitch, volume: input.volume });
+  const media = await storeNarration(input.userId, audio.bytes, 0, audio.mime);
+  return { ...media, audioMime: audio.mime, duration: audio.duration, voiceId: input.voiceId, provider: "maziao", usage: { credits: costs[0] ?? null, jobs: costs.length } };
 }
