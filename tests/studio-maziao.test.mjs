@@ -29,7 +29,7 @@ async function harness() {
     fetch: async (url, init = {}) => {
       const request = { url: String(url), method: init.method || "GET", ...init };
       requests.push(request);
-      if (request.url.endsWith("/my-voices")) return Response.json({ data: { items: accountVoices } });
+      if (request.url.includes("/my-voices")) return Response.json({ data: { items: accountVoices } });
       return handle(request);
     },
   });
