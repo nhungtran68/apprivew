@@ -79,7 +79,13 @@ export async function POST(request: Request) {
       match = rows.filter(matches).sort((a, b) => new Date(String(b.createdAt ?? b.created_at)).getTime() - new Date(String(a.createdAt ?? a.created_at)).getTime())[0];
       if (match) break;
     }
-    if (!match) return json({ found: false, received: observed.length, statusCounts: Object.fromEntries([...STATUSES, "unknown"].map(name => [name, observed.filter(row => status(row) === name).length])), fieldNames: [...new Set(observed.flatMap(row => Object.keys(row)))].filter(name => /^[a-zA-Z_]{1,40}$/.test(name)).slice(0, 40) });
+    if (!match) {
+      const knownPrefix = observed.filter(row => typeof row.previewText === "string" && row.previewText.startsWith(EXPECTED.slice(0, 40)));
+      return json({ found: false, received: observed.length, statusCounts: Object.fromEntries([...STATUSES, "unknown"].map(name => [name, observed.filter(row => status(row) === name).length])), fieldNames: [...new Set(observed.flatMap(row => Object.keys(row)))].filter(name => /^[a-zA-Z_]{1,40}$/.test(name)).slice(0, 40), knownQaShape: knownPrefix.map(row => {
+        const parts = parsed(row.parts), created = row.createdAt ?? row.created_at;
+        return { mode: row.mode === "multiParts" ? "multiParts" : "other", createdType: typeof created, created: typeof created === "number" && Number.isFinite(created) || typeof created === "string" && /^[0-9T:. +Z-]{10,40}$/.test(created) ? created : undefined, partsType: typeof row.parts, parsedPartsType: Array.isArray(parts) ? "array" : typeof parts, parts: Array.isArray(parts) ? parts.slice(0, 5).map(value => { const part = record(value); return { fields: part ? Object.keys(part).filter(name => /^[a-zA-Z_]{1,40}$/.test(name)).slice(0, 20) : [], textType: typeof part?.text, textLength: typeof part?.text === "string" ? part.text.length : undefined, exactExpected: part?.text === EXPECTED }; }) : undefined };
+      }) });
+    }
     const id = match.id as string, cost = credits(match);
     let current = match, url = audioUrl(current);
     if (!url || status(current) !== "completed") {
