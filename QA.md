@@ -1,4 +1,59 @@
-# Kiểm chứng Supabase và AI
+# Kiểm chứng giao diện, Supabase và AI
+
+## Dashboard nền tảng AI — 18/10/2026
+
+Giao diện mới được xây trên commit `330346c8` để giữ các sửa lỗi lời đọc và thời lượng trước đó. Trang `/` trở thành Dashboard; Studio, dự án, giọng nói và hồ sơ hiện tại được giữ tại `/studio` cùng các view đã có. Không thay schema, biến môi trường, khóa nhà cung cấp hoặc cơ chế trừ lượt.
+
+### Kiểm tra mã và hồi quy
+
+- **TypeScript và production build đạt.** Bản dựng cục bộ dùng cờ có sẵn `STUDIO_BUILD_IN_PROCESS=1`; cấu hình mặc định của repo giữ nguyên. Dashboard và sáu module được dựng sẵn, Studio tiếp tục render theo yêu cầu.
+- **131 kiểm tra ngoại tuyến đạt:** 31 backend, 29 UI/dự án, 10 tải/chuẩn hóa mẫu, 8 lưu/chia sẻ MP4, 11 ElevenLabs, 32 Maziao, 10 MP3.
+- Kiểm tra mới xác nhận route Studio chỉ nhận các view cho phép và mở đúng giao diện cũ; thao tác rời Studio chờ lưu dự án, khóa tương tác và không cho callback cũ bắt đầu yêu cầu tạo giọng khi đang thoát. Lỗi ghi giữ trang và mở khóa lại. Nếu có MP4 trong bộ nhớ, người dùng có thể tải, ở lại hoặc chủ động rời; hủy thoát giữ nguyên tệp.
+- Các module mới chỉ là trang khung. Registry dùng chung cho thẻ, menu, tìm kiếm và route; module không tồn tại trả HTTP 404. Không thêm AI giả lập vào sản phẩm hoặc API mới.
+
+### Trình duyệt cục bộ
+
+Chrome Headless **155.0.8059.84**, ứng dụng Next.js thật, tài khoản/API và kho âm thanh được mô phỏng; font dự phòng hệ thống. Đây là giả lập kích thước màn hình, chưa thay thế thử trên điện thoại vật lý hoặc Safari iOS.
+
+- **50 kiểm tra bố cục đạt:** Dashboard, sáu module, Cá nhân, Thư viện và Hướng dẫn ở **320, 360, 430, 768, 1440 px**. Không tràn ngang toàn trang; bộ lọc trên điện thoại có vùng cuộn riêng. Đã xem ảnh desktop và mobile, rút gọn hero trên điện thoại để công cụ xuất hiện sớm hơn.
+- Tìm `giong noi` không dấu mở đúng giọng nói; tìm `Ảnh` ưu tiên tên công cụ ảnh trước mô tả âm thanh. Enter mở kết quả phù hợp; không có kết quả thì không điều hướng. Escape đóng kết quả và đóng menu điện thoại; menu trả focus về nút mở.
+- Lọc đúng số module: tất cả 6, nội dung 1, ảnh/video 3, âm thanh 1. Các trang cá nhân, thư viện, hướng dẫn và bốn view Studio cũ đều mở đúng; view không hợp lệ quay về Studio mặc định.
+- Tài khoản có trạng thái tải, 401 chưa đăng nhập, 403 chờ/cấm quyền, lỗi máy chủ và thử lại. Vai trò admin mới thấy liên kết quản trị; quyền thực vẫn do server kiểm tra. Hạn mức **0/0** hiển thị khác với dữ liệu hạn mức chưa có.
+- Trang nền tảng chỉ gọi `GET /api/config`; không gửi tác vụ AI hoặc tải FFmpeg. Không ghi/xóa dự án IndexedDB từ Dashboard. Không có lỗi JavaScript trong các nhóm kiểm tra này.
+- Chạy lại đủ ba luồng khôi phục tại `/studio`: tải lỗi → mở lại → thử lại vẫn chỉ **1 lần tạo giọng**; lỗi bộ nhớ → lưu lại không tải/tạo thêm; nhập `15` rồi `30` giữ đúng sau khi mở lại. Chỉ dọn tệp riêng sau khi byte âm thanh đã ghi bền vững. Không lưu URL ký tạm vào dự án.
+
+### Bản production cục bộ
+
+Ba nhóm smoke test trên `next start` đều đạt, dùng phản hồi tài khoản/đăng xuất mô phỏng và font dự phòng hệ thống:
+
+- Sáu module trả **HTTP 200**; module và đường dẫn bất kỳ không tồn tại trả **HTTP 404** với nội dung tiếng Việt.
+- Dashboard tại **360 và 1440 px**, module và tài khoản tại **360 px** giữ đúng CSS production, không tràn ngang. Điều hướng Cá nhân → module → Dashboard, bộ lọc và menu điện thoại hoạt động. Phím Tab có vòng focus rõ; liên kết bỏ qua điều hướng đặt focus vào nội dung chính. Không có lỗi hydrate, JavaScript hoặc tài nguyên JS/CSS tải thất bại.
+- Đối chiếu manifest bản dựng xác nhận Dashboard không tải trước chunk JavaScript của Studio, không tải FFmpeg và không gửi tác vụ AI. Đăng xuất khóa nút trong lúc chờ; thất bại giữ trang và hiện lỗi; thử lại thành công mới chuyển sang đăng nhập. Đúng hai yêu cầu giả lập tương ứng lần lỗi và lần thử lại, không gọi endpoint đăng xuất thật.
+
+Chi tiết cấu trúc và cách phát triển module tiếp theo: [AI-PLATFORM.md](docs/AI-PLATFORM.md).
+
+## Khôi phục lời đọc đã tạo và nhập thời lượng — 18/10/2026
+
+Tiếp tục từ `main` tại `0d22ec72cf1775d93ed53c1775a245e5cd0ee7be` (09:15 giờ Việt Nam). Đợt trước đã hoàn thiện MP3 Maziao; lần này sửa mất kết quả khi tải lời đọc bị gián đoạn và ô thời lượng biến mất sau chữ số đầu.
+
+- **127 kiểm tra ngoại tuyến đạt:** 31 backend, 25 UI/dự án, 10 tải/chuẩn hóa mẫu, 8 lưu/chia sẻ MP4, 11 ElevenLabs, 32 Maziao, 10 MP3. TypeScript và production build đạt. Bản dựng cục bộ dùng cờ có sẵn `STUDIO_BUILD_IN_PROCESS=1` vì môi trường chạy không đọc được đầu ra tiến trình TypeScript riêng; không đổi cấu hình build mặc định của repo. Các bài Supabase/Next.js tích hợp của đợt trước vẫn ghi riêng bên dưới.
+- Kết quả `/api/speech` thành công được giữ bằng đường dẫn tệp của đúng tài khoản trong dự án trước khi tải. Không lưu URL ký tạm hoặc dữ liệu thừa của nhà cung cấp. Tải lỗi không xóa các đoạn đã tạo, kể cả các đoạn chưa kịp tải.
+- **Tải lại lời đọc** chỉ cấp URL mới và đọc tệp đã có; không gọi lại `/api/speech`, Maziao hoặc ElevenLabs. Chỉ dọn tệp riêng sau khi âm thanh đã ghi thành công vào IndexedDB. Ghi bộ nhớ thất bại giữ byte trong trang và đường dẫn khôi phục, có **Lưu lại lời đọc** để thử ghi lại. Các lượt ghi dự án được xếp thứ tự để bản lưu cũ không ghi đè âm thanh vừa nhận.
+- Sửa lời/đổi giọng hoặc bỏ đoạn làm mất hiệu lực tham chiếu cũ; đổi riêng mốc thời gian vẫn giữ âm thanh để bộ xuất kiểm tra. Bản sao `.loike` giữ byte âm thanh đã tải và bỏ đường dẫn riêng theo tài khoản. Ô nhập thời lượng dùng cờ riêng nên vẫn hiện khi nhập hoặc sửa `30` / `30.5`.
+
+### Ba kiểm tra tương tác trên Chrome 155
+
+Chạy ứng dụng Next.js thật cục bộ với API tài khoản, giọng và Supabase được mô phỏng; tệp MP3 là âm tổng hợp do FFmpeg tạo cục bộ. Không dùng khóa thật, tài khoản Production hoặc dịch vụ AI trả phí.
+
+1. **Lỗi HTTP 503 khi tải MP3 → tải lại trang → tải lại lời đọc:** trước lỗi, dự án đã lưu đường dẫn đúng chủ và không có URL ký tạm. Sau mở lại, đúng **1 yêu cầu tạo giọng**, **2 lượt tải âm thanh** (lỗi + thành công), **1 lần xóa tệp**. Kiểm tra tại thời điểm xóa xác nhận byte MP3 đã lưu đúng trong IndexedDB. Mở trang lần nữa vẫn có âm thanh để nghe.
+2. **Giả lập `QuotaExceededError` khi ghi byte → lưu lại:** tệp riêng không bị xóa. Khi bộ nhớ ghi lại được, bấm **Lưu lại lời đọc** thành công với tổng **1 yêu cầu tạo giọng và 1 lượt tải âm thanh**; không tạo hoặc tải thêm. Tệp chỉ xóa khi byte đã được lưu.
+3. **Nhập thời lượng bằng từng phím:** nhập `15`, xóa rồi nhập `30`; ô vẫn hiện. Dự án lưu `duration=30`, tải lại trang vẫn chỉnh được. Không có yêu cầu AI hoặc âm thanh.
+
+Không có lỗi JavaScript trong ba luồng. Màn hình khôi phục có `scrollWidth` bằng chiều rộng viewport ở **375 và 1.280 px**; nút tải lại trên điện thoại nằm phía trên thanh điều hướng. Ảnh QA dùng font dự phòng cục bộ. Đây là trình duyệt mô phỏng kích thước màn hình, chưa phải thử trên điện thoại vật lý.
+
+### Giới hạn còn lại của lần sửa
+
+Khôi phục áp dụng khi phản hồi tạo giọng thành công đã đến trình duyệt và dự án đã lưu được: cùng tài khoản, thiết bị và trình duyệt. Không khôi phục tác vụ bị mất phản hồi `/api/speech`, không chuyển tệp chưa tải qua bản sao `.loike`. Mất mạng trước phản hồi hoặc Maziao quá thời gian chờ vẫn cần kiểm tra tác vụ ở nhà cung cấp. Các kiểm chứng giọng người dùng thật, video thực 15–90 giây, SMTP, CapCut/Facebook và đối soát chi phí vẫn chưa hoàn thành.
 
 ## Tích hợp Maziao — hoàn thiện 18/10/2026
 

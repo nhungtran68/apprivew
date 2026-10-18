@@ -15,8 +15,9 @@ Không nhập token vào chat, không thêm tiền tố `Bearer ` vào Value và
 - `vieten_speech`: tổng lời thoại tối thiểu 100 ký tự cho một lần gửi. App báo trước, không tự thêm lời và không gửi lại đoạn rút gọn dưới giới hạn. Chưa áp giới hạn này sang model khác hoặc từng đoạn riêng.
 - Nhân bản: một tệp, bản thu tối thiểu 3 giây; trình duyệt lấy tối đa 8 giây đầu và xuất WAV mono 24 kHz/16-bit. Server kiểm tra 3–8 giây, tối đa 1 MB. Người dùng chọn nam/nữ và xác nhận quyền sử dụng giọng.
 - Quyền giọng: ID gồm nhà cung cấp và model; giọng cá nhân được ký cho đúng thành viên. Giọng chung được xác minh lại trong thư viện `type=system` trước khi dùng vì API có thể bỏ trường chủ sở hữu. Không hiển thị toàn bộ giọng riêng của tài khoản Maziao dùng chung.
-- Khóa và mẫu thu không nằm trong mã trình duyệt hoặc GitHub. Tệp tạm Supabase được dọn sau xử lý. Maziao giữ giọng nhân bản theo chính sách của họ.
+- Khóa và mẫu thu không nằm trong mã trình duyệt hoặc GitHub. Mẫu giọng tạm Supabase được dọn sau xử lý. Tệp lời đọc chỉ được dọn sau khi đã tải và lưu thành công trên thiết bị. Maziao giữ giọng nhân bản theo chính sách của họ.
 - Chi phí: `studio_voice_usage` ghi mã tác vụ hợp lệ, `totalCost` credit thực từ Maziao, cùng model, số ký tự và số đoạn. Kết quả cộng mọi lần tạo lại; thiếu giá giữ là chưa biết. Không coi credit là ký tự hay tiền khi chưa đối chiếu gói mua.
+- Khi lời đọc đã tạo và app đã nhận đường dẫn tệp, mất mạng lúc tải có thể xử lý bằng **Tải lại lời đọc**. App giữ tham chiếu trong dự án và cấp lại URL tải theo đúng tài khoản; không gửi TTS mới. Ghi bộ nhớ thiết bị thất bại có **Lưu lại lời đọc** và vẫn giữ tệp riêng.
 - Khi mạng lỗi ngay sau gửi hoặc chờ quá 240 giây, app yêu cầu kiểm tra tác vụ ở Maziao trước khi tạo lại để tránh bị tính hai lần.
 
 ## Kiểm chứng

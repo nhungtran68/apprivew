@@ -18,4 +18,4 @@ export async function proxy(request: NextRequest) {
   await client.auth.getClaims();
   return response;
 }
-export const config = { matcher: ["/", "/quan-tri", "/dang-nhap", "/dat-mat-khau", "/api/:path*", "/auth/:path*"] };
+export const config = { matcher: ["/", "/studio/:path*", "/cong-cu/:path*", "/ca-nhan", "/thu-vien", "/huong-dan", "/quan-tri", "/dang-nhap", "/dat-mat-khau", "/api/:path*", "/auth/:path*"] };

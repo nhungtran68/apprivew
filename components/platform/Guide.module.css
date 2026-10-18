@@ -1,0 +1,37 @@
+.startCard { display: flex; flex-direction: column; align-items: flex-start; gap: 22px; padding: 28px; background: #f4ede1; border: 1px solid #e5dbcc; border-radius: 20px; }
+.startIcon { display: grid; place-items: center; width: 62px; height: 62px; border-radius: 18px; background: #e9d9c3; color: #987445; flex-shrink: 0; }
+.startCard h2 { font-size: 24px; margin-top: 14px; }
+.startCard p { color: #746854; margin-top: 10px; max-width: 620px; font-size: 15px; line-height: 1.85; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
+.guideSection { margin-top: 36px; }
+.toolGuide { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.toolGuide > a { display: flex; align-items: flex-start; gap: 14px; padding: 20px; background: #fff; border: 1px solid #e0e6e0; border-radius: 13px; color: #36503f; }
+.toolGuide > a:hover { border-color: #bbcabc; }
+.toolGuide > a > span { color: #78866c; background: #f0f4e9; padding: 10px; border-radius: 10px; }
+.toolGuide h3 { font-size: 15px; }
+.toolGuide p { color: #68786a; font-size: 13px; line-height: 1.8; margin-top: 5px; }
+.toolGuide > a > svg { margin-left: auto; margin-top: 13px; color: #8a9789; }
+.questions { background: #fff; border: 1px solid #dfe5df; border-radius: 16px; padding: 3px 24px; }
+.questions details + details { border-top: 1px solid #e9ede6; }
+.questions summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 0; min-height: 64px; font-size: 14px; font-weight: 500; color: #344c3b; }
+.questions summary svg { color: #7a8b76; }
+.questions details[open] summary > svg { transform: rotate(45deg); }
+.questions details > p { padding: 0 30px 23px 0; color: #657560; font-size: 14px; line-height: 1.9; }
+.guideFooter { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-top: 30px; padding: 26px; border: 1px solid #e0e7dd; background: #eff3eb; border-radius: 16px; color: #5b7551; }
+.guideFooter h3 { font-size: 16px; }
+.guideFooter p { font-size: 13px; margin-top: 5px; color: #687a60; }
+.guideFooter > a { flex-shrink: 0; }
+@media (min-width: 720px) {
+  .startCard { padding: 34px; flex-direction: row; }
+  .toolGuide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .guideFooter { align-items: center; }
+  .guideFooter > a { margin-left: auto; }
+}
+@media (max-width: 639px) {
+  .startCard { padding: 24px; }
+  .actions, .actions > a { width: 100%; }
+  .toolGuide h3 { font-size: 16px; }
+  .toolGuide p, .guideFooter p, .questions summary, .questions details > p { font-size: 15px; }
+  .questions { padding: 0 20px; }
+  .questions details > p { padding-right: 0; }
+}

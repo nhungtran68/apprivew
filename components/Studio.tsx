@@ -2,16 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { videoDownloadName, supportsVideoSave, saveVideoFile, canShareVideoFile, shareVideoFile } from "@/lib/video-download";
+import navigationStyles from "./StudioNavigation.module.css";
 
 type Step = 0 | 1 | 2 | 3 | 4;
 type View = "studio" | "projects" | "voices" | "profile" | "guide";
 type Profile = { name: string; channel: string; brand: string; audience: string; topic: string; tone: string; pronoun: string; cta: string; facts: string; customPrompt: string };
 type VideoFormat = "review" | "story" | "tips" | "sales";
 type Angle = { id: string; title: string; format: VideoFormat; purpose: string; hook: string; reason: string };
-type Segment = { start: number; end: number; text: string; audioBase64?: string; audioMime?: string; mimeType?: string; duration?: number };
+type Segment = { start: number; end: number; text: string; audioBase64?: string; audioMime?: string; mimeType?: string; duration?: number; audioPath?: string };
 type Project = {
   id: string; userId: string; title: string; createdAt: number; updatedAt: number;
-  source?: Blob; sourceName?: string; duration: number; width: number; height: number;
+  source?: Blob; sourceName?: string; duration: number; manualDuration?: boolean; width: number; height: number;
   intent: string; profile: Profile; analysis?: Record<string, unknown>; summary: string;
   format: VideoFormat; angleId: string;
   segments: Segment[]; narration?: Blob; narrationName?: string; narrationDuration?: number; voiceId: string;
@@ -104,6 +105,19 @@ function normalizeSegments(value: unknown, duration: number): Segment[] {
   const script = typeof value === "string" ? value : data?.script || data?.text || "";
   return script ? [{ start: 0, end: duration, text: String(script) }] : [];
 }
+// Keep only owned storage references, never expiring signed URLs, in the project.
+function pendingSpeechSegments(value: unknown, duration: number, userId: string): Segment[] {
+  if (!Array.isArray(value) || !value.length || value.length > 16) throw new Error("Kết quả lời đọc chưa hợp lệ.");
+  return value.map(item => {
+    const start = Number(item?.start), end = Number(item?.end), path = item?.audioPath;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > duration + 0.001 || typeof item?.text !== "string" || item.text.length > 2400
+      || typeof path !== "string" || path.length > 400 || !path.startsWith(`${userId}/`) || path.includes("..") || !/^[a-zA-Z0-9_./-]+$/.test(path)) throw new Error("Kết quả lời đọc không thuộc dự án hoặc tài khoản hiện tại.");
+    return { start, end, text: item.text, audioPath: path, audioMime: item.audioMime === "audio/mpeg" ? "audio/mpeg" : "audio/wav", ...(Number.isFinite(item.duration) ? { duration: item.duration } : {}) };
+  });
+}
+function withoutSpeechPaths(segments: Segment[]): Segment[] {
+  return segments.map(({ audioPath: _path, ...segment }) => segment);
+}
 function summaryFrom(data: Record<string, any>) { return String(data.intentSummary || data.suggestedIntent || ""); }
 function downloadBlob(blob: Blob, filename: string) { const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 5000); }
 function blobBase64(blob: Blob): Promise<string> { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = reject; reader.readAsDataURL(blob); }); }
@@ -127,12 +141,14 @@ function affectsExport(changes: Partial<Project>) { return ["id","source","durat
 function applyProjectChanges(current: Project, changes: Partial<Project>): Project {
   const next = { ...changes };
   if ("narration" in next && !next.narration) { next.narrationName = undefined; next.narrationDuration = undefined; }
-  if (next.voiceId !== undefined && next.voiceId !== current.voiceId) next.segments = (next.segments || current.segments).map(({ audioBase64: _audio, audioMime: _audioMime, mimeType: _mime, duration: _duration, ...segment }) => segment);
+  if (current.segments.some(segment => segment.audioPath) && next.segments
+    && (next.segments.length !== current.segments.length || next.segments.some((segment, index) => segment.text !== current.segments[index]?.text))) next.segments = withoutSpeechPaths(next.segments);
+  if (next.voiceId !== undefined && next.voiceId !== current.voiceId) next.segments = (next.segments || current.segments).map(({ audioBase64: _audio, audioMime: _audioMime, mimeType: _mime, duration: _duration, audioPath: _path, ...segment }) => segment);
   return { ...current, ...next, updatedAt: Date.now() };
 }
 function applySegmentChange(segment: Segment, changes: Partial<Segment>): Segment {
   const next = { ...segment, ...changes };
-  if (changes.text !== undefined && changes.text !== segment.text) { delete next.audioBase64; delete next.audioMime; delete next.mimeType; delete next.duration; }
+  if (changes.text !== undefined && changes.text !== segment.text) { delete next.audioBase64; delete next.audioMime; delete next.mimeType; delete next.duration; delete next.audioPath; }
   return next;
 }
 function safeAnalysis(value: unknown): Record<string, unknown> | undefined {
@@ -177,7 +193,7 @@ function restoreArchive(data: unknown, userId: string): Project {
   });
   const source = decode(archive.video, "video", 60 * 1024 * 1024), narration = decode(archive.narration, "audio", 32 * 1024 * 1024);
   const project = freshProject(userId, safeProfile(raw.profile));
-  return { ...project, title: text(raw.title, 200) || project.title, source, sourceName: text(raw.sourceName, 300), duration, width: Math.max(0, Math.min(16384, Number(raw.width) || 0)), height: Math.max(0, Math.min(16384, Number(raw.height) || 0)), intent: text(raw.intent), summary: text(raw.summary), format: FORMATS.some(format=>format.id===raw.format) ? raw.format : "review", angleId:text(raw.angleId,80), analysis: safeAnalysis(raw.analysis), segments, narration, narrationName: narration ? text(raw.narrationName, 300) : undefined, narrationDuration: narration && Number.isFinite(Number(raw.narrationDuration)) ? Number(raw.narrationDuration) : undefined, voiceId: text(raw.voiceId, 300), mode: ["scenery", "talking", "face"].includes(raw.mode) ? raw.mode : "scenery", keepAmbient: Boolean(raw.keepAmbient), step: source ? Math.max(0, Math.min(4, Math.floor(Number(raw.step) || 0))) as Step : 0 };
+  return { ...project, title: text(raw.title, 200) || project.title, source, sourceName: text(raw.sourceName, 300), duration, manualDuration: Boolean(raw.manualDuration) || !duration, width: Math.max(0, Math.min(16384, Number(raw.width) || 0)), height: Math.max(0, Math.min(16384, Number(raw.height) || 0)), intent: text(raw.intent), summary: text(raw.summary), format: FORMATS.some(format=>format.id===raw.format) ? raw.format : "review", angleId:text(raw.angleId,80), analysis: safeAnalysis(raw.analysis), segments, narration, narrationName: narration ? text(raw.narrationName, 300) : undefined, narrationDuration: narration && Number.isFinite(Number(raw.narrationDuration)) ? Number(raw.narrationDuration) : undefined, voiceId: text(raw.voiceId, 300), mode: ["scenery", "talking", "face"].includes(raw.mode) ? raw.mode : "scenery", keepAmbient: Boolean(raw.keepAmbient), step: source ? Math.max(0, Math.min(4, Math.floor(Number(raw.step) || 0))) as Step : 0 };
 }
 function audioMetadata(file: Blob): Promise<number | undefined> {
   return new Promise(resolve => {
@@ -189,8 +205,10 @@ function audioMetadata(file: Blob): Promise<number | undefined> {
   });
 }
 
-export default function Studio() {
-  const [view, setView] = useState<View>("studio");
+export default function Studio({ initialView = "studio" }: { initialView?: View } = {}) {
+  const [view, setView] = useState<View>(initialView);
+  const [leavingStudio, setLeavingStudio] = useState(false);
+  const [exitPrompt, setExitPrompt] = useState(false);
   const [project, setProject] = useState<Project>(() => freshProject("local"));
   const [projects, setProjects] = useState<Project[]>([]);
   const [accountProfile,setAccountProfile] = useState<Profile>({...EMPTY_PROFILE});
@@ -203,7 +221,7 @@ export default function Studio() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [busy, setBusy] = useState<"analyze" | "script" | "speech" | "export" | "clone" | null>(null);
+  const [busy, setBusy] = useState<"analyze" | "script" | "speech" | "download" | "export" | "clone" | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
@@ -244,6 +262,9 @@ export default function Studio() {
   const narrationToken = useRef(0);
   const voicesToken = useRef(0);
   const pendingWrites = useRef(new Set<Promise<void>>());
+  const writeQueue = useRef(Promise.resolve());
+  const speechInFlight = useRef(false);
+  const leavingStudioRef = useRef(false);
   const deletedProjectIds = useRef(new Set<string>());
   const mounted = useRef(true);
   const sourceUrl = useBlobUrl(project.source);
@@ -254,6 +275,8 @@ export default function Studio() {
   const words = project.segments.reduce((total, segment) => total + segment.text.trim().split(/\s+/).filter(Boolean).length, 0);
   const spokenSegments = project.segments.filter(segment => segment.text.trim());
   const narrationReady = Boolean(project.narration || (spokenSegments.length > 0 && spokenSegments.every(segment => segment.audioBase64)));
+  const speechNeedsDelivery = project.segments.some(segment => segment.audioPath);
+  const speechRetryLabel = spokenSegments.length > 0 && spokenSegments.every(segment => segment.audioBase64) ? "Lưu lại lời đọc" : "Tải lại lời đọc";
   const narrationTooLong = Boolean(project.narration && project.narrationDuration && project.duration && project.narrationDuration > project.duration + 0.001);
   const speechMinimumHint = voiceScriptMinimumHint(project.voiceId, project.segments);
   const voiceReady = config.voiceConfigured ?? config.eleven;
@@ -262,14 +285,21 @@ export default function Studio() {
   const voiceProviderLabel = isMaziao ? "Maziao" : "ElevenLabs";
   const voicePlanNote = isMaziao ? "Maziao do quản trị viên kết nối. Chi phí và hạn mức phụ thuộc model và gói của tài khoản chung." : "Giọng thư viện qua app cần gói ElevenLabs Starter trở lên của quản trị viên.";
   const update = useCallback((changes: Partial<Project>) => {
-    setProject(current => applyProjectChanges(current, changes));
+    const next = applyProjectChanges(projectRef.current, changes);
+    projectRef.current = next;
+    setProject(next);
     if (affectsExport(changes)) setExported(undefined);
   }, []);
   const updateProfile = (changes: Partial<Profile>) => update({ profile: { ...project.profile, ...changes } });
   const notify = (text: string, type: Notice["type"] = "info") => setNotice({ text, type });
   function storeProject(target: Project): Promise<void> {
     if (deletedProjectIds.current.has(target.id)) return Promise.resolve();
-    const write = persistProject(target);
+    // Preserve write order: an older autosave must not replace downloaded audio
+    // after the caller has confirmed it is safe to remove the cloud copy.
+    const write = writeQueue.current.catch(() => {}).then(() => {
+      if (!deletedProjectIds.current.has(target.id)) return persistProject(target);
+    });
+    writeQueue.current = write;
     pendingWrites.current.add(write);
     void write.finally(() => pendingWrites.current.delete(write)).catch(() => {});
     return write;
@@ -325,12 +355,12 @@ export default function Studio() {
   useEffect(() => {
     if (!ready || (!project.source && !project.intent && !project.segments.length)) return;
     setSaveState("Đang lưu…");
-    const timer = window.setTimeout(() => { if (deletedProjectIds.current.has(project.id)) return; storeProject(project).then(() => { if (!mounted.current || deletedProjectIds.current.has(project.id)) return; setSaveState("Đã lưu trên thiết bị"); setProjects(current => [project, ...current.filter(item => item.id !== project.id)].sort((a, b) => b.updatedAt - a.updatedAt)); }).catch(() => { if (mounted.current) setSaveState("Chưa lưu được · hãy tải dự án"); }); }, 700);
+    const timer = window.setTimeout(() => { if (deletedProjectIds.current.has(project.id) || projectRef.current !== project) return; storeProject(project).then(() => { if (!mounted.current || deletedProjectIds.current.has(project.id) || projectRef.current !== project) return; setSaveState("Đã lưu trên thiết bị"); setProjects(current => [project, ...current.filter(item => item.id !== project.id)].sort((a, b) => b.updatedAt - a.updatedAt)); }).catch(() => { if (mounted.current) setSaveState("Chưa lưu được · hãy tải dự án"); }); }, 700);
     return () => window.clearTimeout(timer);
   }, [project, ready]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(null), notice.type === "error" ? 10000 : 6000); return () => window.clearTimeout(timer); }, [notice]);
   useEffect(() => {
-    if (!settingsOpen && !deleteTarget) return;
+    if (!settingsOpen && !deleteTarget && !exitPrompt) return;
     const previous = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -338,7 +368,7 @@ export default function Studio() {
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), textarea, select, [tabindex="0"]') || []);
     focusable()[0]?.focus();
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !settingsSaving) { setSettingsOpen(false); setDeleteTarget(null); }
+      if (event.key === "Escape" && !settingsSaving) { setSettingsOpen(false); setDeleteTarget(null); setExitPrompt(false); }
       if (event.key !== "Tab") return;
       const elements = focusable(), first = elements[0], last = elements.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -346,7 +376,7 @@ export default function Studio() {
     };
     document.addEventListener("keydown", handleKey);
     return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", handleKey); previous?.focus(); };
-  }, [settingsOpen, deleteTarget, settingsSaving]);
+  }, [settingsOpen, deleteTarget, settingsSaving, exitPrompt]);
   useEffect(() => { if (cameraVideo.current && stream) { cameraVideo.current.srcObject = stream; cameraVideo.current.play().catch(() => {}); } }, [stream, step, view]);
   useEffect(() => { if (!recording) return; const timer = window.setInterval(() => setRecordSeconds((Date.now() - startedAt.current) / 1000), 250); return () => window.clearInterval(timer); }, [recording]);
   useEffect(() => { if (recording && recordSeconds >= 89.5 && recorder.current?.state === "recording") { recorder.current.stop(); setNotice({ type: "info", text: "Đã dừng để giữ video trong giới hạn 90 giây và xuất ổn định trên thiết bị." }); } }, [recordSeconds, recording]);
@@ -373,7 +403,7 @@ export default function Studio() {
         const blob = new Blob(chunks, { type: next.mimeType || "video/webm" });
         const settings = active.getVideoTracks()[0]?.getSettings();
         if (duration < 2 || !blob.size) { setRecording(false); stopCamera(); notify("Hãy quay ít nhất 2 giây để có đủ một khoảnh khắc cho câu chuyện."); return; }
-        update({ source: blob, sourceName: `Quay-${new Date().toISOString().slice(0, 10)}.${blob.type.includes("mp4") ? "mp4" : "webm"}`, duration, width: settings?.width || 0, height: settings?.height || 0, step: 1, analysis: undefined, summary: "", segments: [], narration: undefined });
+        update({ source: blob, sourceName: `Quay-${new Date().toISOString().slice(0, 10)}.${blob.type.includes("mp4") ? "mp4" : "webm"}`, duration, manualDuration: false, width: settings?.width || 0, height: settings?.height || 0, step: 1, analysis: undefined, summary: "", segments: [], narration: undefined });
         setRecording(false); stopCamera(); notify("Đã giữ lại khoảnh khắc của bạn. Bây giờ, hãy cho AI biết điều bạn muốn chia sẻ.", "success");
       };
       next.onerror = () => { setRecording(false); stopCamera(); notify("Camera bị gián đoạn. Hãy kiểm tra quyền camera rồi thử lại.", "error"); };
@@ -413,7 +443,7 @@ export default function Studio() {
       const duration = Number.isFinite(metadataVideo.duration) ? metadataVideo.duration : 0;
       if (duration > 90 || (duration > 0 && duration < 2)) { URL.revokeObjectURL(url); notify("Hãy chọn một video dài từ 2 đến 90 giây cho câu chuyện này.", "error"); return; }
       const source = file.type ? file : new File([file], file.name, { type: /\.webm$/i.test(file.name) ? "video/webm" : /\.mov$/i.test(file.name) ? "video/quicktime" : "video/mp4" });
-      update({ source, sourceName: file.name, title: projectRef.current.title === "Câu chuyện chưa đặt tên" ? file.name.replace(/\.[^.]+$/, "") : projectRef.current.title, duration, width: metadataVideo.videoWidth, height: metadataVideo.videoHeight, step: 1, analysis: undefined, summary: "", segments: [], narration: undefined });
+      update({ source, sourceName: file.name, title: projectRef.current.title === "Câu chuyện chưa đặt tên" ? file.name.replace(/\.[^.]+$/, "") : projectRef.current.title, duration, manualDuration: !duration, width: metadataVideo.videoWidth, height: metadataVideo.videoHeight, step: 1, analysis: undefined, summary: "", segments: [], narration: undefined });
       setView("studio"); URL.revokeObjectURL(url);
       if (!duration) notify("Đã mở video. Chưa đọc được thời lượng; hãy nhập số giây ở phần thông tin video."); else notify("Video đã sẵn sàng. Câu chuyện của bạn bắt đầu từ đây.", "success");
     };
@@ -455,6 +485,7 @@ export default function Studio() {
     } finally { if (token === narrationToken.current) setNarrationChecking(false); }
   }
   async function analyze() {
+    if (leavingStudioRef.current) return;
     if (!project.source) { notify("Quay hoặc chọn video trước để AI hiểu cảnh."); return; }
     if (!project.intent.trim()) { notify("Hãy nói hoặc viết một câu về điều bạn muốn người xem hiểu."); return; }
     if (!config.deepseek) { notify("AI chưa sẵn sàng. Bạn có thể tự viết lời thoại hoặc xem trạng thái trong Cài đặt."); return; }
@@ -475,6 +506,7 @@ export default function Studio() {
     } catch (error) { notify(errorText(error), "error"); } finally { setBusy(null); setAnalysisProgress(""); void refreshUsage(); }
   }
   async function generateScript() {
+    if (leavingStudioRef.current) return;
     if (!project.duration || !project.intent.trim()) { notify("Cần có thời lượng video và một câu mô tả ý muốn chia sẻ."); return; }
     if (!config.deepseek) { notify("AI chưa sẵn sàng. Bạn có thể viết lời thoại trực tiếp."); update({ step: 2 }); return; }
     const expectedIntent = intentKey(project), expectedScript = scriptKey(project), expectedSummary = project.summary;
@@ -495,24 +527,65 @@ export default function Studio() {
   }
   useEffect(() => { ++voicesToken.current; setVoices([]); setVoicesLoading(false); setVoiceFilter("vietnamese"); }, [voiceProvider, config.userId]);
   useEffect(() => { if (voiceReady && (view === "voices" || step === 3)) void loadVoices(); }, [voiceReady, voiceProvider, config.userId, view, step]);
+  async function receiveSpeech(target: Project) {
+    const expected = scriptKey(target);
+    const stillCurrent = () => mounted.current && !deletedProjectIds.current.has(target.id)
+      && projectRef.current.userId === target.userId && scriptKey(projectRef.current) === expected
+      && projectRef.current.voiceId === target.voiceId && projectRef.current.source === target.source
+      && projectRef.current.narration === target.narration;
+    const { downloadSpeechSegments, cleanupAnalysisMedia } = await import("@/lib/studio-upload");
+    const downloaded = normalizeSegments(await downloadSpeechSegments(target.segments), target.duration);
+    if (!stillCurrent()) { notify("Dự án đã thay đổi. Lời đọc cũ chưa bị xóa khỏi kho riêng."); return; }
+    if (!downloaded.length || downloaded.some(segment => !segment.audioBase64)) throw new Error("Chưa tải đủ các đoạn lời đọc. Hãy tải lại lời đọc để tiếp tục.");
+    // Keep the references until bytes are durably stored. If IndexedDB is full,
+    // retrying uses these in-memory bytes and does not generate or download again.
+    const segments = downloaded.map((segment, index) => ({ ...segment, audioPath: target.segments[index].audioPath }));
+    update({ segments });
+    const received = projectRef.current;
+    try { await storeProject(received); }
+    catch {
+      setSaveState("Chưa lưu được · hãy tải dự án");
+      notify("Đã tải lời đọc nhưng chưa lưu được trên thiết bị. Bấm “Lưu lại lời đọc” hoặc tải bản sao dự án trước khi đóng trang.", "error");
+      return;
+    }
+    if (!stillCurrent()) return;
+    setProjects(items => [received, ...items.filter(item => item.id !== received.id)].sort((a, b) => b.updatedAt - a.updatedAt));
+    update({ segments: withoutSpeechPaths(segments) });
+    setSaveState("Đã lưu trên thiết bị");
+    await cleanupAnalysisMedia(target.segments.flatMap(segment => segment.audioPath ? [segment.audioPath] : [])).catch(() => {});
+    notify("Đã lưu lời đọc. Nghe thử từng đoạn trước khi ghép video.", "success");
+  }
+  async function retrySpeechDownload() {
+    if (leavingStudioRef.current || speechInFlight.current || busy || !projectRef.current.segments.some(segment => segment.audioPath)) return;
+    speechInFlight.current = true;
+    setBusy("download");
+    try { await receiveSpeech(projectRef.current); }
+    catch (error) { notify(`${errorText(error)} Lời đọc đã tạo được giữ lại; bấm “Tải lại lời đọc” để tiếp tục.`, "error"); }
+    finally { speechInFlight.current = false; setBusy(null); }
+  }
   async function generateSpeech() {
+    if (leavingStudioRef.current || speechInFlight.current || busy) return;
+    if (projectRef.current.segments.some(segment => segment.audioPath)) { await retrySpeechDownload(); return; }
     if (!project.segments.some(segment => segment.text.trim())) { notify("Thêm lời thoại ở bước Kịch bản trước."); return; }
     if (!project.voiceId) { notify("Chọn một giọng đọc trước khi tạo âm thanh."); return; }
     if (project.segments.some(segment => !segment.text.trim())) { notify("Hãy điền hoặc xóa các đoạn lời còn trống trước khi tạo giọng."); return; }
     if (speechMinimumHint) { notify(speechMinimumHint); return; }
     const expected = scriptKey(project), expectedVoice = project.voiceId, expectedNarration = project.narration;
+    speechInFlight.current = true;
     setBusy("speech");
     try {
       const result = await requestJson("/api/speech", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ segments: project.segments.map(({ start, end, text }) => ({ start, end, text })), voiceId: project.voiceId, duration: project.duration }) });
       if (scriptKey(projectRef.current) !== expected || projectRef.current.voiceId !== expectedVoice || projectRef.current.narration !== expectedNarration) { notify("Kịch bản hoặc giọng đã thay đổi. Đã giữ nội dung mới; hãy tạo lại lời đọc cho phiên bản này."); return; }
-      const downloaded = await (await import("@/lib/studio-upload")).downloadSpeechSegments(result.segments);
-      if (scriptKey(projectRef.current) !== expected || projectRef.current.voiceId !== expectedVoice || projectRef.current.narration !== expectedNarration) { notify("Nội dung đã thay đổi trong lúc tải lời đọc. Hãy tạo lại lời đọc cho phiên bản mới."); return; }
-      const segments = normalizeSegments(downloaded, project.duration);
-      if (!segments.some(segment => segment.audioBase64)) throw new Error("Chưa nhận được âm thanh từ dịch vụ giọng đọc. Vui lòng thử lại.");
-      update({ segments, narration: undefined, narrationName: undefined }); notify("Đã tạo lời đọc. Nghe thử từng đoạn trước khi ghép video.", "success");
-    } catch (error) { notify(errorText(error), "error"); } finally { setBusy(null); void refreshUsage(); }
+      update({ segments: pendingSpeechSegments(result.segments, project.duration, project.userId), narration: undefined, narrationName: undefined });
+      const pending = projectRef.current;
+      await storeProject(pending).catch(() => { setSaveState("Chưa lưu được · giữ trang này mở"); });
+      setBusy("download");
+      await receiveSpeech(pending);
+    } catch (error) { notify(projectRef.current.segments.some(segment => segment.audioPath) ? `${errorText(error)} Bấm “Tải lại lời đọc” để lấy kết quả đã tạo, không tạo giọng mới.` : errorText(error), "error"); }
+    finally { speechInFlight.current = false; setBusy(null); void refreshUsage(); }
   }
   async function cloneVoice() {
+    if (leavingStudioRef.current) return;
     if (!cloneName.trim() || !cloneFiles.length || !cloneConsent) { notify("Điền tên giọng, chọn bản thu và xác nhận quyền sử dụng giọng."); return; }
     if (isMaziao && cloneFiles.length !== 1) { notify("Maziao cần một bản thu mẫu. Hãy chọn lại một tệp."); return; }
     setBusy("clone");
@@ -527,6 +600,7 @@ export default function Studio() {
     } catch (error) { notify(errorText(error), "error"); } finally { if (uploaded) await (await import("@/lib/studio-upload")).cleanupAnalysisMedia(uploaded).catch(() => {}); setBusy(null); void refreshUsage(); }
   }
   async function saveSettings() {
+    if (leavingStudioRef.current) return;
     setSettingsSaving(true); setSettingsError("");
     try {
       const previous = accountDefaultsRef.current;
@@ -569,6 +643,7 @@ export default function Studio() {
     catch (error) { notify(errorText(error), "error"); }
   }
   async function exportVideo() {
+    if (leavingStudioRef.current) return;
     if (!project.source) return;
     if (!narrationReady || narrationChecking) { notify("Hãy tạo lời đọc hoặc tải tệp âm thanh trước khi ghép."); return; }
     if (narrationTooLong) { notify("Bản thu lời thoại dài hơn video. Hãy chọn bản ngắn hơn trước khi ghép để giữ trọn câu.", "error"); return; }
@@ -586,7 +661,7 @@ export default function Studio() {
   async function exportProject(target = project) {
     try {
       const { source, narration, userId: _userId, id: _id, ...metadata } = target;
-      const data = { format: "loike-project-v1", project: metadata, video: source ? { data: await blobBase64(source), type: source.type } : undefined, narration: narration ? { data: await blobBase64(narration), type: narration.type } : undefined };
+      const data = { format: "loike-project-v1", project: { ...metadata, segments: withoutSpeechPaths(target.segments) }, video: source ? { data: await blobBase64(source), type: source.type } : undefined, narration: narration ? { data: await blobBase64(narration), type: narration.type } : undefined };
       downloadBlob(new Blob([JSON.stringify(data)], { type: "application/json" }), `${target.title || "loi-ke"}.loike`); notify("Bản sao dự án gồm video gốc và nội dung đã được tải xuống.", "success");
     } catch (error) { notify(errorText(error), "error"); }
   }
@@ -595,6 +670,28 @@ export default function Studio() {
     if (!current.source && !current.intent && !current.segments.length) return;
     if (deletedProjectIds.current.has(current.id)) return;
     void storeProject(current).then(() => { if (!deletedProjectIds.current.has(current.id)) setProjects(items => [current, ...items.filter(item => item.id !== current.id)].sort((a, b) => b.updatedAt - a.updatedAt)); }).catch(() => {});
+  }
+  async function returnToDashboard(exportAcknowledged = false) {
+    if (leavingStudioRef.current || working || !ready || narrationChecking || settingsSaving) return;
+    if (exported && !exportAcknowledged) { setExitPrompt(true); return; }
+    leavingStudioRef.current = true;
+    setExitPrompt(false);
+    setLeavingStudio(true);
+    try {
+      let saved: Project;
+      do {
+        saved = projectRef.current;
+        if (saved.source || saved.intent || saved.segments.length) await storeProject(saved);
+        await Promise.allSettled(Array.from(pendingWrites.current));
+      } while (saved !== projectRef.current);
+      stopCamera();
+      window.location.assign("/");
+    } catch {
+      setSaveState("Chưa lưu được · hãy tải dự án");
+      notify("Chưa lưu được dự án trước khi về tổng quan. Hãy thử lại hoặc tải bản sao dự án để giữ công việc của bạn.", "error");
+      leavingStudioRef.current = false;
+      setLeavingStudio(false);
+    }
   }
   function newProject() { ++uploadToken.current; ++narrationToken.current; setNarrationChecking(false); flushCurrentProject(); stopCamera(); setProject(freshProject(config.userId, accountDefaultsRef.current)); setIntentInterim(""); setExported(undefined); setView("studio"); setSaveState("Sẵn sàng lưu"); }
   function openProject(item: Project) { ++uploadToken.current; ++narrationToken.current; setNarrationChecking(false); flushCurrentProject(); stopCamera(); setProject(item.id === projectRef.current.id ? projectRef.current : item); setView("studio"); if(item.id!==projectRef.current.id) setExported(undefined); }
@@ -615,7 +712,8 @@ export default function Studio() {
   }
   function navigateStep(next: number) { if (busy) { notify("Hãy chờ thao tác hiện tại hoàn tất."); return; } if (recording) { notify("Hãy dừng quay để tiếp tục."); return; } if (next > 0 && !hasClip) { notify("Bắt đầu bằng việc quay hoặc tải video lên."); return; } stopCamera(); update({ step: next as Step }); }
 
-  const working = Boolean(busy) || recording || intentRecording;
+  const working = Boolean(busy) || recording || intentRecording || leavingStudio;
+  const navigationLocked = leavingStudio || exitPrompt;
   const displayName = config.displayName || project.profile.name || "Tài khoản";
   const manualScript = () => update({ step: 2, segments: project.segments.length ? project.segments : [{ start: 0, end: project.duration, text: "" }] });
   const angles = (Array.isArray(project.analysis?.suggestedAngles) ? project.analysis.suggestedAngles : []) as Angle[];
@@ -625,8 +723,12 @@ export default function Studio() {
   async function shareExport() { if(!exported)return;try{const result=await shareVideoFile(exported,project.title);if(result==="shared")notify("Đã chuyển video tới ứng dụng bạn chọn.","success");}catch(error){notify(errorText(error),"error");} }
 
   return <div className={`studio-app view-${view} step-${step}${keyboardOpen ? " keyboard-open" : ""}`}>
-    <a className="skip-link" href="#workspace">Đến nội dung chính</a>
-    <header className="app-header">
+    <a className="skip-link" href="#workspace" inert={navigationLocked}>Đến nội dung chính</a>
+    <div className={navigationStyles.navigation}>
+      <button type="button" className={navigationStyles.exit} onClick={() => void returnToDashboard()} disabled={working || !ready || narrationChecking || settingsSaving || exitPrompt}><Icon name="grid" size={16} />{leavingStudio ? "Đang lưu dự án…" : "Về tổng quan"}</button>
+      <span className={navigationStyles.label} role="status" aria-live="polite">{leavingStudio ? "Đang lưu trước khi rời Studio…" : "Studio video"}</span>
+    </div>
+    <header className="app-header" inert={navigationLocked}>
       <div className="header-inner">
         <button className="brand" aria-label="Lời Kể — tạo video" onClick={() => setView("studio")}><span className="brand-symbol"><i /><i /><i /><i /></span>Lời Kể<span className="brand-dot">.</span></button>
         <nav className="main-nav" aria-label="Điều hướng chính">
@@ -639,7 +741,7 @@ export default function Studio() {
       </div>
     </header>
 
-    <main className="workspace" id="workspace">
+    <main className="workspace" id="workspace" inert={navigationLocked}>
       {loginRequired ? <div className="status-banner"><Icon name="lock" size={19} /><span>Đăng nhập để dùng AI và hồ sơ của bạn.</span><a href="/dang-nhap">Đăng nhập</a></div> : null}
       {configError ? <div className="status-banner warning" role="alert"><Icon name="info" size={19} /><span>Chưa tải được kết nối tài khoản. Bạn vẫn có thể chỉnh video thủ công.</span><button onClick={() => void refreshConfiguration()} disabled={configRefreshing || working}>{configRefreshing ? "Đang thử…" : "Thử lại"}</button></div> : null}
 
@@ -672,7 +774,7 @@ export default function Studio() {
           <div className="step-heading"><span className="step-kicker">BƯỚC 2 / 5</span><h1 id="intent-title">Video này cần nói điều gì?</h1><p>Hình ảnh là tư liệu. Ý muốn chia sẻ và phong cách của bạn quyết định kịch bản.</p></div>
           <div className="creator-context"><span><Icon name="studio" size={17} />{accountProfile.channel || accountProfile.audience || accountProfile.customPrompt ? `Phong cách: ${accountProfile.channel || accountProfile.name || "của bạn"}` : "Thêm phong cách để AI hiểu bạn hơn"}</span><button className="text-button" onClick={()=>setView("profile")} disabled={working}>Hiểu về tôi<Icon name="arrow" size={15} /></button></div>
 
-          <details className="clip-details"><summary><Icon name="play" size={16} /><span>Video của bạn · {time(project.duration)}</span><span>Xem lại</span></summary><video ref={previewVideo} src={sourceUrl} controls playsInline preload="metadata" />{!project.duration ? <label className="field-label">Thời lượng video (giây)<input type="number" min="2" max="90" value={project.duration || ""} onChange={event => update({ duration: Number(event.target.value) })} /></label> : null}</details>
+          <details className="clip-details"><summary><Icon name="play" size={16} /><span>Video của bạn · {time(project.duration)}</span><span>Xem lại</span></summary><video ref={previewVideo} src={sourceUrl} controls playsInline preload="metadata" />{project.manualDuration || !project.duration ? <label className="field-label" htmlFor="manual-duration">Thời lượng video (giây)<input id="manual-duration" type="number" inputMode="decimal" min="2" max="90" step="0.1" value={project.duration || ""} disabled={Boolean(busy)} onChange={event => update({ duration: Number(event.target.value), manualDuration: true })} /><span className="helper-text">Nhập thời lượng từ 2 đến 90 giây. Bạn có thể sửa lại số giây khi cần.</span></label> : null}</details>
           {!project.analysis ? <div className="intent-input"><label className="field-label" htmlFor="story-intent">Điều bạn muốn người xem hiểu</label><textarea id="story-intent" className="intent-textarea" value={project.intent} onChange={event => update({ intent: event.target.value })} disabled={intentRecording} placeholder="Ví dụ: Tôi muốn kể cảm giác vui khi thấy chùm nho đầu tiên trong vườn…" rows={4} /><div className="intent-record-row"><button className={`button secondary ${intentRecording ? "listening" : ""}`} onClick={() => void toggleIntentRecording()} disabled={recording || Boolean(busy) || !speechSupported}><Icon name={intentRecording ? "close" : "mic"} size={19} />{intentRecording ? "Dừng nghe" : "Nói ý tưởng thay vì gõ"}</button>{intentRecording ? <span className="record-label"><i />Đang nghe bạn</span> : null}</div>{intentInterim ? <p className="live-transcript" role="status">{intentInterim}</p> : null}{!speechSupported ? <p className="helper-text">Trình duyệt này chưa nhận giọng nói. Bạn có thể gõ trực tiếp vào ô phía trên.</p> : <p className="helper-text">Giọng nói được trình duyệt chuyển thành chữ. Hãy đọc lại và sửa nếu cần.</p>}</div> : <div className="understood-intent"><label className="field-label" htmlFor="story-summary"><Icon name="studio" size={18} />Thông điệp bạn muốn người xem nhận được</label><textarea id="story-summary" value={project.summary} onChange={event => update({ summary: event.target.value })} rows={3} /><p>Đây là ý định, chưa phải lời thoại. Hãy chỉnh cho đúng rồi chọn một hướng bên dưới.</p><AnalysisEvidence analysis={project.analysis} facts={project.profile.facts} onFacts={facts => updateProfile({ facts })} /><details className="quiet-details original-intent"><summary>Sửa lời dặn ban đầu<Icon name="chevron" size={16} /></summary><textarea aria-label="Lời dặn ban đầu" value={project.intent} onChange={event => update({ intent: event.target.value })} rows={3} /><button className="button secondary" onClick={() => void analyze()} disabled={Boolean(busy)}>{busy === "analyze" ? <Spinner /> : <Icon name="refresh" size={17} />}Hiểu lại video</button></details></div>}
           {project.analysis ? <details className="quiet-details change-format"><summary>Đổi dạng video<Icon name="chevron" size={16} /></summary><fieldset className="format-picker"><legend>Bạn muốn làm video dạng nào?</legend><div>{FORMATS.map(format=><button type="button" key={format.id} className={project.format===format.id ? "active" : ""} aria-pressed={project.format===format.id} disabled={Boolean(busy)} onClick={()=>update({format:format.id,angleId:""})}><strong>{format.name}</strong><span>{format.note}</span></button>)}</div></fieldset></details> : <fieldset className="format-picker"><legend>Bạn muốn làm video dạng nào?</legend><div>{FORMATS.map(format=><button type="button" key={format.id} className={project.format===format.id ? "active" : ""} aria-pressed={project.format===format.id} disabled={Boolean(busy)} onClick={()=>update({format:format.id,angleId:""})}><strong>{format.name}</strong><span>{format.note}</span></button>)}</div></fieldset>}
           {project.analysis && angles.length ? <AngleChoices angles={angles} selected={project.angleId} recommended={String(project.analysis.recommendedAngleId || "")} onSelect={angle=>update({angleId:angle.id,format:angle.format})} disabled={Boolean(busy)} /> : null}
@@ -692,11 +794,12 @@ export default function Studio() {
 
         {step === 3 ? <section className="step-card" aria-labelledby="voice-title">
           <div className="step-heading"><span className="step-kicker">BƯỚC 4 / 5</span><h1 id="voice-title">Để giọng nói kể câu chuyện</h1><p>Chọn một giọng, tạo lời đọc rồi nghe thử trước khi ghép video.</p></div>
-          {voiceReady ? <div className="voice-selection"><div className="field-row"><label className="field-label" htmlFor="voice-selection">Giọng đọc</label><button className="text-button" onClick={() => void loadVoices()} disabled={voicesLoading}><Icon name="refresh" size={16} />{voicesLoading ? "Đang tải…" : "Làm mới"}</button></div><VoiceFilter value={voiceFilter} onChange={setVoiceFilter} voices={voices} provider={voiceProvider} /><select id="voice-selection" value={project.voiceId} disabled={busy === "speech"} onChange={event => update({ voiceId: event.target.value })}><option value="">Chọn giọng bạn muốn dùng</option>{selectedVoice && !filteredVoices.includes(selectedVoice) ? <option value={project.voiceId}>{selectedVoice.name} · đang chọn</option> : null}{filteredVoices.map(voice => <option key={voice.voice_id || voice.id} value={voice.voice_id || voice.id}>{voice.name}{voice.category === "cloned" ? " · Giọng cá nhân" : ""}</option>)}</select>{selectedVoice ? <div className="selected-voice-preview"><VoiceDetail voice={selectedVoice} /></div> : null}{!voicesLoading && voiceFilter === "vietnamese" && !filteredVoices.length ? <p className="helper-text">Chưa tải được thư viện tiếng Việt. Bấm Làm mới hoặc xem nhóm Giọng có sẵn.</p> : null}<p className="voice-plan-note">{voicePlanNote}</p><p className="helper-text">{isMaziao ? "Chọn giọng tiếng Việt hoặc giọng cá nhân của bạn. Nghe thử lời đọc trước khi ghép video." : "Nghe mẫu để chọn chất giọng. Nhóm phổ biến có thể gồm giọng quốc tế; lời đọc mới luôn dùng tiếng Việt."}</p><button className="text-button voice-library-link" onClick={() => setView("voices")} disabled={working}>Xem thư viện và giọng cá nhân<Icon name="arrow" size={16} /></button></div> : <div className="inline-note"><Icon name="info" size={20} /><span>Giọng đọc AI chưa sẵn sàng. Bạn có thể dùng một bản thu lời thoại có sẵn.</span></div>}
-          {voiceReady && speechMinimumHint && !project.narration ? <p className="inline-note" role="status"><Icon name="info" size={20} /><span>{speechMinimumHint}</span></p> : null}
-          {!project.narration && project.segments.some(segment => segment.audioBase64) ? <div className="speech-previews"><h2>Nghe thử lời đọc</h2>{project.segments.map((segment, index) => segment.audioBase64 ? <div className="speech-preview" key={index}><span>Đoạn {index + 1} · {time(segment.start)} – {time(segment.end)}</span><p>{segment.text}</p><audio controls src={`data:${segment.mimeType || segment.audioMime || "audio/mpeg"};base64,${segment.audioBase64}`} /></div> : null)}<button className="text-button" onClick={() => void generateSpeech()} disabled={Boolean(busy) || Boolean(speechMinimumHint)}><Icon name="refresh" size={16} />Tạo lại giọng đọc</button></div> : null}
+          {voiceReady ? <div className="voice-selection"><div className="field-row"><label className="field-label" htmlFor="voice-selection">Giọng đọc</label><button className="text-button" onClick={() => void loadVoices()} disabled={voicesLoading}><Icon name="refresh" size={16} />{voicesLoading ? "Đang tải…" : "Làm mới"}</button></div><VoiceFilter value={voiceFilter} onChange={setVoiceFilter} voices={voices} provider={voiceProvider} /><select id="voice-selection" value={project.voiceId} disabled={Boolean(busy)} onChange={event => update({ voiceId: event.target.value })}><option value="">Chọn giọng bạn muốn dùng</option>{selectedVoice && !filteredVoices.includes(selectedVoice) ? <option value={project.voiceId}>{selectedVoice.name} · đang chọn</option> : null}{filteredVoices.map(voice => <option key={voice.voice_id || voice.id} value={voice.voice_id || voice.id}>{voice.name}{voice.category === "cloned" ? " · Giọng cá nhân" : ""}</option>)}</select>{selectedVoice ? <div className="selected-voice-preview"><VoiceDetail voice={selectedVoice} /></div> : null}{!voicesLoading && voiceFilter === "vietnamese" && !filteredVoices.length ? <p className="helper-text">Chưa tải được thư viện tiếng Việt. Bấm Làm mới hoặc xem nhóm Giọng có sẵn.</p> : null}<p className="voice-plan-note">{voicePlanNote}</p><p className="helper-text">{isMaziao ? "Chọn giọng tiếng Việt hoặc giọng cá nhân của bạn. Nghe thử lời đọc trước khi ghép video." : "Nghe mẫu để chọn chất giọng. Nhóm phổ biến có thể gồm giọng quốc tế; lời đọc mới luôn dùng tiếng Việt."}</p><button className="text-button voice-library-link" onClick={() => setView("voices")} disabled={working}>Xem thư viện và giọng cá nhân<Icon name="arrow" size={16} /></button></div> : <div className="inline-note"><Icon name="info" size={20} /><span>Giọng đọc AI chưa sẵn sàng. Bạn có thể dùng một bản thu lời thoại có sẵn.</span></div>}
+          {voiceReady && speechMinimumHint && !project.narration && !speechNeedsDelivery ? <p className="inline-note" role="status"><Icon name="info" size={20} /><span>{speechMinimumHint}</span></p> : null}
+          {!project.narration && project.segments.some(segment => segment.audioBase64) ? <div className="speech-previews"><h2>Nghe thử lời đọc</h2>{project.segments.map((segment, index) => segment.audioBase64 ? <div className="speech-preview" key={index}><span>Đoạn {index + 1} · {time(segment.start)} – {time(segment.end)}</span><p>{segment.text}</p><audio controls src={`data:${segment.mimeType || segment.audioMime || "audio/mpeg"};base64,${segment.audioBase64}`} /></div> : null)}{!speechNeedsDelivery ? <button className="text-button" onClick={() => void generateSpeech()} disabled={Boolean(busy) || Boolean(speechMinimumHint)}><Icon name="refresh" size={16} />Tạo lại giọng đọc</button> : null}</div> : null}
+          {speechNeedsDelivery ? <div className="speech-recovery" role="status"><strong>Lời đọc đã tạo xong</strong><p>{speechRetryLabel === "Lưu lại lời đọc" ? "Âm thanh đang có trong trang này. Hãy lưu lại hoặc tải bản sao dự án trước khi đóng trang." : "Kết quả được giữ trong kho riêng. Bạn có thể tải lại lời đọc mà không tạo giọng mới hoặc trừ thêm lượt AI."}</p>{narrationReady ? <button className="button secondary" onClick={() => void retrySpeechDownload()} disabled={Boolean(busy)}>{busy === "download" ? <Spinner /> : <Icon name="download" size={18} />}{busy === "download" ? "Đang nhận lời đọc…" : speechRetryLabel}</button> : null}</div> : null}
           <details className="quiet-details manual-narration" open={project.narration ? true : undefined}><summary>Đã có bản thu lời thoại?<Icon name="chevron" size={16} /></summary><p className="helper-text">Tải bản thu của bạn để dùng thay lời đọc AI. Bản thu bắt đầu từ đầu video.</p><button className="button secondary" onClick={() => narrationInput.current?.click()} disabled={Boolean(busy) || narrationChecking}>{narrationChecking ? <Spinner /> : <Icon name="upload" size={18} />}{narrationChecking ? "Đang kiểm tra bản thu…" : project.narration ? "Chọn bản thu khác" : "Tải bản thu lời thoại"}</button>{narrationUrl ? <div className="narration-preview"><div><strong>{project.narrationName}</strong><button className="icon-button" aria-label="Xóa bản thu lời thoại" onClick={() => update({ narration: undefined })}><Icon name="trash" size={18} /></button></div><audio controls src={narrationUrl} /><NarrationTiming duration={project.narrationDuration} videoDuration={project.duration} /></div> : null}</details>
-          <div className="step-actions"><button className="text-button" onClick={() => navigateStep(2)}>Quay lại</button>{narrationReady ? <button className="button primary large" onClick={() => navigateStep(4)} disabled={narrationTooLong || narrationChecking || Boolean(busy)}>Dùng lời đọc này<Icon name="arrow" size={19} /></button> : <button className="button primary large" onClick={() => void generateSpeech()} disabled={!voiceReady || !project.voiceId || Boolean(busy) || Boolean(speechMinimumHint)}>{busy === "speech" ? <Spinner /> : <Icon name="sound" size={19} />}{busy === "speech" ? "Đang tạo giọng đọc…" : "Tạo giọng đọc"}</button>}</div>
+          <div className="step-actions"><button className="text-button" onClick={() => navigateStep(2)}>Quay lại</button>{narrationReady ? <button className="button primary large" onClick={() => navigateStep(4)} disabled={narrationTooLong || narrationChecking || Boolean(busy)}>Dùng lời đọc này<Icon name="arrow" size={19} /></button> : speechNeedsDelivery ? <button className="button primary large" onClick={() => void retrySpeechDownload()} disabled={Boolean(busy)}>{busy === "download" ? <Spinner /> : <Icon name="download" size={19} />}{busy === "download" ? "Đang nhận lời đọc…" : speechRetryLabel}</button> : <button className="button primary large" onClick={() => void generateSpeech()} disabled={!voiceReady || !project.voiceId || Boolean(busy) || Boolean(speechMinimumHint)}>{busy === "speech" ? <Spinner /> : <Icon name="sound" size={19} />}{busy === "speech" ? "Đang tạo giọng đọc…" : "Tạo giọng đọc"}</button>}</div>
         </section> : null}
 
         {step === 4 ? <section className="step-card" aria-labelledby="export-title">
@@ -721,11 +824,14 @@ export default function Studio() {
       <footer className="app-footer"><span>Lời Kể<span className="brand-dot">.</span> Câu chuyện của bạn, giọng nói của bạn.</span><button onClick={() => setView("guide")} disabled={working}>Cần hướng dẫn?</button></footer>
     </main>
 
-    <input ref={uploadInput} className="visually-hidden" type="file" accept="video/*,.loike,.json" aria-label="Chọn video hoặc bản sao dự án" onChange={event => { void ingestFile(event.target.files?.[0]); event.target.value = ""; }} />
-    <input ref={narrationInput} className="visually-hidden" type="file" accept="audio/*" aria-label="Chọn tệp lời thoại" onChange={event => { void ingestNarration(event.target.files?.[0]); event.target.value = ""; }} />
+    <input ref={uploadInput} className="visually-hidden" type="file" accept="video/*,.loike,.json" aria-label="Chọn video hoặc bản sao dự án" disabled={navigationLocked} onChange={event => { void ingestFile(event.target.files?.[0]); event.target.value = ""; }} />
+    <input ref={narrationInput} className="visually-hidden" type="file" accept="audio/*" aria-label="Chọn tệp lời thoại" disabled={navigationLocked} onChange={event => { void ingestNarration(event.target.files?.[0]); event.target.value = ""; }} />
+    <div inert={navigationLocked}>
     {notice ? <div className={`toast ${notice.type}`} role={notice.type === "error" ? "alert" : "status"}><Icon name={notice.type === "success" ? "check" : "info"} size={21} /><p>{notice.text}</p><button className="icon-button" onClick={() => setNotice(null)} aria-label="Đóng thông báo"><Icon name="close" size={19} /></button></div> : null}
     {settingsOpen ? <div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !settingsSaving) setSettingsOpen(false); }}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="modal-header"><h2 id="settings-title">Hồ sơ và kết nối</h2><button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Đóng cài đặt" disabled={settingsSaving}><Icon name="close" size={22} /></button></div><div className="modal-scroll">{settingsError ? <div className="settings-error" role="alert"><p>{settingsError}</p>{loginRequired ? <a href="/dang-nhap">Đăng nhập vào tài khoản của bạn</a> : null}</div> : null}<ProfileEditor profile={accountProfile} onChange={changes=>setAccountProfile(current=>({...current,...changes}))} prefix="settings-profile" /><div className="managed-ai"><h3>AI do quản trị viên kết nối</h3><div><span>Hiểu video và viết lời thoại</span><span className={config.deepseek ? "ready" : ""}>{config.deepseek ? "Sẵn sàng" : "Chưa sẵn sàng"}</span></div><div><span>Tạo giọng đọc · {voiceProviderLabel}</span><span className={voiceReady ? "ready" : ""}>{voiceReady ? "Sẵn sàng" : "Chưa sẵn sàng"}</span></div>{config.quota ? <p>Bạn đã dùng <strong>{config.quota.used}/{config.quota.limit}</strong> lượt AI.</p> : null}{config.isAdmin ? <a className="text-button" href="/quan-tri">Mở trang quản trị<Icon name="arrow" size={17} /></a> : null}</div>{configError ? <div className="settings-error"><p>{configError}</p><button className="text-button" onClick={() => void refreshConfiguration()} disabled={configRefreshing}>{configRefreshing ? "Đang thử…" : "Thử kết nối lại"}</button></div> : null}<p className="helper-text">Hồ sơ lưu trong tài khoản. Video và dự án được giữ trong trình duyệt trên thiết bị này.</p></div><div className="modal-footer"><button className="button secondary" onClick={() => setSettingsOpen(false)} disabled={settingsSaving}>Đóng</button><button className="button primary" onClick={() => void saveSettings()} disabled={settingsSaving}>{settingsSaving ? <Spinner /> : <Icon name="check" size={18} />}{settingsSaving ? "Đang lưu…" : "Lưu hồ sơ"}</button></div></section></div> : null}
     {deleteTarget ? <div className="modal-backdrop"><section className="modal delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><div className="modal-header"><h2 id="delete-title">Xóa video này?</h2><button className="icon-button" onClick={() => setDeleteTarget(null)} aria-label="Đóng"><Icon name="close" /></button></div><div className="modal-scroll"><p>Dự án “{deleteTarget.title}” và video lưu kèm sẽ bị xóa khỏi trình duyệt này. Hãy tải bản sao trước nếu bạn muốn giữ lại.</p></div><div className="modal-footer"><button className="button secondary" onClick={() => setDeleteTarget(null)}>Giữ lại</button><button className="button danger" onClick={() => void deleteProject()}>Xóa dự án</button></div></section></div> : null}
+    </div>
+    {exitPrompt && exported ? <div className="modal-backdrop"><section className={`modal ${navigationStyles.exportDialog}`} role="dialog" aria-modal="true" aria-labelledby="exit-export-title" aria-describedby="exit-export-description"><div className="modal-header"><h2 id="exit-export-title">Giữ lại bản MP4 vừa ghép</h2><button type="button" className="icon-button" onClick={() => setExitPrompt(false)} aria-label="Ở lại Studio"><Icon name="close" size={22} /></button></div><div className="modal-scroll"><p id="exit-export-description">Tệp MP4 chỉ được giữ trong lần mở Studio này. Hãy tải xong trước khi rời trang. Studio sẽ lưu dự án để bạn có thể ghép lại khi cần.</p>{exportedUrl ? <div className={navigationStyles.reminderDownloads}><a className="button primary" href={exportedUrl} download={videoDownloadName(project.title)}><Icon name="download" size={18} />Tải MP4</a><a className="text-button" href={exportedUrl} target="_blank" rel="noopener">Mở video để lưu<Icon name="arrow" size={16} /></a></div> : <p role="status">Đang chuẩn bị liên kết tải video…</p>}</div><div className="modal-footer"><button type="button" className="button secondary" onClick={() => setExitPrompt(false)}>Ở lại Studio</button><button type="button" className="button secondary" onClick={() => void returnToDashboard(true)}>Về tổng quan</button></div></section></div> : null}
   </div>;
 }
 

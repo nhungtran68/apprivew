@@ -3,7 +3,7 @@ import { createStudioBrowser } from "./studio-browser";
 
 const BUCKET = "studio-media";
 const MAX_AUDIO = 25 * 1024 * 1024;
-type StoredAudio = { start: number; end: number; text: string; audioUrl?: string; audioPath?: string; audioMime?: string; duration?: number; audioBase64?: string };
+export type StoredAudio = { start: number; end: number; text: string; audioUrl?: string; audioPath?: string; audioMime?: string; mimeType?: string; duration?: number; audioBase64?: string };
 function safePath(userId: string, value: unknown): value is string {
   return typeof value === "string" && value.length <= 400 && value.startsWith(`${userId}/`)
     && !value.includes("..") && /^[a-zA-Z0-9_./-]+$/.test(value);
@@ -86,39 +86,56 @@ function base64(blob: Blob): Promise<string> {
 }
 
 export async function downloadSpeechSegments<T extends StoredAudio>(segments: T[]): Promise<(T & { audioBase64: string; mimeType: string })[]> {
-  if (!Array.isArray(segments) || !segments.length || segments.length > 16) throw new Error("Kết quả lời thoại chưa hợp lệ.");
+  if (!Array.isArray(segments) || !segments.length || segments.length > 16 || segments.some(segment => !segment || typeof segment !== "object")) throw new Error("Kết quả lời thoại chưa hợp lệ.");
   const expectedOrigin = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || "https://unconfigured.invalid").origin;
-  let paths: string[] = [];
+  const storage = segments.some(segment => !segment.audioBase64) ? await storageUser() : undefined;
+  const prefix = `/storage/v1/object/sign/${BUCKET}/`;
+  const validateUrl = (value: unknown, path: string): URL => {
+    try {
+      if (typeof value !== "string") throw new Error();
+      const url = new URL(value);
+      if (url.origin !== expectedOrigin || url.username || url.password || url.hash
+        || !url.pathname.startsWith(prefix) || decodeURIComponent(url.pathname.slice(prefix.length)) !== path) throw new Error();
+      return url;
+    } catch { throw new Error("Đường dẫn lời thoại không thuộc kho tệp riêng của tài khoản hiện tại."); }
+  };
+  // Validate the complete batch before signing or fetching anything. Recovery
+  // uses owned paths; signed URLs are short-lived and never belong in a project.
+  const urls = segments.map(segment => {
+    if (segment.audioBase64) return undefined;
+    if (!storage || !safePath(storage.userId, segment.audioPath)) throw new Error("Đường dẫn lời thoại không thuộc kho tệp riêng của tài khoản hiện tại.");
+    return segment.audioUrl === undefined ? undefined : validateUrl(segment.audioUrl, segment.audioPath);
+  });
+  const results: (T & { audioBase64: string; mimeType: string })[] = [];
   let total = 0;
-  try {
-    const needsStorage = segments.some((segment) => !segment.audioBase64 || segment.audioPath);
-    const userId = needsStorage ? (await storageUser()).userId : "";
-    // Collect every owned object before any fetch. A failed first download must
-    // still remove that object and the later segments that were never fetched.
-    paths = [...new Set(segments.map((segment) => segment.audioPath).filter((path) => safePath(userId, path)))];
-    const prefix = `/storage/v1/object/sign/${BUCKET}/`;
-    const urls = segments.map((segment) => {
-      if (segment.audioBase64) return undefined;
-      try {
-        const url = new URL(segment.audioUrl || "");
-        if (!safePath(userId, segment.audioPath) || url.origin !== expectedOrigin || url.username || url.password
-          || !url.pathname.startsWith(prefix) || decodeURIComponent(url.pathname.slice(prefix.length)) !== segment.audioPath) throw new Error();
-        return url;
-      } catch { throw new Error("Đường dẫn lời thoại không thuộc kho tệp riêng của tài khoản hiện tại."); }
-    });
-    const results: (T & { audioBase64: string; mimeType: string })[] = [];
-    for (const [index, segment] of segments.entries()) {
-      if (segment.audioBase64) { results.push({ ...segment, audioBase64: segment.audioBase64, mimeType: segment.audioMime || "audio/wav" }); continue; }
-      const response = await fetch(urls[index]!.href, { signal: AbortSignal.timeout(60_000), credentials: "omit", redirect: "error" });
-      if (!response.ok) throw new Error("Chưa tải được lời thoại. Hãy tạo lại hoặc thử lại kết nối.");
-      const blob = await response.blob();
-      total += blob.size;
-      if (!blob.size || total > 16 * 1024 * 1024) throw new Error("Tệp lời thoại trống hoặc quá lớn.");
-      const { audioUrl: _url, audioPath: _path, ...rest } = segment;
-      results.push({ ...rest, audioBase64: await base64(blob), mimeType: segment.audioMime || "audio/wav" } as T & { audioBase64: string; mimeType: string });
+  for (const [index, segment] of segments.entries()) {
+    const { audioUrl: _url, audioPath: _path, ...rest } = segment;
+    const mimeType = segment.audioMime || segment.mimeType || "audio/wav";
+    if (segment.audioBase64) {
+      results.push({ ...rest, audioBase64: segment.audioBase64, mimeType } as T & { audioBase64: string; mimeType: string });
+      continue;
     }
-    return results;
-  // Preserve paid audio if a temporary Storage cleanup fails; explicit cleanup
-  // calls reject so callers can retry. All download failure paths still try cleanup.
-  } finally { await cleanupAnalysisMedia(paths).catch(() => {}); }
+    let url = urls[index];
+    if (!url) {
+      let signedUrl: string;
+      try {
+        const { data, error } = await storage!.client.storage.from(BUCKET).createSignedUrl(segment.audioPath!, 300);
+        if (error || !data?.signedUrl) throw new Error();
+        signedUrl = data.signedUrl;
+      } catch { throw new Error("Chưa mở lại được tệp lời đọc. Kiểm tra kết nối hoặc đăng nhập lại rồi bấm Tải lại lời đọc."); }
+      url = validateUrl(signedUrl, segment.audioPath!);
+    }
+    let blob: Blob;
+    try {
+      const response = await fetch(url.href, { signal: AbortSignal.timeout(60_000), credentials: "omit", redirect: "error" });
+      if (!response.ok) throw new Error();
+      blob = await response.blob();
+    } catch { throw new Error("Chưa tải được lời đọc đã tạo. Kiểm tra kết nối rồi bấm Tải lại lời đọc."); }
+    total += blob.size;
+    if (!blob.size || total > 16 * 1024 * 1024) throw new Error("Tệp lời thoại trống hoặc quá lớn.");
+    results.push({ ...rest, audioBase64: await base64(blob), mimeType } as T & { audioBase64: string; mimeType: string });
+  }
+  // Downloading never deletes paid audio. The caller may explicitly remove the
+  // owned objects only after these bytes have been saved durably on the device.
+  return results;
 }

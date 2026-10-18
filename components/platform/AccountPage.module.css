@@ -1,0 +1,76 @@
+.page { min-width: 0; }
+.summaryGrid { display: grid; gap: 20px; }
+.identityCard { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; background: #243d30; color: #f5f5ec; border-color: #243d30; }
+.identityTop { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 16px; margin-bottom: 28px; }
+.avatar { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 66px; height: 66px; border-radius: 20px; border: 1px solid #d9cdb42e; background: #4a5d49; color: #f3dfbb; font-size: 22px; font-weight: 500; }
+.role { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; color: #d4e1d3; border: 1px solid #b8c7b92e; border-radius: 7px; font-size: 11px; line-height: 1.5; }
+.identityCard .cardEyebrow { color: #b4c8b7; font-size: 11px; letter-spacing: .6px; margin: 0 0 7px; }
+.identityCard h2 { font-size: clamp(24px, 3vw, 30px); line-height: 1.4; color: #fffaf0; overflow-wrap: anywhere; }
+.identityCard .identityDescription { color: #c5d4c8; font-size: 14px; line-height: 1.85; max-width: 390px; margin: 12px 0 24px; }
+.identityCard .profileButton { margin-top: auto; background: #f7f4e9; border-color: #f7f4e9; font-size: 13px; min-height: 44px; padding: 10px 15px; }
+.identityCard .profileButton:hover { background: #fffdf7; }
+.quotaCard { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.cardTop { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; margin-bottom: 24px; }
+.cardTop > span:first-child { margin: 0; color: #a45632; background: #fcf0e7; }
+.smallLabel { font-size: 11px; color: #6b7b70; }
+.quotaCard .quotaValue { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 10px 0 18px; line-height: 1.3; color: #718075; }
+.quotaValue strong { color: #2f4b3a; font-size: 44px; font-weight: 500; letter-spacing: -1.8px; overflow-wrap: anywhere; }
+.quotaValue span { font-size: 14px; }
+.usageMeter { display: block; width: 100%; height: 8px; border: 0; border-radius: 20px; overflow: hidden; background: #eaf0eb; appearance: none; }
+.usageMeter::-webkit-meter-bar { height: 8px; border: 0; background: #eaf0eb; }
+.usageMeter::-webkit-meter-optimum-value { border-radius: 20px; background: #57765c; }
+.usageMeter::-moz-meter-bar { border-radius: 20px; background: #57765c; }
+.quotaCard .quotaDescription { font-size: 13px; line-height: 1.75; margin-top: 14px; }
+.quotaCard .missingQuota { font-size: 15px; line-height: 1.8; margin: 16px 0 20px; }
+.quotaFooter { margin-top: auto; padding-top: 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 3px 12px; width: 100%; }
+.quotaFooter > span { font-size: 11px; color: #758378; }
+.quotaFooter button { padding: 0; background: transparent; border: 0; }
+.quotaFooter button:disabled { cursor: wait; opacity: .55; }
+.loadingPanel { display: flex; align-items: center; gap: 20px; min-height: 188px; }
+.loadingPanel h2 { font-size: 20px; }
+.loadingPanel p { margin-top: 7px; color: #697a6e; font-size: 14px; }
+.loadingAvatar { display: block; flex-shrink: 0; height: 64px; width: 64px; border-radius: 20px; background: #e8eee8; }
+.statePanel { max-width: 850px; }
+.statePanel > p { max-width: 640px; }
+.stateActions { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin-top: 22px; }
+.stateActions button:disabled { opacity: .6; cursor: wait; }
+.toolsSection { margin-top: 36px; }
+.toolGrid { display: grid; gap: 15px; }
+.toolCard { display: flex; align-items: center; gap: 15px; min-width: 0; padding: 22px; border: 1px solid #e1e7e1; border-radius: 14px; background: white; color: #2e4738; transition: border-color .15s, box-shadow .15s; }
+.toolCard:hover { border-color: #b8cbbb; box-shadow: 0 5px 18px #20392908; }
+.toolIcon { display: grid; place-items: center; flex-shrink: 0; width: 46px; height: 46px; border-radius: 13px; background: #edf2eb; color: #657e58; }
+.voiceIcon { color: #a26941; background: #faf1e5; }
+.toolCard > span:nth-child(2) { flex: 1; min-width: 0; }
+.toolCard strong { display: block; font-size: 15px; font-weight: 500; }
+.toolCard > span > span { display: block; font-size: 13px; line-height: 1.8; color: #6c7a70; margin-top: 5px; }
+.toolCard > svg { flex-shrink: 0; color: #8b9b8e; }
+.subscriptionCard { display: flex; align-items: flex-start; gap: 22px; margin-top: 24px; background: #f8f5ed; border-color: #e9e3d7; }
+.subscriptionIcon { display: grid; place-items: center; flex-shrink: 0; width: 54px; height: 54px; color: #92805b; background: #eeeadf; border-radius: 16px; }
+.subscriptionCard h2 { margin-top: 14px; font-size: 20px; }
+.subscriptionCard p { max-width: 650px; margin-top: 8px; color: #7a7567; font-size: 14px; line-height: 1.85; }
+.sessionSection { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 18px; margin-top: 30px; padding: 24px 2px 0; border-top: 1px solid #e0e6e0; }
+.sessionSection h2 { font-size: 15px; font-weight: 500; letter-spacing: 0; }
+.sessionSection p { color: #6c7a70; font-size: 13px; margin-top: 4px; }
+.sessionSection .signOutError { color: #a53824; margin-top: 10px; font-size: 14px; }
+.signOutButton { flex-shrink: 0; }
+.signOutButton:disabled { cursor: wait; opacity: .6; }
+@media (min-width: 800px) {
+  .summaryGrid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+  .toolGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .adminCard { grid-column: 1 / -1; }
+}
+@media (max-width: 479px) {
+  .identityTop { gap: 10px; }
+  .role { font-size: 10px; padding: 6px 7px; }
+  .identityCard .identityDescription { font-size: 15px; }
+  .quotaFooter > span { font-size: 12px; }
+  .toolCard { padding: 20px 16px; gap: 12px; align-items: flex-start; }
+  .toolCard > svg { margin-top: 12px; width: 16px; }
+  .toolCard > span > span { font-size: 14px; }
+  .toolIcon { width: 40px; height: 40px; border-radius: 11px; }
+  .subscriptionCard { flex-direction: column; gap: 20px; }
+  .subscriptionCard p { font-size: 15px; }
+  .loadingPanel { align-items: flex-start; gap: 14px; }
+  .loadingAvatar { width: 42px; height: 42px; border-radius: 13px; }
+  .loadingPanel h2 { font-size: 18px; }
+}

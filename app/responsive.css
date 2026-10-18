@@ -252,3 +252,8 @@ input::placeholder, textarea::placeholder, .creator-fields input::placeholder, .
   .step-actions { gap: 6px; }
   .step-actions>.button.large { font-size: 13px; padding: 12px 8px; }
 }
+/* Keep recovery readable and actionable on narrow screens. */
+.speech-recovery { margin: 20px 0; padding: 16px; border: 1px solid #dfe4d8; border-radius: 10px; background: #f7faf3; }
+.speech-recovery strong { display: block; color: #35402f; font-size: 16px; }
+.speech-recovery p { margin: 8px 0 14px; color: #56654b; font-size: 14px; line-height: 1.7; }
+.speech-recovery .button { min-height: 44px; }

@@ -1,6 +1,30 @@
-# Lời Kể · apprivew
+# Lời Kể AI · apprivew
 
-Web app tiếng Việt: quay video → xác định thông điệp → chọn hướng kịch bản → tạo giọng → tải MP4.
+Nền tảng AI tiếng Việt cho người kinh doanh online. Trang chủ là Dashboard sáu công cụ; Studio hiện tại tiếp tục cung cấp quy trình quay video → xác định thông điệp → chọn hướng kịch bản → tạo giọng → tải MP4.
+
+## Dashboard và các module
+
+Giai đoạn này xây dựng giao diện, hệ thống điều hướng và trang khung độc lập. Chưa thêm tác vụ AI, nhà cung cấp, thanh toán hay cơ chế credit mới.
+
+| Khu vực | Đường dẫn |
+| --- | --- |
+| Dashboard, tìm kiếm và lọc công cụ | `/` |
+| Tạo giọng nói AI | `/cong-cu/giong-noi-ai` |
+| Tạo video AI | `/cong-cu/video-ai` |
+| Tạo kịch bản AI | `/cong-cu/kich-ban-ai` |
+| Tạo video review | `/cong-cu/video-review` |
+| Tạo ảnh AI | `/cong-cu/anh-ai` |
+| Công cụ AI khác | `/cong-cu/cong-cu-khac` |
+| Tài khoản, hạn mức và thiết lập cá nhân | `/ca-nhan` |
+| Thư viện và lối vào dự án đã lưu | `/thu-vien` |
+| Hướng dẫn bắt đầu | `/huong-dan` |
+| Studio đang hoạt động | `/studio` |
+
+Studio nhận các đường dẫn `/studio?view=projects`, `?view=profile`, `?view=voices`, `?view=guide`. Tài khoản, hạn mức, quyền quản trị và các API hiện tại được giữ nguyên. Dự án vẫn dùng IndexedDB `loike-studio-v1` trên cùng trình duyệt, thiết bị và origin; việc đổi đường dẫn từ `/` sang `/studio` không cần di chuyển dữ liệu. Bản xem trước khác domain không chia sẻ kho dự án với Production.
+
+Registry `lib/studio-modules.ts` là nguồn chung cho thẻ công cụ, tìm kiếm, điều hướng và trang khung. Đặt `available: false` để ẩn module và chặn đường dẫn của nó; đây là cấu hình hiển thị, không thay thế kiểm tra quyền phía máy chủ. Xem [kiến trúc nền tảng AI](docs/AI-PLATFORM.md) để thêm module hoặc triển khai từng công cụ sau này.
+
+Giao diện dùng các CSS Module độc lập; giữ nguyên giao diện Studio, đăng nhập và quản trị. Dashboard không nhập component Studio hoặc FFmpeg và không tự tạo tác vụ AI. Các liên kết mở Studio không tải trước phần xử lý video.
 
 ## Cá nhân hóa và chọn kịch bản
 
@@ -103,7 +127,17 @@ Quản trị viên mở ElevenLabs → Developers → API Keys, sửa đúng kh�
 
 ## Lưu dữ liệu và xuất video
 
-Video gốc và dự án tự lưu trên trình duyệt/thiết bị hiện tại bằng IndexedDB, có thể tải bản sao .loike để chuyển thiết bị. Bản đầu chưa đồng bộ thư viện dự án lên cloud. Supabase lưu hồ sơ, quyền, hạn mức, giọng được phép và tệp âm thanh riêng. Tệp lời đọc được tải về trình duyệt rồi xóa khỏi kho tạm; mẫu nhân bản giọng gửi tới nhà cung cấp giọng đang được quản trị viên chọn.
+Video gốc và dự án tự lưu trên trình duyệt/thiết bị hiện tại bằng IndexedDB, có thể tải bản sao .loike để chuyển thiết bị. Bản đầu chưa đồng bộ thư viện dự án lên cloud. Supabase lưu hồ sơ, quyền, hạn mức, giọng được phép và tệp âm thanh riêng. Tệp lời đọc chỉ được dọn khỏi kho tạm sau khi âm thanh đã lưu thành công vào dự án trên thiết bị; mẫu nhân bản giọng gửi tới nhà cung cấp giọng đang được quản trị viên chọn.
+
+### Khi lời đọc đã tạo nhưng chưa tải xong
+
+App lưu đường dẫn tệp riêng theo tài khoản vào dự án trước khi tải âm thanh. Nếu mất mạng ở bước này, chọn **Tải lại lời đọc** để lấy đúng kết quả đã có; thao tác chỉ đọc kho tệp, không gọi lại dịch vụ giọng và không trừ thêm lượt AI. Có thể tải lại trang rồi mở cùng dự án trên cùng trình duyệt, thiết bị và tài khoản khi bộ nhớ dự án đã lưu thành công. Đường dẫn tải có thời hạn được cấp lại khi cần; không lưu URL ký tạm vào dự án hoặc bản sao `.loike`.
+
+Nếu âm thanh đã tải nhưng bộ nhớ thiết bị không ghi được, app giữ âm thanh trong trang và hiện **Lưu lại lời đọc**. Thử lưu lại hoặc tải bản sao dự án trước khi đóng trang. Tệp cloud được giữ khi tải hoặc ghi bộ nhớ thất bại. Sửa nội dung/đổi giọng làm mất hiệu lực lời đọc của phiên bản cũ.
+
+Khôi phục này áp dụng sau khi `/api/speech` đã trả kết quả thành công. Trường hợp mất mạng trước phản hồi hoặc Maziao xử lý quá thời gian chờ vẫn cần kiểm tra tác vụ ở nhà cung cấp trước khi tạo lại. Bản sao `.loike` chỉ mang âm thanh đã tải, không mang quyền khôi phục tệp riêng sang tài khoản khác.
+
+Video không đọc được thời lượng có ô nhập số giây luôn chỉnh được, kể cả khi nhập nhiều chữ số như `30` hoặc số thập phân như `30.5`.
 
 MP4 vừa ghép được giữ khi chuyển bước, đổi tiêu đề hoặc xem lại hồ sơ; chỉ thay đổi đầu vào âm thanh/video mới làm mất hiệu lực bản xuất. Nút tải dùng liên kết bền vững; trình duyệt hỗ trợ có thêm **Lưu vào thư mục…**, điện thoại hỗ trợ có **Chia sẻ tệp video**, cùng liên kết mở video để lưu dự phòng. Cần lưu MP4 trước khi đóng/tải lại trang hoặc chuyển sang dự án khác; bản MP4 hoàn chỉnh chưa lưu trong IndexedDB.
 
@@ -127,7 +161,7 @@ Không có tài khoản giả hay AI giả trong app. Bài kiểm tra ngoại tu
 
 ## Tình trạng kiểm chứng
 
-Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Bản ngày **18/10/2026** có **116 kiểm tra ngoại tuyến đạt**, cùng TypeScript và production build. Maziao thật đã trả 20 giọng Việt; MP3 100 ký tự đã được khôi phục, xác minh, lưu/tải qua Supabase riêng và ghép thành MP4 mẫu 15 giây mà không tạo lại TTS trả phí. Các bài tích hợp Supabase/Next.js của đợt trước được ghi riêng trong `QA.md`, không tính vào 116 bài ngoại tuyến.
+Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Lần tiếp tục ngày **18/10/2026** có **127 kiểm tra ngoại tuyến đạt**, TypeScript, production build và ba bài kiểm tra tương tác Chrome cho mất mạng, đầy bộ nhớ và nhập thời lượng. Đợt tích hợp Maziao trước đó có 116 kiểm tra ngoại tuyến cùng production build đạt. Maziao thật đã trả 20 giọng Việt; MP3 100 ký tự đã được khôi phục, xác minh, lưu/tải qua Supabase riêng và ghép thành MP4 mẫu 15 giây mà không tạo lại TTS trả phí. Các bài tích hợp Supabase/Next.js của đợt trước được ghi riêng trong `QA.md`, không tính vào 116 bài ngoại tuyến.
 
 Đã gọi DeepSeek thật qua app cho cả ba chế độ `scenery`, `talking`, `face`: 6 yêu cầu phân tích/kịch bản đều HTTP 200, JSON hợp lệ và kết thúc `stop`. Mẫu thử tổng hợp dài 15 giây, có 9 ảnh, không có người hoặc âm thanh. Chi phí tính từ usage của 6 yêu cầu là **$0.003624636** theo giá ngoài cao điểm, không phải hóa đơn; một lượt phân tích thành công trước khi có log không nằm trong tổng này. Không suy rộng mẫu thử sang video thật 30–90 giây.
 

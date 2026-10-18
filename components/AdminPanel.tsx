@@ -25,7 +25,7 @@ export default function AdminPanel() {
     finally { setBusy(""); }
   }
   return <main style={{ maxWidth: 1040, margin: "0 auto", padding: "32px 20px", fontSize: 16 }}>
-    <a href="/">← Về tạo video</a><h1 style={{ margin: "24px 0 12px", fontSize: 30 }}>Thành viên</h1>
+    <a href="/">← Về tổng quan</a><h1 style={{ margin: "24px 0 12px", fontSize: 30 }}>Thành viên</h1>
     <p>Cấp quyền và hạn mức dùng AI cho từng tài khoản.</p>
     <p style={{ fontSize: 14, color: "#65705f", margin: "12px 0 24px" }}>Mỗi lần phân tích hoặc viết lời tính 1 lượt. Giọng đọc tính theo độ dài lời, gồm cả lần tạo lại; nhân bản giọng tính 10 lượt. Lượt đã gửi tới dịch vụ vẫn được tính nếu dịch vụ trả lỗi.</p>
     {message && <p role="status" style={{ padding: 14, background: "#fff1e9", borderRadius: 10, marginBottom: 20 }}>{message}</p>}
