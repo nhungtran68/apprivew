@@ -7,7 +7,7 @@ import { downloadSpeechSegments, prepareMaziaoVoiceSample, uploadVoiceSamples, c
 import styles from "./VoiceAiPage.module.css";
 
 type Voice = { voiceId: string; name: string; category: string; group?: string; previewUrl?: string };
-type CuratedVoice = { voice_id: string; name: string; enabled: boolean };
+type CuratedVoice = { voice_id: string; name: string; enabled: boolean; kind: "system" | "admin_clone" };
 type AudioResult = { audioPath: string; audioMime: string; duration: number; voiceId: string; audioUrl?: string };
 const scriptTypes = ".txt,.md,.csv,.srt,.vtt";
 const MAX_SCRIPT = 6000;
@@ -125,7 +125,8 @@ export default function VoiceAiPage() {
   async function approve(voice: Voice, enabled: boolean) {
     setCatalogBusy(voice.voiceId); setError("");
     try {
-      const response = await fetch("/api/voice-catalog", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voiceId: voice.voiceId, name: voice.name, enabled }) });
+      const kind = voice.category === "cloned" ? "admin_clone" : "system";
+      const response = await fetch("/api/voice-catalog", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voiceId: voice.voiceId, name: voice.name, enabled, kind }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Chưa lưu được quyền giọng.");
       setCurated(previous => [...previous.filter(item => item.voice_id !== voice.voiceId), result.voice]);
@@ -173,7 +174,7 @@ export default function VoiceAiPage() {
           </section>
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>05</span><h2>Nhân bản giọng</h2></div></div>
-            <p className={styles.muted}>{isAdmin ? "Tài khoản quản trị không giới hạn số lần clone, vẫn áp dụng hạn mức AI." : "Thành viên được tối đa 3 lượt clone giọng, có thể được admin điều chỉnh."}</p>
+            <p className={styles.muted}>{isAdmin ? "Tài khoản quản trị không giới hạn số lần clone, vẫn áp dụng hạn mức AI." : "Mỗi tài khoản thành viên mặc định có 3 lượt nhân bản giọng."}</p>
             <div className={styles.quota}>{isAdmin ? "Không giới hạn lượt clone" : cloning ? "Đã dùng " + cloning.used + " / " + cloning.limit + " lượt" : "Kiểm tra hạn mức tại trang cá nhân"}</div>
             <label className={styles.field}>Tên giọng<input value={cloneName} onChange={e => setCloneName(e.target.value)} placeholder="Ví dụ: Giọng của tôi"/></label>
             <label className={styles.field}>Loại giọng<select value={cloneGender} onChange={e => setCloneGender(e.target.value as "female"|"male")}><option value="female">Giọng nữ</option><option value="male">Giọng nam</option></select></label>
@@ -183,7 +184,7 @@ export default function VoiceAiPage() {
           </section>
         </aside>
       </div>
-      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng cho phép thành viên sử dụng</h2></div></div><p className={styles.muted}>Chỉ giọng Maziao bạn bật ở đây mới xuất hiện trong danh sách thành viên. Giọng cá nhân của mỗi người vẫn riêng tư.</p><div className={styles.catalogGrid}>{voices.filter(v => v.category !== "cloned").map(voice => { const enabled=curated.some(item => item.voice_id === voice.voiceId && item.enabled); return <label className={styles.catalogRow} key={voice.voiceId}><span><strong>{voice.name}</strong><small>{enabled ? "Đang cấp quyền" : "Chưa cấp quyền"}</small></span><input type="checkbox" checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice,e.target.checked)}/></label>; })}</div></section>}
+      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng Maziao hệ thống và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{voices.map(voice => { const enabled=curated.some(item => item.voice_id === voice.voiceId && item.enabled); const isClone=voice.category === "cloned"; return <label className={styles.catalogRow} key={voice.voiceId}><span><strong>{voice.name}</strong><small>{isClone ? "Giọng nhân bản của quản trị viên" : "Giọng hệ thống Maziao"} · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small></span><input type="checkbox" checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice,e.target.checked)}/></label>; })}</div></section>}
     </>}
   </main>;
 }
