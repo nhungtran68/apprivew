@@ -198,8 +198,15 @@ async function fetchAudio(value: unknown, deadline: number): Promise<Audio> {
   if (!response.ok) { await response.body?.cancel(); throw new StudioError("MAZIAO_AUDIO_DOWNLOAD", "Maziao chưa cho tải tệp lời đọc. Kiểm tra tác vụ trước khi tạo lại.", 502); }
   const bytes = await boundedBytes(response, MAX_AUDIO);
   const isWav = new TextDecoder().decode(bytes.subarray(0, 4)) === "RIFF";
-  const info = isWav ? inspectWav(bytes) : await inspectMp3(bytes);
-  if (info.duration > 180) throw invalidResponse();
+  let info: { duration: number; sampleRate: number; channels: number };
+  try {
+    info = isWav ? inspectWav(bytes) : await inspectMp3(bytes);
+    if (info.duration > 180) throw invalidResponse();
+  } catch {
+    // This is a paid job's output, not a member's recording sample. Keep the
+    // recovery guidance distinct so a parser failure does not invite a new job.
+    throw new StudioError("INVALID_AUDIO", "Maziao đã nhận tác vụ nhưng tệp lời đọc chưa hợp lệ. Liên hệ quản trị viên kiểm tra tác vụ trước khi tạo lại.", 422, "contact_admin");
+  }
   return { bytes, mime: isWav ? "audio/wav" : "audio/mpeg", duration: info.duration, sampleRate: info.sampleRate, channels: info.channels };
 }
 

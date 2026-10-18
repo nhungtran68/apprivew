@@ -1,12 +1,16 @@
 # Kiểm chứng Supabase và AI
 
-## Tích hợp Maziao — 17/10/2026
+## Tích hợp Maziao — hoàn thiện 18/10/2026
 
-- `pnpm test`: **88 kiểm tra ngoại tuyến đạt** (31 backend, 16 UI, 6 tải/chuẩn hóa mẫu, 8 lưu/chia sẻ MP4, 11 ElevenLabs, 16 Maziao). Kiểm tra TypeScript và production build đạt.
-- Đối chiếu API chính thức: cấu hình model, thư viện tiếng Việt, nhân bản WAV 3–8 giây và tác vụ TTS nhiều đoạn. Không có khóa Maziao trong mã trình duyệt hoặc GitHub; không tự chuyển sang ElevenLabs khi Maziao lỗi.
-- Quyền giọng được ký cho từng thành viên và model. Giọng cá nhân đã xóa trên Maziao được bỏ qua riêng khi trả 404; lỗi mạng/quyền vẫn được báo. Không trả danh sách giọng riêng của tài khoản dùng chung.
-- Đo thời lượng WAV thật, không cắt lời để ép khớp cảnh; chỉ tạo lại đoạn quá dài. Không tự gửi lại yêu cầu trả phí sau lỗi mạng hoặc timeout. Log chỉ ghi số liệu sử dụng và credit nhà cung cấp, không ghi token hoặc nội dung lời thoại.
-- **Chưa gọi API Maziao thật trong đợt này.** Cần `MAZIAO_API_KEY` trong bản triển khai mới để xác minh quyền API, cấu trúc `/configs`, số dư, chất lượng và chi phí thực. Không có chi phí Maziao nào được xác nhận bởi kiểm tra mô phỏng.
+- **116 kiểm tra ngoại tuyến đạt** (31 backend, 18 UI, 6 tải/chuẩn hóa mẫu, 8 lưu/chia sẻ MP4, 11 ElevenLabs, 32 Maziao, 10 MP3). TypeScript và production build đạt. Không có khóa Maziao trong mã trình duyệt hoặc GitHub; không tự chuyển sang ElevenLabs khi Maziao lỗi.
+- Production nhận khóa Maziao và model `vieten_speech`; `/api/voices` trả HTTP 200 với **20 giọng tiếng Việt**. API thật bỏ trường chủ sở hữu ở giọng hệ thống. App chỉ cấp giọng chung từ thư viện `type=system`, xác minh lại đúng ID trước TTS và giữ quyền riêng của giọng nhân bản theo thành viên. Không đọc danh sách giọng riêng của toàn bộ tài khoản nhà cung cấp.
+- Lần thử 67 ký tự bị từ chối. Lần thử 100 ký tự tạo xong tác vụ trong khoảng **77 giây**, trả **MP3 89.517 byte, 24 kHz, mono, 5,568 giây**. App cũ từ chối vì giả định WAV; đã sửa để kiểm tra byte thực và hỗ trợ đúng MP3/WAV. Khôi phục chính tác vụ đã trả phí, không gửi lại TTS để kiểm tra bản sửa.
+- Trên Production sau sửa, đã phân tích lại tệp thật, lưu vào Supabase riêng với MIME `audio/mpeg`, đuôi `.mp3`, tải qua URL ký tạm và đối chiếu **khớp từng byte**. WAV vẫn giữ kiểm tra riêng; MP3 bị cắt, sai codec, metadata thời lượng giả hoặc nội dung khác bị chặn.
+- Thử Production 99 ký tự trả `MAZIAO_TEXT_TOO_SHORT` và **hạn mức không đổi**. Chỉ áp giới hạn tổng 100 ký tự cho Vieten theo quan sát thật; không tự thêm lời, không suy rộng sang từng đoạn hoặc model khác. Lần tạo lại quá ngắn dừng trước khi trừ thêm lượt/gửi tác vụ.
+- Bộ xuất FFmpeg WASM hiện tại đã ghép MP3 thật vào clip tổng hợp 15 giây: **MP4 199.295 byte; H.264/yuv420p, 640×360, 30 fps; AAC 48 kHz stereo**. Tương quan waveform khoảng **0,999996** xác nhận giữ đúng âm thanh. Đây là kiểm tra bằng bộ nối worker trong Node; chưa chạy trên điện thoại vật lý hoặc nhập CapCut/Facebook.
+- Log chỉ ghi mã tác vụ đã kiểm tra, model, ký tự, số đoạn và credit nhà cung cấp; không ghi khóa, lời thoại, mẫu thu hoặc URL riêng. Credit không có trong phản hồi được giữ là chưa biết, không coi là miễn phí hoặc quy đổi sang tiền. Lịch sử tác vụ khôi phục không trả chi phí, nên chưa đối soát hóa đơn Maziao.
+- Đã xóa đúng một tệp thử trên Supabase, đăng xuất và xóa tài khoản QA. Xác minh cả **8 nhóm** user/identity/session/refresh token/member/settings/voice/media đều bằng 0. Khóa AI và tài khoản quản trị không đổi. Công cụ khôi phục tạm đã gỡ khỏi mã cuối.
+- **Nhân bản Maziao bằng bản thu thật của người dùng chưa được thử.** Luồng mẫu WAV 3–8 giây và quyền giọng có kiểm thử mô phỏng; không dùng giọng mẫu thư viện để giả làm giọng cá nhân.
 
 Các mục bên dưới là kết quả của những đợt kiểm tra trước.
 

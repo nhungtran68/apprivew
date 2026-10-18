@@ -26,5 +26,6 @@ Không nhập token vào chat, không thêm tiền tố `Bearer ` vào Value và
 - Bộ kiểm tra hiện có vẫn đạt; TypeScript và production build đạt.
 - Thử thật: đã kết nối khóa, đọc được 20 giọng tiếng Việt. Câu 67 ký tự bị từ chối; câu 100 ký tự tạo được MP3 24 kHz mono, dài 5,568 giây. Kết quả ban đầu bị app từ chối do giả định WAV; đã khôi phục chính tác vụ cũ để sửa, không tạo thêm TTS.
 - Đã ghép MP3 thật thành MP4 mẫu 15 giây: H.264/yuv420p, 640×360, 30 fps, AAC 48 kHz stereo. Chưa thử nhân bản bằng bản thu riêng của người dùng hoặc đăng lên CapCut/Facebook trên điện thoại thật.
+- Sau sửa trên Production, MP3 được lưu/tải đúng MIME và đuôi `.mp3`, byte khớp hoàn toàn. Yêu cầu 99 ký tự bị chặn mà hạn mức không đổi. Tệp và tài khoản QA đã dọn; công cụ khôi phục tạm không có trong mã cuối.
 
 Nguồn: https://app.maziao.com/api-docs và https://app.maziao.com/api-documentation.md .

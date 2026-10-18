@@ -442,7 +442,7 @@ await check("accepted job IDs and actual credits remain logged when audio valida
   const h = await harness(), maziao = await provider(h);
   const valid = speechHandler(h, { durations: [1], totalCost: 35.25 });
   h.setHandler(request => isApi(request) ? valid(request) : new Response(new Uint8Array([1, 2, 3, 4])));
-  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: [{ start: 0, end: 20, text: exactMinimumText }], duration: 20 }), { code: "INVALID_AUDIO" });
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: [{ start: 0, end: 20, text: exactMinimumText }], duration: 20 }), { code: "INVALID_AUDIO", status: 422, action: "contact_admin", message: /quản trị viên kiểm tra tác vụ trước khi tạo lại/ });
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
   assert.equal(h.usage.length, 1); assert.equal(h.usage[0].taskId, "task_1"); assert.equal(h.usage[0].credits, 35.25);
   for (const secret of [h.key, exactMinimumText, "https://", "remainingCredits"]) assert.ok(!JSON.stringify(h.usage).includes(secret));
@@ -487,7 +487,12 @@ await check("malformed MP3 or non-audio data never stores narration or silently 
     const h = await harness(), maziao = await provider(h);
     const valid = speechHandler(h, { durations: [1], totalCost: 35.25 });
     h.setHandler(request => isApi(request) ? valid(request) : new Response(bytes, { headers: { "content-type": "audio/mpeg" } }));
-    await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: [sampleSegments()[0]], duration: 3 }), { code: "INVALID_AUDIO" });
+    await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: [sampleSegments()[0]], duration: 3 }), error => {
+      assert.equal(error.code, "INVALID_AUDIO"); assert.equal(error.status, 422); assert.equal(error.action, "contact_admin");
+      assert.match(error.message, /Maziao đã nhận tác vụ/); assert.match(error.message, /quản trị viên kiểm tra tác vụ trước khi tạo lại/);
+      for (const privateValue of [h.key, "<html>", "Provider error", "https://", sampleSegments()[0].text]) assert.ok(!error.message.includes(privateValue));
+      return true;
+    });
     assert.equal(h.media.size, 0); assert.equal(h.storedMimes.size, 0); assert.equal(h.shortened.length, 0);
     assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
     assert.equal(h.usage.length, 1); assert.equal(h.usage[0].taskId, "task_1"); assert.equal(h.usage[0].credits, 35.25);

@@ -127,7 +127,7 @@ Không có tài khoản giả hay AI giả trong app. Bài kiểm tra ngoại tu
 
 ## Tình trạng kiểm chứng
 
-Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Schema và quyền đã được kiểm tra trên dự án Supabase thật tại Singapore; **65 nhóm kiểm tra đều đạt**: 25 backend, 10 giao diện/dự án, 4 tải/dọn âm thanh, 15 tích hợp Supabase và 11 tích hợp Next.js.
+Đọc `QA.md` để biết các kiểm tra đã chạy và giới hạn. Bản ngày **18/10/2026** có **116 kiểm tra ngoại tuyến đạt**, cùng TypeScript và production build. Maziao thật đã trả 20 giọng Việt; MP3 100 ký tự đã được khôi phục, xác minh, lưu/tải qua Supabase riêng và ghép thành MP4 mẫu 15 giây mà không tạo lại TTS trả phí. Các bài tích hợp Supabase/Next.js của đợt trước được ghi riêng trong `QA.md`, không tính vào 116 bài ngoại tuyến.
 
 Đã gọi DeepSeek thật qua app cho cả ba chế độ `scenery`, `talking`, `face`: 6 yêu cầu phân tích/kịch bản đều HTTP 200, JSON hợp lệ và kết thúc `stop`. Mẫu thử tổng hợp dài 15 giây, có 9 ảnh, không có người hoặc âm thanh. Chi phí tính từ usage của 6 yêu cầu là **$0.003624636** theo giá ngoài cao điểm, không phải hóa đơn; một lượt phân tích thành công trước khi có log không nằm trong tổng này. Không suy rộng mẫu thử sang video thật 30–90 giây.
 
