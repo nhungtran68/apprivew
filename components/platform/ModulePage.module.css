@@ -1,0 +1,127 @@
+.page {
+  width: 100%;
+  max-width: 1152px;
+  margin: 0 auto;
+  padding: 0;
+  color: #23362e;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 31px;
+  color: #718077;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.breadcrumb a { color: #617369; text-decoration: none; }
+.breadcrumb a:hover { color: #bd4928; }
+.breadcrumb [aria-current] { color: #23362e; }
+.heading { display: flex; align-items: flex-start; gap: 18px; margin-bottom: 28px; }
+.headingText { min-width: 0; flex: 1; }
+.eyebrow { margin: 0 0 8px; color: #667568; font-size: 10px; font-weight: 700; letter-spacing: .12em; line-height: 1.6; }
+.heading h1 { margin: 0; font-size: clamp(26px, 3vw, 33px); font-weight: 650; letter-spacing: -.045em; line-height: 1.25; }
+.description { max-width: 640px; margin: 10px 0 0; color: #6e7b74; font-size: 14px; line-height: 1.8; }
+.moduleIcon { display: grid; flex-shrink: 0; place-items: center; width: 57px; height: 57px; margin-top: 2px; border: 1px solid color-mix(in srgb, currentColor 9%, transparent); border-radius: 17px; }
+.violet { color: #7961b3; background: #f0ecf8; }
+.blue { color: #4278ae; background: #eaf2f8; }
+.amber { color: #b17a27; background: #fcf2df; }
+.rose { color: #bb6b79; background: #f9edef; }
+.green { color: #488b70; background: #eaf5ef; }
+.slate { color: #64747f; background: #edf1f4; }
+.stage { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; padding: 7px 10px; margin-top: 8px; color: #777c72; background: #f2f2ec; border: 1px solid #e8e9df; border-radius: 999px; font-size: 11px; font-weight: 500; line-height: 1.4; }
+.stage > span { width: 5px; height: 5px; background: #a2a18c; border-radius: 50%; }
+.workspace { overflow: hidden; background: #fff; border: 1px solid #e2e7e4; border-radius: 18px; }
+.preparation { display: flex; align-items: center; flex-direction: column; padding: 44px 34px 36px; text-align: center; }
+.preparationIcon { display: grid; place-items: center; width: 74px; height: 74px; margin-bottom: 25px; border-radius: 22px; outline: 8px solid #fafbf9; }
+.sectionLabel { margin: 0 0 11px; color: #667568; font-size: 9px; font-weight: 600; letter-spacing: .1em; line-height: 1.7; }
+.preparation h2 { max-width: 620px; margin: 0; font-size: clamp(21px, 2.3vw, 27px); font-weight: 600; line-height: 1.45; letter-spacing: -.035em; text-wrap: balance; }
+.preparationText { max-width: 490px; margin: 15px 0 0; color: #667568; font-size: 13px; line-height: 1.9; }
+.backLink { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 48px; margin-top: 25px; padding: 10px 17px; color: #44564b; background: #fff; border: 1px solid #dce3dd; border-radius: 9px; text-decoration: none; font-size: 12px; font-weight: 600; transition: background .15s, border-color .15s; }
+.backLink:hover { border-color: #afc0b5; background: #f7faf7; }
+.backLink span { font-size: 16px; }
+.capabilities { padding: 25px 28px 28px; border-top: 1px solid #edf0ec; background: #fcfdfb; }
+.capabilitiesHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 21px; }
+.capabilitiesHeading h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.capabilitiesHeading > span { color: #667568; font-size: 10px; }
+.capabilityGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px; }
+.capability { min-width: 0; }
+.capabilityNumber { color: #abb5aa; font-size: 11px; font-weight: 600; letter-spacing: .08em; }
+.capability h4 { margin: 11px 0 8px; font-size: 13px; font-weight: 600; line-height: 1.6; }
+.capability p { margin: 0; color: #667568; font-size: 12px; line-height: 1.8; }
+.existingWorkspace { display: flex; align-items: center; gap: 15px; margin-top: 18px; padding: 21px 23px; background: #f9f4ed; border: 1px solid #eae3d8; border-radius: 13px; }
+.existingIcon { display: grid; flex-shrink: 0; place-items: center; width: 42px; height: 42px; color: #b46441; background: #f3e6d8; border-radius: 12px; }
+.existingWorkspace > div:nth-child(2) { flex: 1; min-width: 0; }
+.existingWorkspace h2 { margin: 0 0 5px; color: #594b3c; font-size: 13px; font-weight: 600; line-height: 1.5; }
+.existingWorkspace p { margin: 0; color: #667568; font-size: 12px; line-height: 1.7; }
+.legacyLink { display: inline-flex; align-items: center; justify-content: center; gap: 10px; flex-shrink: 0; max-width: 265px; min-height: 48px; padding: 10px 13px; color: #fff; background: #bd4928; border: 1px solid #bd4928; border-radius: 8px; font-size: 11px; font-weight: 600; line-height: 1.6; text-decoration: none; transition: background .15s; }
+.legacyLink:hover { background: #a83e21; }
+.legacyLink span { font-size: 16px; }
+.related { margin-top: 33px; }
+.relatedHeading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.relatedHeading h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.025em; line-height: 1.5; }
+.relatedHeading .eyebrow { margin-bottom: 5px; font-size: 9px; }
+.relatedHeading > a { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; color: #79867b; font-size: 11px; text-decoration: none; }
+.relatedHeading > a:hover { color: #bd4928; }
+.relatedGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
+.relatedCard { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 17px 16px; color: #23362e; background: #fff; border: 1px solid #e2e7e4; border-radius: 12px; text-decoration: none; transition: border-color .15s, background .15s; }
+.relatedCard:hover { background: #fafcf9; border-color: #bfcec2; }
+.relatedIcon { display: grid; flex-shrink: 0; place-items: center; width: 39px; height: 39px; border-radius: 11px; }
+.relatedCard strong { display: block; font-size: 12px; font-weight: 600; line-height: 1.6; }
+.relatedNote { display: block; margin-top: 3px; color: #667568; font-size: 10px; line-height: 1.5; }
+.relatedArrow { flex-shrink: 0; margin-left: auto; color: #89988b; }
+.page a:focus-visible { outline: 3px solid #bd4928; outline-offset: 4px; }
+
+@media (max-width: 1120px) {
+  .page { padding: 0; }
+  .existingWorkspace { flex-wrap: wrap; }
+  .legacyLink { margin-left: 57px; }
+  .relatedGrid { gap: 10px; }
+  .relatedCard { gap: 10px; padding: 16px 12px; }
+  .relatedIcon { width: 34px; height: 34px; border-radius: 9px; }
+}
+
+@media (max-width: 760px) {
+  .page { padding: 0; }
+  .breadcrumb { margin-bottom: 25px; font-size: 11px; }
+  .heading { flex-wrap: wrap; gap: 14px; margin-bottom: 23px; }
+  .moduleIcon { width: 48px; height: 48px; border-radius: 14px; }
+  .headingText { flex-basis: calc(100% - 62px); }
+  .heading .eyebrow { font-size: 9px; margin-bottom: 5px; }
+  .description { font-size: 13px; }
+  .stage { margin: 0 0 0 62px; }
+  .preparation { padding: 34px 21px 30px; }
+  .preparationIcon { width: 64px; height: 64px; border-radius: 19px; }
+  .sectionLabel { max-width: 250px; }
+  .preparationText { font-size: 12px; }
+  .capabilities { padding: 23px 21px 25px; }
+  .capabilitiesHeading > span { display: none; }
+  .capabilityGrid { grid-template-columns: 1fr; gap: 20px; }
+  .capability { position: relative; padding-left: 32px; }
+  .capabilityNumber { position: absolute; left: 0; top: 3px; }
+  .capability h4 { margin-top: 0; }
+  .existingWorkspace { gap: 13px; padding: 19px; }
+  .existingWorkspace > div:nth-child(2) { flex-basis: calc(100% - 55px); }
+  .legacyLink { width: 100%; max-width: none; margin-left: 0; font-size: 12px; }
+  .related { margin-top: 27px; }
+  .relatedHeading { align-items: flex-start; }
+  .relatedHeading h2 { font-size: 15px; }
+  .relatedHeading > a { white-space: nowrap; font-size: 10px; }
+  .relatedGrid { grid-template-columns: 1fr; }
+  .relatedCard { padding: 15px 16px; }
+  .relatedCard strong { font-size: 13px; }
+  .relatedNote { font-size: 11px; }
+  .relatedIcon { width: 39px; height: 39px; border-radius: 11px; }
+}
+
+@media (max-width: 760px) {
+  .description, .preparationText, .capability p, .existingWorkspace p { font-size: 15px; }
+  .capability h4, .relatedCard strong { font-size: 15px; }
+  .backLink, .legacyLink { font-size: 14px; }
+  .capabilitiesHeading h3, .existingWorkspace h2 { font-size: 15px; }
+  .relatedHeading h2 { font-size: 18px; }
+  .relatedHeading { flex-wrap: wrap; gap: 6px; }
+}

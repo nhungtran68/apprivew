@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { videoDownloadName, supportsVideoSave, saveVideoFile, canShareVideoFile, shareVideoFile } from "@/lib/video-download";
+import navigationStyles from "./StudioNavigation.module.css";
 
 type Step = 0 | 1 | 2 | 3 | 4;
 type View = "studio" | "projects" | "voices" | "profile" | "guide";
@@ -204,8 +205,10 @@ function audioMetadata(file: Blob): Promise<number | undefined> {
   });
 }
 
-export default function Studio() {
-  const [view, setView] = useState<View>("studio");
+export default function Studio({ initialView = "studio" }: { initialView?: View } = {}) {
+  const [view, setView] = useState<View>(initialView);
+  const [leavingStudio, setLeavingStudio] = useState(false);
+  const [exitPrompt, setExitPrompt] = useState(false);
   const [project, setProject] = useState<Project>(() => freshProject("local"));
   const [projects, setProjects] = useState<Project[]>([]);
   const [accountProfile,setAccountProfile] = useState<Profile>({...EMPTY_PROFILE});
@@ -261,6 +264,7 @@ export default function Studio() {
   const pendingWrites = useRef(new Set<Promise<void>>());
   const writeQueue = useRef(Promise.resolve());
   const speechInFlight = useRef(false);
+  const leavingStudioRef = useRef(false);
   const deletedProjectIds = useRef(new Set<string>());
   const mounted = useRef(true);
   const sourceUrl = useBlobUrl(project.source);
@@ -356,7 +360,7 @@ export default function Studio() {
   }, [project, ready]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(null), notice.type === "error" ? 10000 : 6000); return () => window.clearTimeout(timer); }, [notice]);
   useEffect(() => {
-    if (!settingsOpen && !deleteTarget) return;
+    if (!settingsOpen && !deleteTarget && !exitPrompt) return;
     const previous = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -364,7 +368,7 @@ export default function Studio() {
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), textarea, select, [tabindex="0"]') || []);
     focusable()[0]?.focus();
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !settingsSaving) { setSettingsOpen(false); setDeleteTarget(null); }
+      if (event.key === "Escape" && !settingsSaving) { setSettingsOpen(false); setDeleteTarget(null); setExitPrompt(false); }
       if (event.key !== "Tab") return;
       const elements = focusable(), first = elements[0], last = elements.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -372,7 +376,7 @@ export default function Studio() {
     };
     document.addEventListener("keydown", handleKey);
     return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", handleKey); previous?.focus(); };
-  }, [settingsOpen, deleteTarget, settingsSaving]);
+  }, [settingsOpen, deleteTarget, settingsSaving, exitPrompt]);
   useEffect(() => { if (cameraVideo.current && stream) { cameraVideo.current.srcObject = stream; cameraVideo.current.play().catch(() => {}); } }, [stream, step, view]);
   useEffect(() => { if (!recording) return; const timer = window.setInterval(() => setRecordSeconds((Date.now() - startedAt.current) / 1000), 250); return () => window.clearInterval(timer); }, [recording]);
   useEffect(() => { if (recording && recordSeconds >= 89.5 && recorder.current?.state === "recording") { recorder.current.stop(); setNotice({ type: "info", text: "Đã dừng để giữ video trong giới hạn 90 giây và xuất ổn định trên thiết bị." }); } }, [recordSeconds, recording]);
@@ -481,6 +485,7 @@ export default function Studio() {
     } finally { if (token === narrationToken.current) setNarrationChecking(false); }
   }
   async function analyze() {
+    if (leavingStudioRef.current) return;
     if (!project.source) { notify("Quay hoặc chọn video trước để AI hiểu cảnh."); return; }
     if (!project.intent.trim()) { notify("Hãy nói hoặc viết một câu về điều bạn muốn người xem hiểu."); return; }
     if (!config.deepseek) { notify("AI chưa sẵn sàng. Bạn có thể tự viết lời thoại hoặc xem trạng thái trong Cài đặt."); return; }
@@ -501,6 +506,7 @@ export default function Studio() {
     } catch (error) { notify(errorText(error), "error"); } finally { setBusy(null); setAnalysisProgress(""); void refreshUsage(); }
   }
   async function generateScript() {
+    if (leavingStudioRef.current) return;
     if (!project.duration || !project.intent.trim()) { notify("Cần có thời lượng video và một câu mô tả ý muốn chia sẻ."); return; }
     if (!config.deepseek) { notify("AI chưa sẵn sàng. Bạn có thể viết lời thoại trực tiếp."); update({ step: 2 }); return; }
     const expectedIntent = intentKey(project), expectedScript = scriptKey(project), expectedSummary = project.summary;
@@ -550,7 +556,7 @@ export default function Studio() {
     notify("Đã lưu lời đọc. Nghe thử từng đoạn trước khi ghép video.", "success");
   }
   async function retrySpeechDownload() {
-    if (speechInFlight.current || busy || !projectRef.current.segments.some(segment => segment.audioPath)) return;
+    if (leavingStudioRef.current || speechInFlight.current || busy || !projectRef.current.segments.some(segment => segment.audioPath)) return;
     speechInFlight.current = true;
     setBusy("download");
     try { await receiveSpeech(projectRef.current); }
@@ -558,7 +564,7 @@ export default function Studio() {
     finally { speechInFlight.current = false; setBusy(null); }
   }
   async function generateSpeech() {
-    if (speechInFlight.current || busy) return;
+    if (leavingStudioRef.current || speechInFlight.current || busy) return;
     if (projectRef.current.segments.some(segment => segment.audioPath)) { await retrySpeechDownload(); return; }
     if (!project.segments.some(segment => segment.text.trim())) { notify("Thêm lời thoại ở bước Kịch bản trước."); return; }
     if (!project.voiceId) { notify("Chọn một giọng đọc trước khi tạo âm thanh."); return; }
@@ -579,6 +585,7 @@ export default function Studio() {
     finally { speechInFlight.current = false; setBusy(null); void refreshUsage(); }
   }
   async function cloneVoice() {
+    if (leavingStudioRef.current) return;
     if (!cloneName.trim() || !cloneFiles.length || !cloneConsent) { notify("Điền tên giọng, chọn bản thu và xác nhận quyền sử dụng giọng."); return; }
     if (isMaziao && cloneFiles.length !== 1) { notify("Maziao cần một bản thu mẫu. Hãy chọn lại một tệp."); return; }
     setBusy("clone");
@@ -593,6 +600,7 @@ export default function Studio() {
     } catch (error) { notify(errorText(error), "error"); } finally { if (uploaded) await (await import("@/lib/studio-upload")).cleanupAnalysisMedia(uploaded).catch(() => {}); setBusy(null); void refreshUsage(); }
   }
   async function saveSettings() {
+    if (leavingStudioRef.current) return;
     setSettingsSaving(true); setSettingsError("");
     try {
       const previous = accountDefaultsRef.current;
@@ -635,6 +643,7 @@ export default function Studio() {
     catch (error) { notify(errorText(error), "error"); }
   }
   async function exportVideo() {
+    if (leavingStudioRef.current) return;
     if (!project.source) return;
     if (!narrationReady || narrationChecking) { notify("Hãy tạo lời đọc hoặc tải tệp âm thanh trước khi ghép."); return; }
     if (narrationTooLong) { notify("Bản thu lời thoại dài hơn video. Hãy chọn bản ngắn hơn trước khi ghép để giữ trọn câu.", "error"); return; }
@@ -662,6 +671,28 @@ export default function Studio() {
     if (deletedProjectIds.current.has(current.id)) return;
     void storeProject(current).then(() => { if (!deletedProjectIds.current.has(current.id)) setProjects(items => [current, ...items.filter(item => item.id !== current.id)].sort((a, b) => b.updatedAt - a.updatedAt)); }).catch(() => {});
   }
+  async function returnToDashboard(exportAcknowledged = false) {
+    if (leavingStudioRef.current || working || !ready || narrationChecking || settingsSaving) return;
+    if (exported && !exportAcknowledged) { setExitPrompt(true); return; }
+    leavingStudioRef.current = true;
+    setExitPrompt(false);
+    setLeavingStudio(true);
+    try {
+      let saved: Project;
+      do {
+        saved = projectRef.current;
+        if (saved.source || saved.intent || saved.segments.length) await storeProject(saved);
+        await Promise.allSettled(Array.from(pendingWrites.current));
+      } while (saved !== projectRef.current);
+      stopCamera();
+      window.location.assign("/");
+    } catch {
+      setSaveState("Chưa lưu được · hãy tải dự án");
+      notify("Chưa lưu được dự án trước khi về tổng quan. Hãy thử lại hoặc tải bản sao dự án để giữ công việc của bạn.", "error");
+      leavingStudioRef.current = false;
+      setLeavingStudio(false);
+    }
+  }
   function newProject() { ++uploadToken.current; ++narrationToken.current; setNarrationChecking(false); flushCurrentProject(); stopCamera(); setProject(freshProject(config.userId, accountDefaultsRef.current)); setIntentInterim(""); setExported(undefined); setView("studio"); setSaveState("Sẵn sàng lưu"); }
   function openProject(item: Project) { ++uploadToken.current; ++narrationToken.current; setNarrationChecking(false); flushCurrentProject(); stopCamera(); setProject(item.id === projectRef.current.id ? projectRef.current : item); setView("studio"); if(item.id!==projectRef.current.id) setExported(undefined); }
   async function deleteProject() {
@@ -681,7 +712,8 @@ export default function Studio() {
   }
   function navigateStep(next: number) { if (busy) { notify("Hãy chờ thao tác hiện tại hoàn tất."); return; } if (recording) { notify("Hãy dừng quay để tiếp tục."); return; } if (next > 0 && !hasClip) { notify("Bắt đầu bằng việc quay hoặc tải video lên."); return; } stopCamera(); update({ step: next as Step }); }
 
-  const working = Boolean(busy) || recording || intentRecording;
+  const working = Boolean(busy) || recording || intentRecording || leavingStudio;
+  const navigationLocked = leavingStudio || exitPrompt;
   const displayName = config.displayName || project.profile.name || "Tài khoản";
   const manualScript = () => update({ step: 2, segments: project.segments.length ? project.segments : [{ start: 0, end: project.duration, text: "" }] });
   const angles = (Array.isArray(project.analysis?.suggestedAngles) ? project.analysis.suggestedAngles : []) as Angle[];
@@ -691,8 +723,12 @@ export default function Studio() {
   async function shareExport() { if(!exported)return;try{const result=await shareVideoFile(exported,project.title);if(result==="shared")notify("Đã chuyển video tới ứng dụng bạn chọn.","success");}catch(error){notify(errorText(error),"error");} }
 
   return <div className={`studio-app view-${view} step-${step}${keyboardOpen ? " keyboard-open" : ""}`}>
-    <a className="skip-link" href="#workspace">Đến nội dung chính</a>
-    <header className="app-header">
+    <a className="skip-link" href="#workspace" inert={navigationLocked}>Đến nội dung chính</a>
+    <div className={navigationStyles.navigation}>
+      <button type="button" className={navigationStyles.exit} onClick={() => void returnToDashboard()} disabled={working || !ready || narrationChecking || settingsSaving || exitPrompt}><Icon name="grid" size={16} />{leavingStudio ? "Đang lưu dự án…" : "Về tổng quan"}</button>
+      <span className={navigationStyles.label} role="status" aria-live="polite">{leavingStudio ? "Đang lưu trước khi rời Studio…" : "Studio video"}</span>
+    </div>
+    <header className="app-header" inert={navigationLocked}>
       <div className="header-inner">
         <button className="brand" aria-label="Lời Kể — tạo video" onClick={() => setView("studio")}><span className="brand-symbol"><i /><i /><i /><i /></span>Lời Kể<span className="brand-dot">.</span></button>
         <nav className="main-nav" aria-label="Điều hướng chính">
@@ -705,7 +741,7 @@ export default function Studio() {
       </div>
     </header>
 
-    <main className="workspace" id="workspace">
+    <main className="workspace" id="workspace" inert={navigationLocked}>
       {loginRequired ? <div className="status-banner"><Icon name="lock" size={19} /><span>Đăng nhập để dùng AI và hồ sơ của bạn.</span><a href="/dang-nhap">Đăng nhập</a></div> : null}
       {configError ? <div className="status-banner warning" role="alert"><Icon name="info" size={19} /><span>Chưa tải được kết nối tài khoản. Bạn vẫn có thể chỉnh video thủ công.</span><button onClick={() => void refreshConfiguration()} disabled={configRefreshing || working}>{configRefreshing ? "Đang thử…" : "Thử lại"}</button></div> : null}
 
@@ -788,11 +824,14 @@ export default function Studio() {
       <footer className="app-footer"><span>Lời Kể<span className="brand-dot">.</span> Câu chuyện của bạn, giọng nói của bạn.</span><button onClick={() => setView("guide")} disabled={working}>Cần hướng dẫn?</button></footer>
     </main>
 
-    <input ref={uploadInput} className="visually-hidden" type="file" accept="video/*,.loike,.json" aria-label="Chọn video hoặc bản sao dự án" onChange={event => { void ingestFile(event.target.files?.[0]); event.target.value = ""; }} />
-    <input ref={narrationInput} className="visually-hidden" type="file" accept="audio/*" aria-label="Chọn tệp lời thoại" onChange={event => { void ingestNarration(event.target.files?.[0]); event.target.value = ""; }} />
+    <input ref={uploadInput} className="visually-hidden" type="file" accept="video/*,.loike,.json" aria-label="Chọn video hoặc bản sao dự án" disabled={navigationLocked} onChange={event => { void ingestFile(event.target.files?.[0]); event.target.value = ""; }} />
+    <input ref={narrationInput} className="visually-hidden" type="file" accept="audio/*" aria-label="Chọn tệp lời thoại" disabled={navigationLocked} onChange={event => { void ingestNarration(event.target.files?.[0]); event.target.value = ""; }} />
+    <div inert={navigationLocked}>
     {notice ? <div className={`toast ${notice.type}`} role={notice.type === "error" ? "alert" : "status"}><Icon name={notice.type === "success" ? "check" : "info"} size={21} /><p>{notice.text}</p><button className="icon-button" onClick={() => setNotice(null)} aria-label="Đóng thông báo"><Icon name="close" size={19} /></button></div> : null}
     {settingsOpen ? <div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !settingsSaving) setSettingsOpen(false); }}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="modal-header"><h2 id="settings-title">Hồ sơ và kết nối</h2><button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Đóng cài đặt" disabled={settingsSaving}><Icon name="close" size={22} /></button></div><div className="modal-scroll">{settingsError ? <div className="settings-error" role="alert"><p>{settingsError}</p>{loginRequired ? <a href="/dang-nhap">Đăng nhập vào tài khoản của bạn</a> : null}</div> : null}<ProfileEditor profile={accountProfile} onChange={changes=>setAccountProfile(current=>({...current,...changes}))} prefix="settings-profile" /><div className="managed-ai"><h3>AI do quản trị viên kết nối</h3><div><span>Hiểu video và viết lời thoại</span><span className={config.deepseek ? "ready" : ""}>{config.deepseek ? "Sẵn sàng" : "Chưa sẵn sàng"}</span></div><div><span>Tạo giọng đọc · {voiceProviderLabel}</span><span className={voiceReady ? "ready" : ""}>{voiceReady ? "Sẵn sàng" : "Chưa sẵn sàng"}</span></div>{config.quota ? <p>Bạn đã dùng <strong>{config.quota.used}/{config.quota.limit}</strong> lượt AI.</p> : null}{config.isAdmin ? <a className="text-button" href="/quan-tri">Mở trang quản trị<Icon name="arrow" size={17} /></a> : null}</div>{configError ? <div className="settings-error"><p>{configError}</p><button className="text-button" onClick={() => void refreshConfiguration()} disabled={configRefreshing}>{configRefreshing ? "Đang thử…" : "Thử kết nối lại"}</button></div> : null}<p className="helper-text">Hồ sơ lưu trong tài khoản. Video và dự án được giữ trong trình duyệt trên thiết bị này.</p></div><div className="modal-footer"><button className="button secondary" onClick={() => setSettingsOpen(false)} disabled={settingsSaving}>Đóng</button><button className="button primary" onClick={() => void saveSettings()} disabled={settingsSaving}>{settingsSaving ? <Spinner /> : <Icon name="check" size={18} />}{settingsSaving ? "Đang lưu…" : "Lưu hồ sơ"}</button></div></section></div> : null}
     {deleteTarget ? <div className="modal-backdrop"><section className="modal delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><div className="modal-header"><h2 id="delete-title">Xóa video này?</h2><button className="icon-button" onClick={() => setDeleteTarget(null)} aria-label="Đóng"><Icon name="close" /></button></div><div className="modal-scroll"><p>Dự án “{deleteTarget.title}” và video lưu kèm sẽ bị xóa khỏi trình duyệt này. Hãy tải bản sao trước nếu bạn muốn giữ lại.</p></div><div className="modal-footer"><button className="button secondary" onClick={() => setDeleteTarget(null)}>Giữ lại</button><button className="button danger" onClick={() => void deleteProject()}>Xóa dự án</button></div></section></div> : null}
+    </div>
+    {exitPrompt && exported ? <div className="modal-backdrop"><section className={`modal ${navigationStyles.exportDialog}`} role="dialog" aria-modal="true" aria-labelledby="exit-export-title" aria-describedby="exit-export-description"><div className="modal-header"><h2 id="exit-export-title">Giữ lại bản MP4 vừa ghép</h2><button type="button" className="icon-button" onClick={() => setExitPrompt(false)} aria-label="Ở lại Studio"><Icon name="close" size={22} /></button></div><div className="modal-scroll"><p id="exit-export-description">Tệp MP4 chỉ được giữ trong lần mở Studio này. Hãy tải xong trước khi rời trang. Studio sẽ lưu dự án để bạn có thể ghép lại khi cần.</p>{exportedUrl ? <div className={navigationStyles.reminderDownloads}><a className="button primary" href={exportedUrl} download={videoDownloadName(project.title)}><Icon name="download" size={18} />Tải MP4</a><a className="text-button" href={exportedUrl} target="_blank" rel="noopener">Mở video để lưu<Icon name="arrow" size={16} /></a></div> : <p role="status">Đang chuẩn bị liên kết tải video…</p>}</div><div className="modal-footer"><button type="button" className="button secondary" onClick={() => setExitPrompt(false)}>Ở lại Studio</button><button type="button" className="button secondary" onClick={() => void returnToDashboard(true)}>Về tổng quan</button></div></section></div> : null}
   </div>;
 }
 

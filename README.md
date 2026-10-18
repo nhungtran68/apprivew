@@ -1,6 +1,30 @@
-# Lời Kể · apprivew
+# Lời Kể AI · apprivew
 
-Web app tiếng Việt: quay video → xác định thông điệp → chọn hướng kịch bản → tạo giọng → tải MP4.
+Nền tảng AI tiếng Việt cho người kinh doanh online. Trang chủ là Dashboard sáu công cụ; Studio hiện tại tiếp tục cung cấp quy trình quay video → xác định thông điệp → chọn hướng kịch bản → tạo giọng → tải MP4.
+
+## Dashboard và các module
+
+Giai đoạn này xây dựng giao diện, hệ thống điều hướng và trang khung độc lập. Chưa thêm tác vụ AI, nhà cung cấp, thanh toán hay cơ chế credit mới.
+
+| Khu vực | Đường dẫn |
+| --- | --- |
+| Dashboard, tìm kiếm và lọc công cụ | `/` |
+| Tạo giọng nói AI | `/cong-cu/giong-noi-ai` |
+| Tạo video AI | `/cong-cu/video-ai` |
+| Tạo kịch bản AI | `/cong-cu/kich-ban-ai` |
+| Tạo video review | `/cong-cu/video-review` |
+| Tạo ảnh AI | `/cong-cu/anh-ai` |
+| Công cụ AI khác | `/cong-cu/cong-cu-khac` |
+| Tài khoản, hạn mức và thiết lập cá nhân | `/ca-nhan` |
+| Thư viện và lối vào dự án đã lưu | `/thu-vien` |
+| Hướng dẫn bắt đầu | `/huong-dan` |
+| Studio đang hoạt động | `/studio` |
+
+Studio nhận các đường dẫn `/studio?view=projects`, `?view=profile`, `?view=voices`, `?view=guide`. Tài khoản, hạn mức, quyền quản trị và các API hiện tại được giữ nguyên. Dự án vẫn dùng IndexedDB `loike-studio-v1` trên cùng trình duyệt, thiết bị và origin; việc đổi đường dẫn từ `/` sang `/studio` không cần di chuyển dữ liệu. Bản xem trước khác domain không chia sẻ kho dự án với Production.
+
+Registry `lib/studio-modules.ts` là nguồn chung cho thẻ công cụ, tìm kiếm, điều hướng và trang khung. Đặt `available: false` để ẩn module và chặn đường dẫn của nó; đây là cấu hình hiển thị, không thay thế kiểm tra quyền phía máy chủ. Xem [kiến trúc nền tảng AI](docs/AI-PLATFORM.md) để thêm module hoặc triển khai từng công cụ sau này.
+
+Giao diện dùng các CSS Module độc lập; giữ nguyên giao diện Studio, đăng nhập và quản trị. Dashboard không nhập component Studio hoặc FFmpeg và không tự tạo tác vụ AI. Các liên kết mở Studio không tải trước phần xử lý video.
 
 ## Cá nhân hóa và chọn kịch bản
 

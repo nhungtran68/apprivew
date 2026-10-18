@@ -1,4 +1,36 @@
-# Kiểm chứng Supabase và AI
+# Kiểm chứng giao diện, Supabase và AI
+
+## Dashboard nền tảng AI — 18/10/2026
+
+Giao diện mới được xây trên commit `330346c8` để giữ các sửa lỗi lời đọc và thời lượng trước đó. Trang `/` trở thành Dashboard; Studio, dự án, giọng nói và hồ sơ hiện tại được giữ tại `/studio` cùng các view đã có. Không thay schema, biến môi trường, khóa nhà cung cấp hoặc cơ chế trừ lượt.
+
+### Kiểm tra mã và hồi quy
+
+- **TypeScript và production build đạt.** Bản dựng cục bộ dùng cờ có sẵn `STUDIO_BUILD_IN_PROCESS=1`; cấu hình mặc định của repo giữ nguyên. Dashboard và sáu module được dựng sẵn, Studio tiếp tục render theo yêu cầu.
+- **131 kiểm tra ngoại tuyến đạt:** 31 backend, 29 UI/dự án, 10 tải/chuẩn hóa mẫu, 8 lưu/chia sẻ MP4, 11 ElevenLabs, 32 Maziao, 10 MP3.
+- Kiểm tra mới xác nhận route Studio chỉ nhận các view cho phép và mở đúng giao diện cũ; thao tác rời Studio chờ lưu dự án, khóa tương tác và không cho callback cũ bắt đầu yêu cầu tạo giọng khi đang thoát. Lỗi ghi giữ trang và mở khóa lại. Nếu có MP4 trong bộ nhớ, người dùng có thể tải, ở lại hoặc chủ động rời; hủy thoát giữ nguyên tệp.
+- Các module mới chỉ là trang khung. Registry dùng chung cho thẻ, menu, tìm kiếm và route; module không tồn tại trả HTTP 404. Không thêm AI giả lập vào sản phẩm hoặc API mới.
+
+### Trình duyệt cục bộ
+
+Chrome Headless **155.0.8059.84**, ứng dụng Next.js thật, tài khoản/API và kho âm thanh được mô phỏng; font dự phòng hệ thống. Đây là giả lập kích thước màn hình, chưa thay thế thử trên điện thoại vật lý hoặc Safari iOS.
+
+- **50 kiểm tra bố cục đạt:** Dashboard, sáu module, Cá nhân, Thư viện và Hướng dẫn ở **320, 360, 430, 768, 1440 px**. Không tràn ngang toàn trang; bộ lọc trên điện thoại có vùng cuộn riêng. Đã xem ảnh desktop và mobile, rút gọn hero trên điện thoại để công cụ xuất hiện sớm hơn.
+- Tìm `giong noi` không dấu mở đúng giọng nói; tìm `Ảnh` ưu tiên tên công cụ ảnh trước mô tả âm thanh. Enter mở kết quả phù hợp; không có kết quả thì không điều hướng. Escape đóng kết quả và đóng menu điện thoại; menu trả focus về nút mở.
+- Lọc đúng số module: tất cả 6, nội dung 1, ảnh/video 3, âm thanh 1. Các trang cá nhân, thư viện, hướng dẫn và bốn view Studio cũ đều mở đúng; view không hợp lệ quay về Studio mặc định.
+- Tài khoản có trạng thái tải, 401 chưa đăng nhập, 403 chờ/cấm quyền, lỗi máy chủ và thử lại. Vai trò admin mới thấy liên kết quản trị; quyền thực vẫn do server kiểm tra. Hạn mức **0/0** hiển thị khác với dữ liệu hạn mức chưa có.
+- Trang nền tảng chỉ gọi `GET /api/config`; không gửi tác vụ AI hoặc tải FFmpeg. Không ghi/xóa dự án IndexedDB từ Dashboard. Không có lỗi JavaScript trong các nhóm kiểm tra này.
+- Chạy lại đủ ba luồng khôi phục tại `/studio`: tải lỗi → mở lại → thử lại vẫn chỉ **1 lần tạo giọng**; lỗi bộ nhớ → lưu lại không tải/tạo thêm; nhập `15` rồi `30` giữ đúng sau khi mở lại. Chỉ dọn tệp riêng sau khi byte âm thanh đã ghi bền vững. Không lưu URL ký tạm vào dự án.
+
+### Bản production cục bộ
+
+Ba nhóm smoke test trên `next start` đều đạt, dùng phản hồi tài khoản/đăng xuất mô phỏng và font dự phòng hệ thống:
+
+- Sáu module trả **HTTP 200**; module và đường dẫn bất kỳ không tồn tại trả **HTTP 404** với nội dung tiếng Việt.
+- Dashboard tại **360 và 1440 px**, module và tài khoản tại **360 px** giữ đúng CSS production, không tràn ngang. Điều hướng Cá nhân → module → Dashboard, bộ lọc và menu điện thoại hoạt động. Phím Tab có vòng focus rõ; liên kết bỏ qua điều hướng đặt focus vào nội dung chính. Không có lỗi hydrate, JavaScript hoặc tài nguyên JS/CSS tải thất bại.
+- Đối chiếu manifest bản dựng xác nhận Dashboard không tải trước chunk JavaScript của Studio, không tải FFmpeg và không gửi tác vụ AI. Đăng xuất khóa nút trong lúc chờ; thất bại giữ trang và hiện lỗi; thử lại thành công mới chuyển sang đăng nhập. Đúng hai yêu cầu giả lập tương ứng lần lỗi và lần thử lại, không gọi endpoint đăng xuất thật.
+
+Chi tiết cấu trúc và cách phát triển module tiếp theo: [AI-PLATFORM.md](docs/AI-PLATFORM.md).
 
 ## Khôi phục lời đọc đã tạo và nhập thời lượng — 18/10/2026
 

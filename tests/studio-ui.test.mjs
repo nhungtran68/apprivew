@@ -26,7 +26,9 @@ const downloadCompiled = ts.transpileModule(downloadSource, {
 }).outputText;
 const downloadModule = { exports: {} };
 new Function("module", "exports", downloadCompiled)(downloadModule, downloadModule.exports);
-const componentRequire = (specifier) => specifier === "@/lib/video-download" ? downloadModule.exports : baseRequire(specifier);
+const componentRequire = (specifier) => specifier === "@/lib/video-download" ? downloadModule.exports
+  : specifier === "./StudioNavigation.module.css" ? { default: { navigation: "studio-navigation", exit: "studio-exit", label: "studio-label" } }
+  : baseRequire(specifier);
 new Function("require", "module", "exports", compiled)(componentRequire, evaluated, evaluated.exports);
 const { restoreArchive, freshProject, applyProjectChanges, applySegmentChange, scriptKey, intentKey, safeProfile, applySavedProfile, configurationFrom, affectsExport, voiceScriptMinimumHint, pendingSpeechSegments, withoutSpeechPaths, default: Studio } = evaluated.exports;
 
@@ -45,6 +47,57 @@ function buttonsWithLabel(html, label) {
   return Array.from(html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g))
     .filter(match => match[2].replace(/<[^>]*>/g, "").trim() === label)
     .map(match => ({ attributes: match[1], disabled: /\bdisabled(?:\s|=|$)/.test(match[1]) }));
+}
+
+// Run click handlers from the real component with stable in-memory hook state.
+// Effects are omitted so persistence and navigation can be controlled without a
+// browser, IndexedDB, network requests, or a provider account.
+function interactiveStudio(initialProject, initialExport) {
+  const hooks = [];
+  let cursor = 0;
+  const navigation = [], requests = [];
+  const mockReact = {
+    ...React,
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in hooks)) hooks[index] = typeof initial === "function" ? initial() : initial;
+      return [hooks[index], next => { hooks[index] = typeof next === "function" ? next(hooks[index]) : next; }];
+    },
+    useRef(initial) { const index = cursor++; if (!(index in hooks)) hooks[index] = { current: initial }; return hooks[index]; },
+    useCallback: callback => callback,
+    useEffect: () => {},
+  };
+  const configuredSource = source
+    .replace('useState<Project>(() => freshProject("local"))', 'useState<Project>(() => testProject)')
+    .replace('useState<Configuration>({ userId: "local", deepseek: false, eleven: false })', 'useState<Configuration>({ userId: "current-user", deepseek: true, eleven: true, voiceConfigured: true })')
+    .replace('const [ready, setReady] = useState(false);', 'const [ready, setReady] = useState(true);')
+    .replace('const [exported, setExported] = useState<Blob>();', 'const [exported, setExported] = useState<Blob>(testExport);');
+  const output = ts.transpileModule(`${configuredSource}\nexports.setPersistence = (persist) => { persistProject = persist; };`, {
+    fileName: sourcePath,
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  const viewModule = { exports: {} };
+  new Function("require", "module", "exports", "testProject", "testExport", "window", "fetch", output)(
+    specifier => specifier === "react" ? mockReact : componentRequire(specifier), viewModule, viewModule.exports,
+    initialProject, initialExport, { location: { assign: path => navigation.push(path) } },
+    async (...args) => { requests.push(args); throw new Error("Unexpected network request"); },
+  );
+  return { render: () => { cursor = 0; return viewModule.exports.default(); }, setPersistence: viewModule.exports.setPersistence, navigation, requests };
+}
+
+function renderedElements(node) {
+  if (Array.isArray(node)) return node.flatMap(renderedElements);
+  return React.isValidElement(node) ? [node, ...renderedElements(node.props.children)] : [];
+}
+function renderedText(node) {
+  if (Array.isArray(node)) return node.map(renderedText).join("");
+  if (React.isValidElement(node)) return renderedText(node.props.children);
+  return typeof node === "string" || typeof node === "number" ? String(node) : "";
+}
+function renderedButton(tree, label) {
+  const button = renderedElements(tree).find(item => item.type === "button" && renderedText(item) === label);
+  assert.ok(button, `the real UI must contain ${label}`);
+  return button;
 }
 
 const audio = { start: 0, end: 3, text: "Lời kể thử nghiệm", audioBase64: "AQID", audioMime: "audio/wav", duration: 1 };
@@ -275,7 +328,7 @@ test("the actual speech screen explains Vieten's short-script limit while leavin
 
 test("the actual voice screen presents provider-specific clone requirements while keeping ElevenLabs uploads", () => {
   for (const provider of ["maziao", "eleven"]) {
-    const configuredSource = source.replace('useState<View>("studio")', 'useState<View>("voices")')
+    const configuredSource = source.replace('useState<View>(initialView)', 'useState<View>("voices")')
       .replace('useState<Configuration>({ userId: "local", deepseek: false, eleven: false })', `useState<Configuration>({ userId: "member", deepseek: true, eleven: ${provider === "eleven"}, voiceProvider: "${provider}", voiceConfigured: true, maziaoConfigured: ${provider === "maziao"} })`);
     const output = ts.transpileModule(configuredSource, { fileName: sourcePath, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
     const viewModule = { exports: {} };
@@ -319,4 +372,85 @@ test("the real initial UI renders the simplified workspace without admin links o
   assert.ok(html.includes('href="/dang-nhap"'));
   assert.equal(html.includes('href="/quan-tri"'), false);
   for (const removed of ["sidebar", "intent-panel", "ChatGPT", "Gemini", "API key"]) assert.equal(html.includes(removed), false, `${removed} should not appear in the initial UI`);
+});
+
+test("the legacy Studio route awaits and whitelists its requested view without accepting arbitrary destinations", async () => {
+  const pageSource = readFileSync(new URL("../app/studio/page.tsx", import.meta.url), "utf8");
+  const pageOutput = ts.transpileModule(pageSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const pageModule = { exports: {} };
+  new Function("require", "module", "exports", pageOutput)(specifier => specifier === "@/components/Studio" ? evaluated.exports : baseRequire(specifier), pageModule, pageModule.exports);
+  for (const requested of ["studio", "projects", "voices", "profile", "guide", undefined, "https://untrusted.invalid", "admin", ["projects", "voices"]]) {
+    const expected = ["studio", "projects", "voices", "profile", "guide"].includes(requested) ? requested : "studio";
+    const page = await pageModule.exports.default({ searchParams: Promise.resolve({ view: requested }) });
+    assert.equal(page.type, Studio);
+    assert.equal(page.props.initialView, expected);
+  }
+});
+
+test("legacy project, profile and voice entry points render their actual views and keep dashboard exit disabled until initialization", () => {
+  for (const [initialView, heading] of [["projects", "Video của tôi"], ["profile", "Để AI hiểu bạn hơn"], ["voices", "Giọng của tôi"]]) {
+    const html = renderToString(React.createElement(Studio, { initialView }));
+    assert.ok(html.includes(`view-${initialView}`));
+    assert.ok(Array.from(html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/g)).some(match => match[1] === heading));
+    const exit = buttonsWithLabel(html, "Về tổng quan");
+    assert.equal(exit.length, 1);
+    assert.equal(exit[0].disabled, true, "leaving before the saved project is loaded must not create or overwrite local state");
+  }
+});
+
+test("leaving Studio waits for durable save and blocks stale speech clicks while the editor is inert", async () => {
+  const current = { ...project, source: new Blob(["video"], { type: "video/mp4" }), step: 3, segments: [{ start: 0, end: 3, text: "Lời kể đang chờ tạo giọng" }] };
+  const studio = interactiveStudio(current);
+  let finishSave;
+  const writes = [];
+  studio.setPersistence(saved => { writes.push(saved); return new Promise(resolve => { finishSave = resolve; }); });
+  const initialTree = studio.render();
+  const exit = renderedButton(initialTree, "Về tổng quan");
+  const staleSpeech = renderedButton(initialTree, "Tạo giọng đọc");
+  exit.props.onClick();
+  staleSpeech.props.onClick();
+  exit.props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes.length, 1, "repeated exit must share one pending save");
+  assert.equal(writes[0], current, "the current project and its media must reach persistence unchanged");
+  assert.deepEqual(studio.requests, [], "a stale handler must not start paid speech during the save");
+  assert.deepEqual(studio.navigation, [], "navigation must wait until IndexedDB confirms the write");
+  const savingTree = studio.render(), elements = renderedElements(savingTree);
+  assert.equal(elements.find(item => item.type === "header" && item.props.className === "app-header").props.inert, true);
+  assert.equal(elements.find(item => item.type === "main" && item.props.id === "workspace").props.inert, true);
+  assert.ok(elements.filter(item => item.type === "input" && item.props.type === "file").every(item => item.props.disabled));
+  const navigationBar = elements.find(item => item.props.className === "studio-navigation");
+  assert.ok(renderedElements(navigationBar).some(item => item.props.role === "status" && renderedText(item).includes("Đang lưu")), "the saving status remains outside the inert editor");
+  finishSave();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(studio.navigation, ["/"]);
+});
+
+test("an unsaved exported MP4 prompts before exit, stays available after cancelling, and a failed save keeps Studio open", async () => {
+  const current = { ...project, source: new Blob(["video"], { type: "video/mp4" }), step: 4 };
+  const studio = interactiveStudio(current, new Blob(["rendered-mp4"], { type: "video/mp4" }));
+  let writes = 0;
+  studio.setPersistence(async () => { writes++; throw new Error("Storage full"); });
+  renderedButton(studio.render(), "Về tổng quan").props.onClick();
+  let tree = studio.render();
+  let dialog = renderedElements(tree).find(item => item.props.role === "dialog" && item.props["aria-labelledby"] === "exit-export-title");
+  assert.ok(dialog, "the user must see why the rendered MP4 needs a separate download");
+  assert.match(renderedText(dialog), /Hãy tải xong trước khi rời trang/);
+  assert.equal(writes, 0);
+  assert.deepEqual(studio.navigation, []);
+  renderedButton(dialog, "Ở lại Studio").props.onClick();
+  tree = studio.render();
+  assert.equal(renderedElements(tree).some(item => item.props["aria-labelledby"] === "exit-export-title"), false);
+  assert.ok(renderedElements(tree).some(item => item.type === "a" && item.props.download === downloadModule.exports.videoDownloadName(current.title)), "cancelling must retain the existing MP4 download");
+  renderedButton(tree, "Về tổng quan").props.onClick();
+  dialog = renderedElements(studio.render()).find(item => item.props["aria-labelledby"] === "exit-export-title");
+  renderedButton(dialog, "Về tổng quan").props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  tree = studio.render();
+  assert.equal(writes, 1);
+  assert.deepEqual(studio.navigation, []);
+  assert.equal(renderedElements(tree).find(item => item.type === "main").props.inert, false, "a failed save must unlock the editor for recovery");
+  assert.equal(renderedButton(tree, "Về tổng quan").props.disabled, false);
+  assert.ok(renderedElements(tree).some(item => item.props.role === "alert" && renderedText(item).includes("Chưa lưu được dự án")));
+  assert.deepEqual(studio.requests, []);
 });

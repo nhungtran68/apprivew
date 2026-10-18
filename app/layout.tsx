@@ -1,5 +1,6 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import './responsive.css';
-export const metadata:Metadata={title:'Lời Kể Studio — Kể câu chuyện của bạn',description:'Quay video thật, chia sẻ đúng ý, bằng giọng của bạn.',icons:{icon:'/favicon.svg'}};
-export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="vi"><body>{children}</body></html>;}
+export const metadata:Metadata={title:'Lời Kể AI — Không gian sáng tạo cho kinh doanh',description:'Nền tảng công cụ AI cho nội dung, giọng nói, hình ảnh và video của người kinh doanh online.',icons:{icon:'/favicon.svg'}};
+export const viewport:Viewport={width:'device-width',initialScale:1,viewportFit:'cover',themeColor:'#1b3027'};
+export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="vi" data-scroll-behavior="smooth"><body>{children}</body></html>;}
