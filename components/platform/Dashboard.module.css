@@ -18,34 +18,34 @@
 .heroFootnote { display: flex; align-items: center; gap: 7px; margin-top: 16px; color: #dce7ff; font-size: 10px; }
 .heroFootnote > span:first-child { width: 5px; height: 5px; background: #ffa300; border-radius: 50%; }
 .heroVisual { display: none; position: absolute; width: 420px; height: 330px; right: 10px; bottom: 10px; pointer-events: none; }
-.orbitOne, .orbitTwo { position: absolute; border: 1px solid #bfd6a417; border-radius: 50%; transform: rotate(-25deg); }
+.orbitOne, .orbitTwo { position: absolute; border: 1px solid #ffffff24; border-radius: 50%; transform: rotate(-25deg); }
 .orbitOne { width: 450px; height: 290px; top: 20px; left: -20px; }
 .orbitTwo { width: 360px; height: 400px; left: 60px; top: -35px; }
-.visualDot { position: absolute; width: 9px; height: 9px; background: #b8cf91; border-radius: 50%; right: 3px; top: 98px; box-shadow: 0 0 0 6px #bed39f0a; }
-.scriptTile { position: absolute; width: 155px; height: 174px; border: 1px solid #ffffff50; background: #eeeeda; border-radius: 13px; left: 4px; top: 45px; transform: rotate(-10deg); padding: 14px; color: #414c38; box-shadow: 0 10px 30px #0b1e1429; }
-.scriptTile > span { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #697557; }
+.visualDot { position: absolute; width: 9px; height: 9px; background: #ffa300; border-radius: 50%; right: 3px; top: 98px; box-shadow: 0 0 0 6px #ffa3001f; }
+.scriptTile { position: absolute; width: 155px; height: 174px; border: 1px solid #ffffff50; background: #f2f6ff; border-radius: 13px; left: 4px; top: 45px; transform: rotate(-10deg); padding: 14px; color: #17346f; box-shadow: 0 10px 30px #0b1e1429; }
+.scriptTile > span { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #6f7fa8; }
 .scriptTile strong { display: block; font-size: 12px; font-weight: 600; line-height: 1.7; margin-top: 15px; }
-.scriptTile > i { display: block; height: 4px; background: #ccd2ba; border-radius: 2px; margin-top: 9px; }
+.scriptTile > i { display: block; height: 4px; background: #cbd8ff; border-radius: 2px; margin-top: 9px; }
 .scriptTile > i:nth-last-child(2) { width: 87%; }
 .scriptTile > i:last-child { width: 68%; }
-.posterTile { position: absolute; overflow: hidden; width: 186px; height: 244px; background: #ecd8b8; border: 5px solid #f3e7d1; border-radius: 14px; top: 15px; right: 49px; transform: rotate(8deg); box-shadow: 0 17px 45px #0f241e60; }
-.posterTop { display: flex; justify-content: space-between; position: relative; z-index: 1; color: #5d6847; font-size: 6px; letter-spacing: 1px; padding: 12px 12px 0; }
-.posterSun { position: absolute; width: 128px; height: 128px; border-radius: 50%; background: #df9970; top: 37px; left: 22px; }
-.posterSun::after { content: ""; width: 210px; height: 46px; background: #b6935b27; position: absolute; transform: rotate(-15deg); top: 100px; left: -42px; border-radius: 50%; }
-.productBottle { position: absolute; top: 70px; left: 60px; width: 52px; height: 93px; background: linear-gradient(90deg, #597159, #788c68 40%, #496547); border: 1px solid #7e926b; border-radius: 9px 9px 11px 11px; transform: rotate(-4deg); box-shadow: 14px 10px 18px #68644a4d; }
-.productBottle > div { position: absolute; width: 39px; height: 21px; top: -21px; left: 6px; border-radius: 5px 5px 0 0; background: repeating-linear-gradient(90deg, #dcca9d, #dcca9d 2px, #c4b287 3px, #dcca9d 4px); }
-.productBottle > span { display: block; margin: 24px 2px 0; padding: 8px 0; background: #ece4c0; font-size: 16px; font-weight: 550; text-align: center; line-height: 1.5; color: #546548; letter-spacing: -1px; }
+.posterTile { position: absolute; overflow: hidden; width: 186px; height: 244px; background: #fff0d4; border: 5px solid #fff7e8; border-radius: 14px; top: 15px; right: 49px; transform: rotate(8deg); box-shadow: 0 17px 45px #0f241e60; }
+.posterTop { display: flex; justify-content: space-between; position: relative; z-index: 1; color: #80531c; font-size: 6px; letter-spacing: 1px; padding: 12px 12px 0; }
+.posterSun { position: absolute; width: 128px; height: 128px; border-radius: 50%; background: #ffa300; top: 37px; left: 22px; }
+.posterSun::after { content: ""; width: 210px; height: 46px; background: #0b47f522; position: absolute; transform: rotate(-15deg); top: 100px; left: -42px; border-radius: 50%; }
+.productBottle { position: absolute; top: 70px; left: 60px; width: 52px; height: 93px; background: linear-gradient(90deg, #0b47f5, #2768ff 45%, #0738c7); border: 1px solid #6e96ff; border-radius: 9px 9px 11px 11px; transform: rotate(-4deg); box-shadow: 14px 10px 18px #68644a4d; }
+.productBottle > div { position: absolute; width: 39px; height: 21px; top: -21px; left: 6px; border-radius: 5px 5px 0 0; background: repeating-linear-gradient(90deg, #ffa300, #ffa300 2px, #f08a00 3px, #ffa300 4px); }
+.productBottle > span { display: block; margin: 24px 2px 0; padding: 8px 0; background: #fff3d9; font-size: 16px; font-weight: 550; text-align: center; line-height: 1.5; color: #0b47f5; letter-spacing: -1px; }
 .productBottle > span > span { display: block; font-size: 3px; letter-spacing: .4px; }
-.posterBottom { position: absolute; left: 14px; bottom: 16px; font-size: 13px; color: #3e4c34; line-height: 1.65; letter-spacing: -.45px; }
+.posterBottom { position: absolute; left: 14px; bottom: 16px; font-size: 13px; color: #17346f; line-height: 1.65; letter-spacing: -.45px; }
 .posterBottom strong { font-weight: 550; }
-.voiceTile { position: absolute; display: flex; align-items: center; width: 232px; height: 67px; gap: 11px; padding: 13px; bottom: 38px; right: 42px; background: #f6f2e9; border: 1px solid #fff5; border-radius: 13px; transform: rotate(-4deg); box-shadow: 0 12px 30px #11271a3b; }
-.voiceTile > span:first-child { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 10px; flex-shrink: 0; color: #8a6448; background: #e8dcc8; }
+.voiceTile { position: absolute; display: flex; align-items: center; width: 232px; height: 67px; gap: 11px; padding: 13px; bottom: 38px; right: 42px; background: #ffffff; border: 1px solid #fff5; border-radius: 13px; transform: rotate(-4deg); box-shadow: 0 12px 30px #11271a3b; }
+.voiceTile > span:first-child { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 10px; flex-shrink: 0; color: #e96800; background: #fff0d4; }
 .wave { display: flex; gap: 4px; align-items: center; padding-bottom: 8px; height: 40px; }
-.wave i { display: block; width: 3px; max-height: 27px; background: #85906c; border-radius: 9px; }
-.voiceTileLabel { position: absolute; bottom: 6px; left: 64px; color: #667359; font-size: 7px; }
-.floatingSpark { position: absolute; top: 3px; left: 117px; width: 49px; height: 49px; display: grid; place-items: center; background: #c9774f; border: 1px solid #eac19c70; border-radius: 14px; color: #ffe1b7; transform: rotate(-12deg); box-shadow: 0 8px 18px #19321b4f; }
+.wave i { display: block; width: 3px; max-height: 27px; background: #0b47f5; border-radius: 9px; }
+.voiceTileLabel { position: absolute; bottom: 6px; left: 64px; color: #667085; font-size: 7px; }
+.floatingSpark { position: absolute; top: 3px; left: 117px; width: 49px; height: 49px; display: grid; place-items: center; background: #ffa300; border: 1px solid #ffd07a; border-radius: 14px; color: #fff; transform: rotate(-12deg); box-shadow: 0 8px 18px #0b47f545; }
 .catalog { scroll-margin-top: 24px; }
-.catalogNote { display: none; align-items: center; gap: 7px; color: #6e7c71; font-size: 11px; padding-top: 6px; white-space: nowrap; }
+.catalogNote { display: none; align-items: center; gap: 7px; color: #667085; font-size: 11px; padding-top: 6px; white-space: nowrap; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
 .filters > button { min-height: 44px; padding: 10px 15px; font-size: 12px; line-height: 1.6; color: #3f4c6b; background: #fff; border: 1px solid #d9e2f7; border-radius: 10px; transition: background .15s, color .15s, border-color .15s; }
 .filters > button:hover { background: #f3f6ff; border-color: #b7c9ff; }
