@@ -317,14 +317,14 @@ export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
   const personal = grants.some(row => row.voice_id === voiceId && row.source === "personal");
   const shared = catalog.find(row => row.voice_id === voiceId && row.enabled);
   let adminCached = false;
-  if (member.role === "admin") {
+  if (member.role === "admin" && !personal && !grants.some(row => row.voice_id === voiceId && row.source === "shared")) {
     const { createStudioSupabaseServer } = await import("./studio-supabase");
     const client = await createStudioSupabaseServer();
     const { data, error } = await client.from("studio_voice_cache").select("status").eq("voice_id",voiceId).maybeSingle();
     if (error) throw new StudioError("VOICE_CACHE_UNAVAILABLE", "Chưa kiểm tra được trạng thái giọng.",503);
     adminCached = data?.status === "active";
   }
-  if (!personal && !shared && !adminCached)
+  if (!personal && !shared && !adminCached && !(member.role === "admin" && grants.some(row => row.voice_id === voiceId && row.source === "shared")) )
     throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này chưa được cấp quyền. Hãy tải lại danh sách.", 403);
 
   // Re-check the live catalog before every paid synthesis. Never let an old
