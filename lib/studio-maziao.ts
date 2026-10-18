@@ -138,12 +138,14 @@ async function adminAccountVoices(key: string): Promise<ProviderVoice[]> {
   try {
     const result = await api(key, "/my-voices");
     const data = result.data;
-    if (Array.isArray(data)) add(data);
-    else if (data && typeof data === "object" && !Array.isArray(data)) add((data as { items?: unknown }).items);
+    if (Array.isArray(data)) { add(data); return [...collected.values()]; }
+    if (data && typeof data === "object" && !Array.isArray(data) && Array.isArray((data as { items?: unknown }).items)) {
+      add((data as { items?: unknown }).items);
+      return [...collected.values()];
+    }
   } catch (error) {
     if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND"].includes(error.code)) throw error;
   }
-  if (collected.size) return [...collected.values()];
 
   for (const type of ["custom", "user"]) {
     const query = new URLSearchParams({ language: "vi", type, limit: "100", offset: "0" });
