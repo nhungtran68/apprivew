@@ -4,5 +4,11 @@
     "app/api/**/route.ts": {
       "maxDuration": 300
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/voices/scheduled",
+      "schedule": "0 3 * * *"
+    }
+  ]
 }
