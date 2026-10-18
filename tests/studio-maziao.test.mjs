@@ -72,6 +72,9 @@ async function harness() {
       },
     }],
     [path.join(root, "lib/studio-supabase.ts"), {
+      createStudioSupabaseServer: async () => ({
+        from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) })
+      }),
       removeOwnedMedia: async (userId, paths) => {
         for (const name of paths) {
           assert.ok(name.startsWith(`${userId}/`));
