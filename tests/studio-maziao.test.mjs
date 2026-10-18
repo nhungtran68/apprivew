@@ -15,6 +15,7 @@ async function harness() {
   const key = `offline-maziao-secret-${++sequence}`;
   const requests = [], grants = new Map(), charged = [], deleted = [], media = new Map(), storedMimes = new Map(), mp3Reads = [], waits = [], shortened = [], usage = [];
   let handle = async () => { throw new Error("Unexpected provider request"); };
+  let accountVoices = [];
   let failStorageAt;
   let now = 1700000000000;
   class TestDate extends Date { static now() { return now; } }
@@ -28,6 +29,7 @@ async function harness() {
     fetch: async (url, init = {}) => {
       const request = { url: String(url), method: init.method || "GET", ...init };
       requests.push(request);
+      if (request.url.endsWith("/my-voices")) return Response.json({ data: { items: accountVoices } });
       return handle(request);
     },
   });
@@ -120,7 +122,7 @@ async function harness() {
     return module.namespace;
   }
   const wav = await entry("lib/studio-wav.ts");
-  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, wav, entry, setHandler(handler) { handle = handler; }, failStorageAt(index) { failStorageAt = index; } };
+  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, wav, entry, setHandler(handler) { handle = handler; }, setAccountVoices(rows) { accountVoices = rows; }, failStorageAt(index) { failStorageAt = index; } };
 }
 
 function syntheticMpegFrames() {
@@ -223,7 +225,23 @@ await check("voice lists expose only verified public voices and the current memb
   for (const secret of ["foreignClone", "Bob secret", "staleShared", "wrongLanguage", "missingTranscript", "missingSample", "unprovenCloneFlag", "private.invalid", "provider-account", "refFile", "refText"]) assert.ok(!visible.includes(secret));
   assert.ok(h.grants.has(`${alice}:${scoped("publicVoice")}`));
   assert.ok(h.grants.has(`${alice}:${scoped("publicNoOwnership")}`));
-  assert.ok(!h.requests.some(request => request.url.includes("my-voices")));
+  assert.ok(h.requests.some(request => request.url.includes("my-voices")));
+});
+
+await check("admin account clones are imported into the app with a listenable preview", async () => {
+  const h = await harness(), maziao = await provider(h);
+  h.setAccountVoices([voice("existingAdminClone", { userId: "provider-account", name: "Giọng quản trị", previewUrl: "https://r2-storage.maziao.com/samples/admin-clone.wav" })]);
+  h.setHandler(request => {
+    if (request.url.endsWith("/configs")) return config();
+    if (request.url.includes("/voices?")) return Response.json({ data: { items: [] } });
+    if (request.url.endsWith("/voices/existingAdminClone")) return Response.json({ data: voice("existingAdminClone", { userId: "provider-account", name: "Giọng quản trị", previewUrl: "https://r2-storage.maziao.com/samples/admin-clone.wav" }) });
+    throw new Error("Unexpected provider request: " + request.url);
+  });
+  const voices = await maziao.listMaziaoVoices(h.key, alice);
+  const imported = voices.find(item => item.voiceId === scoped("existingAdminClone"));
+  assert.ok(imported); assert.equal(imported.category, "cloned"); assert.equal(imported.name, "Giọng quản trị");
+  assert.equal(imported.previewUrl, "https://r2-storage.maziao.com/samples/admin-clone.wav");
+  assert.ok(h.grants.has(`${alice}:${scoped("existingAdminClone")}`));
 });
 
 await check("verified public reference voices can use a compatible engine independent of their original model", async () => {
