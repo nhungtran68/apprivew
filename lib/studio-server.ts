@@ -131,6 +131,12 @@ export async function setSharedVoiceCatalog(userId: string, voiceId: string, nam
   if (kind !== "system" && kind !== "admin_clone") throw new StudioError("INVALID_VOICE", "Loại giọng chia sẻ chưa hợp lệ.");
   const safeName = name.trim().slice(0, 200) || "Giọng tiếng Việt";
   const client = await createStudioSupabaseServer();
+  if (enabled) {
+    const { data: owned, error: lookupError } = await client.from("studio_voice_cache")
+      .select("voice_id,kind,status").eq("voice_id",voiceId).maybeSingle();
+    if (lookupError || !owned || owned.status !== "active" || owned.kind !== kind)
+      throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng chưa được đồng bộ hợp lệ. Hãy đồng bộ lại trước khi chia sẻ.", 403);
+  }
   const { data, error } = await client.from("studio_voice_catalog").upsert({ voice_id: voiceId, name: safeName, enabled, kind, updated_at: new Date().toISOString() }, { onConflict: "voice_id" }).select("voice_id,name,enabled,sort_order,kind").single();
   if (error) return storageError();
   return data as SharedVoiceCatalogRow;
