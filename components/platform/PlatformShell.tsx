@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";
-import { getVisibleModules, moduleHref } from "@/lib/studio-modules";
+import { getVisibleModules, moduleHref, type AiModule } from "@/lib/studio-modules";
 import { AccountProvider, accountInitials, useAccount } from "./AccountProvider";
 import { PlatformIcon, type PlatformIconName } from "./PlatformIcon";
 import { ToolSearch } from "./ToolSearch";
 import styles from "./Platform.module.css";
+import tones from "./ModuleTone.module.css";
 
 function Brand() {
   return <Link href="/" className={styles.brand} aria-label="Lời Kể AI — Trang tổng quan"><span className={styles.brandMark}><PlatformIcon name="spark" size={24} /></span><span>Lời Kể<span className={styles.brandAI}>AI</span></span></Link>;
@@ -16,11 +17,11 @@ function Brand() {
 function Navigation({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { account } = useAccount();
-  const navLink = (href: string, label: string, icon: PlatformIconName) => <Link href={href} className={`${styles.navLink} ${pathname === href ? styles.navActive : ""}`} aria-current={pathname === href ? "page" : undefined} onClick={onNavigate}><PlatformIcon name={icon} size={21} /><span>{label}</span>{pathname === href ? <span className={styles.activeDot} /> : null}</Link>;
+  const navLink = (href: string, label: string, icon: PlatformIconName, tone?: AiModule["tone"]) => <Link href={href} className={`${styles.navLink} ${pathname === href ? styles.navActive : ""} ${tone ? `${styles.moduleNav} ${tones[tone]}` : ""}`} aria-current={pathname === href ? "page" : undefined} onClick={onNavigate}><span className={styles.navIcon}><PlatformIcon name={icon} size={20} /></span><span>{label}</span>{pathname === href ? <span className={styles.activeDot} /> : null}</Link>;
   return <nav className={styles.navigation} aria-label="Điều hướng chính">
     {navLink("/", "Tổng quan", "grid")}
     <p className={styles.navLabel}>CÔNG CỤ SÁNG TẠO</p>
-    {getVisibleModules().map(module => <div key={module.id}>{navLink(moduleHref(module), module.shortTitle, module.icon)}</div>)}
+    {getVisibleModules().map(module => <div key={module.id}>{navLink(moduleHref(module), module.shortTitle, module.icon, module.tone)}</div>)}
     <p className={styles.navLabel}>KHÔNG GIAN CỦA BẠN</p>
     {navLink("/thu-vien", "Thư viện của tôi", "folder")}
     {navLink("/ca-nhan", "Tài khoản cá nhân", "user")}
