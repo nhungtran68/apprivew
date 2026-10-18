@@ -129,48 +129,92 @@ async function systemVoices(key: string, search?: string): Promise<ProviderVoice
   return data.items.filter(voice => Boolean(voice && typeof voice === "object" && !Array.isArray(voice)));
 }
 
-async function adminAccountVoices(key: string): Promise<ProviderVoice[]> {
-  // Account-created voices belong to the administrator's upstream account.
-  // Prefer the dedicated account route; keep read-only list fallbacks for
-  // provider revisions that expose the same rows through /voices filters.
+export async function adminAccountVoices(key: string): Promise<ProviderVoice[]> {
   const collected = new Map<string, ProviderVoice>();
   const add = (rows: unknown) => {
-    if (!Array.isArray(rows)) return;
-    for (const voice of rows) {
-      if (!voice || typeof voice !== "object" || Array.isArray(voice)) continue;
-      const row = voice as ProviderVoice;
-      if (!rawId(row.id) || !compatible(row)) continue;
-      collected.set(row.id, row);
+    if (!Array.isArray(rows)) return false;
+    for (const row of rows) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+      const voice = row as ProviderVoice;
+      if (rawId(voice.id)) collected.set(voice.id, voice);
     }
+    return true;
   };
+  // The account endpoint may return a list, data.items, or paginated items.
+  // Missing or malformed pages fail closed rather than silently declaring the
+  // catalog complete and revoking existing voices.
+  const shapes = (result: unknown) => {
+    if (Array.isArray(result)) return { items: result, meta: {} as Record<string,unknown> };
+    if (!result || typeof result !== "object") return null;
+    const root = result as Record<string,unknown>;
+    const nested = root.data && typeof root.data === "object" && !Array.isArray(root.data)
+      ? root.data as Record<string,unknown> : null;
+    const items = Array.isArray(root.data) ? root.data :
+      Array.isArray(nested?.items) ? nested.items :
+      Array.isArray(root.items) ? root.items : null;
+    return items ? { items, meta: { ...root, ...(nested || {}) } } : null;
+  };
+  const fetchPages = async (path: string) => {
+    let offset = 0; let total: number | undefined; let previous = "";
+    for (let page = 0; page < 100; page++) {
+      const separator = path.includes("?") ? "&" : "?";
+      const target = path + separator + "limit=100&offset=" + offset;
+      const result = await providerJson(key, target);
+      const parsed = shapes(result);
+      if (!parsed || !add(parsed.items)) throw invalidResponse();
+      const ids = parsed.items.map(item => (item && typeof item === "object" ? (item as ProviderVoice).id : null)).join(",");
+      if (ids === previous && parsed.items.length > 0) throw new StudioError("VOICE_SYNC_PAGINATION", "API lặp lại trang giọng. Chưa thể xác nhận đã lấy đủ dữ liệu.", 502);
+      previous = ids;
+      const count = parsed.meta.total ?? parsed.meta.totalCount ?? parsed.meta.total_count;
+      if (typeof count === "number" && Number.isFinite(count) && count >= 0) total = count;
+      offset += parsed.items.length;
+      const more = parsed.meta.hasMore ?? parsed.meta.has_more;
+      if (more === false || (total !== undefined && offset >= total) || (more === undefined && total === undefined && parsed.items.length < 100)) return;
+      if (parsed.items.length === 0) return;
+    }
+    throw new StudioError("VOICE_SYNC_PAGINATION", "API có quá nhiều trang giọng, đồng bộ chưa hoàn tất.", 502);
+  };
+  // First try the account-specific endpoint without assuming whether it
+  // supports pagination. Query parameter rejection is handled as an optional
+  // fallback, but incomplete pages are not treated as a full sync.
   try {
-    const result = await providerJson(key, "/my-voices");
-    if (Array.isArray(result)) { add(result); return [...collected.values()]; }
-    const data = (result as Record<string, unknown>).data;
-    if (Array.isArray(data)) { add(data); return [...collected.values()]; }
-    if (data && typeof data === "object" && !Array.isArray(data) && Array.isArray((data as { items?: unknown }).items)) {
-      add((data as { items?: unknown }).items);
-      return [...collected.values()];
-    }
-    if (Array.isArray((result as { items?: unknown }).items)) {
-      add((result as { items?: unknown }).items);
-      return [...collected.values()];
-    }
+    await fetchPages("/my-voices");
+    return [...collected.values()];
   } catch (error) {
     if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND","MAZIAO_INVALID_RESPONSE"].includes(error.code)) throw error;
   }
-
   for (const type of ["custom", "user"]) {
-    const query = new URLSearchParams({ language: "vi", type, limit: "100", offset: "0" });
     try {
-      const result = await api(key, `/voices?${query}`), data = result.data as { items?: ProviderVoice[] } | undefined;
-      add(data?.items);
-      if (collected.size) break;
+      await fetchPages("/voices?language=vi&type=" + type);
+      if (collected.size) return [...collected.values()];
     } catch (error) {
       if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND","MAZIAO_INVALID_RESPONSE"].includes(error.code)) throw error;
     }
   }
   return [...collected.values()];
+}
+
+export async function fetchVoiceCatalogSnapshot(key: string) {
+  const model = maziaoModel();
+  const [publicRows, ownedRows] = await Promise.all([systemVoices(key), adminAccountVoices(key)]);
+  const system = publicRows.filter(v => rawId(v.id) && catalogOwnership(v) && compatible(v))
+    .map(v => ({ voiceId: scopedProviderVoiceId(v, model), name: cleanText(v.name, 200) || "Giọng thư viện",
+      kind: "system" as const, previewUrl: safeMediaUrl(v.previewUrl ?? v.preview_url) || safeMediaUrl(v.refFile ?? v.ref_file) || null,
+      gender: v.gender === "male" || v.gender === "female" ? v.gender : null }));
+  const personal = ownedRows.map(v => normalizeAdminVoice(v, model)).filter((v): v is NonNullable<typeof v> => Boolean(v))
+    .map(v => ({ ...v, kind: "admin_clone" as const }));
+  const byId = new Map<string, typeof system[number] | typeof personal[number]>();
+  for (const voice of system) byId.set(voice.voiceId, voice);
+  for (const voice of personal) byId.set(voice.voiceId, voice);
+  return [...byId.values()];
+}
+
+export function normalizeAdminVoice(voice: ProviderVoice, defaultModel: MaziaoModel) {
+  if (!rawId(voice.id)) return null;
+  const voiceId = scopedProviderVoiceId(voice, defaultModel);
+  return { voiceId, name: cleanText(voice.name,200) || "Giọng của tôi",
+    previewUrl: safeMediaUrl(voice.previewUrl ?? voice.preview_url) || safeMediaUrl(voice.refFile ?? voice.ref_file) || null,
+    gender: voice.gender === "male" || voice.gender === "female" ? voice.gender : null };
 }
 
 function scopedProviderVoiceId(voice: ProviderVoice, fallback: MaziaoModel) {
@@ -267,24 +311,37 @@ export async function cloneMaziaoVoice(key: string, userId: string, name: string
 
 export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
   const parsed = parseMaziaoVoiceId(voiceId);
-  const grant = (await authorizedVoiceRows(userId)).find(row => row.voice_id === voiceId);
-  if (!grant || !["shared", "personal"].includes(grant.source)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Tải lại danh sách và chọn giọng thuộc tài khoản của bạn.", 403);
+  const [member, grants, catalog] = await Promise.all([
+    getMember(userId), authorizedVoiceRows(userId), sharedVoiceCatalog(userId)
+  ]);
+  const personal = grants.some(row => row.voice_id === voiceId && row.source === "personal");
+  const shared = catalog.find(row => row.voice_id === voiceId && row.enabled);
+  let adminCached = false;
+  if (member.role === "admin" && !personal && !grants.some(row => row.voice_id === voiceId && row.source === "shared")) {
+    const { createStudioSupabaseServer } = await import("./studio-supabase");
+    const client = await createStudioSupabaseServer();
+    const { data, error } = await client.from("studio_voice_cache").select("status").eq("voice_id",voiceId).maybeSingle();
+    if (error) throw new StudioError("VOICE_CACHE_UNAVAILABLE", "Chưa kiểm tra được trạng thái giọng.",503);
+    adminCached = data?.status === "active";
+  }
+  if (!personal && !shared && !adminCached && !(member.role === "admin" && grants.some(row => row.voice_id === voiceId && row.source === "shared")) )
+    throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này chưa được cấp quyền. Hãy tải lại danh sách.", 403);
+
+  // Re-check the live catalog before every paid synthesis. Never let an old
+  // shared grant bypass a revoked authorization.
   const { key } = await providerKey(userId, "maziao");
   const voice = await getVoice(key, parsed.id);
-  if (grant.source === "shared") {
-    const member = await getMember(userId);
-    const catalogRow = member.role === "admin" ? undefined : (await sharedVoiceCatalog(userId)).find(row => row.enabled && row.voice_id === voiceId);
-    if (member.role !== "admin" && !catalogRow) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này chưa được quản trị viên cấp quyền.", 403);
-    if (!compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn phù hợp để sử dụng. Hãy tải lại danh sách.", 403);
-    if (catalogRow?.kind === "admin_clone") {
-      if (voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng dùng chung này dùng model khác. Hãy tải lại danh sách giọng.", 422);
-    } else {
-      if (!catalogOwnership(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
-      const current = await systemVoices(key, cleanText(voice.name, 200) || undefined);
-      if (!current.some(item => item.id === parsed.id && catalogOwnership(item) && compatible(item))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn trong thư viện hệ thống. Hãy tải lại danh sách để chọn giọng khác.", 403);
-    }
+  if (!compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng hiện không đủ điều kiện sử dụng.", 403);
+  if (personal || (adminCached && !shared)) {
+    if (voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng thuộc model khác.", 422);
+  } else if (shared?.kind === "admin_clone") {
+    if (voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng thuộc model khác.", 422);
+  } else {
+    if (!catalogOwnership(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng đã bị thu hồi quyền chia sẻ.", 403);
+    const current = await systemVoices(key, cleanText(voice.name, 200) || undefined);
+    if (!current.some(item => item.id === parsed.id && catalogOwnership(item) && compatible(item)))
+      throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng đã bị rút khỏi thư viện.", 403);
   }
-  if (grant.source === "personal" && voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng này dùng model khác. Hãy tải lại danh sách giọng.", 422);
   return voiceId;
 }
 
