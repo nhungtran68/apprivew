@@ -311,24 +311,29 @@ export async function cloneMaziaoVoice(key: string, userId: string, name: string
 
 export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
   const parsed = parseMaziaoVoiceId(voiceId);
-  const grant = (await authorizedVoiceRows(userId)).find(row => row.voice_id === voiceId);
-  if (!grant || !["shared", "personal"].includes(grant.source)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Tải lại danh sách và chọn giọng thuộc tài khoản của bạn.", 403);
+  const [member, grants, catalog] = await Promise.all([
+    getMember(userId), authorizedVoiceRows(userId), sharedVoiceCatalog(userId)
+  ]);
+  const personal = grants.some(row => row.voice_id === voiceId && row.source === "personal");
+  const shared = catalog.find(row => row.voice_id === voiceId && row.enabled);
+  if (!personal && !shared && !(member.role === "admin" && grants.some(row => row.voice_id === voiceId && row.source === "shared")))
+    throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này chưa được cấp quyền. Hãy tải lại danh sách.", 403);
+
+  // Re-check the live catalog before every paid synthesis. Never let an old
+  // shared grant bypass a revoked authorization.
   const { key } = await providerKey(userId, "maziao");
   const voice = await getVoice(key, parsed.id);
-  if (grant.source === "shared") {
-    const member = await getMember(userId);
-    const catalogRow = member.role === "admin" ? undefined : (await sharedVoiceCatalog(userId)).find(row => row.enabled && row.voice_id === voiceId);
-    if (member.role !== "admin" && !catalogRow) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này chưa được quản trị viên cấp quyền.", 403);
-    if (!compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn phù hợp để sử dụng. Hãy tải lại danh sách.", 403);
-    if (catalogRow?.kind === "admin_clone") {
-      if (voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng dùng chung này dùng model khác. Hãy tải lại danh sách giọng.", 422);
-    } else {
-      if (!catalogOwnership(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
-      const current = await systemVoices(key, cleanText(voice.name, 200) || undefined);
-      if (!current.some(item => item.id === parsed.id && catalogOwnership(item) && compatible(item))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn trong thư viện hệ thống. Hãy tải lại danh sách để chọn giọng khác.", 403);
-    }
+  if (!compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng hiện không đủ điều kiện sử dụng.", 403);
+  if (personal) {
+    if (voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng thuộc model khác.", 422);
+  } else if (shared?.kind === "admin_clone") {
+    if (voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng thuộc model khác.", 422);
+  } else {
+    if (!catalogOwnership(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng đã bị thu hồi quyền chia sẻ.", 403);
+    const current = await systemVoices(key, cleanText(voice.name, 200) || undefined);
+    if (!current.some(item => item.id === parsed.id && catalogOwnership(item) && compatible(item)))
+      throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng đã bị rút khỏi thư viện.", 403);
   }
-  if (grant.source === "personal" && voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng này dùng model khác. Hãy tải lại danh sách giọng.", 422);
   return voiceId;
 }
 
