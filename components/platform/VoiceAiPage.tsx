@@ -8,7 +8,7 @@ import styles from "./VoiceAiPage.module.css";
 
 type Voice = { voiceId: string; name: string; category: string; group?: string; previewUrl?: string };
 type CuratedVoice = { voice_id: string; name: string; enabled: boolean; kind: "system" | "admin_clone" };
-type AdminCloneCandidate = { voice_id: string; name: string; enabled: boolean; kind: "admin_clone" };
+type AdminCloneCandidate = { voice_id: string; name: string; enabled: boolean; kind: "admin_clone"; previewUrl?: string };
 type AudioResult = { audioPath: string; audioMime: string; duration: number; voiceId: string; audioUrl?: string };
 const scriptTypes = ".txt,.md,.csv,.srt,.vtt";
 const MAX_SCRIPT = 6000;
@@ -36,6 +36,7 @@ export default function VoiceAiPage() {
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState("all");
   const [catalogBusy, setCatalogBusy] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const activeSrc = useRef("");
   const loading = account.status === "loading";
@@ -62,7 +63,7 @@ export default function VoiceAiPage() {
   const shareableVoices = (() => {
     const byId = new Map<string, Voice>();
     for (const voice of voices) byId.set(voice.voiceId, voice);
-    for (const candidate of adminCloneCandidates) if (!byId.has(candidate.voice_id)) byId.set(candidate.voice_id, { voiceId: candidate.voice_id, name: candidate.name, category: "cloned" });
+    for (const candidate of adminCloneCandidates) if (!byId.has(candidate.voice_id)) byId.set(candidate.voice_id, { voiceId: candidate.voice_id, name: candidate.name, category: "cloned", previewUrl: candidate.previewUrl });
     return [...byId.values()];
   })();
   const cloning = account.status === "ready" ? (account.account as typeof account.account & { voiceCloning?: { used: number; limit: number; remaining: number | null; unlimited: boolean } })?.voiceCloning : undefined;
@@ -129,6 +130,19 @@ export default function VoiceAiPage() {
     finally { if (paths.length) await cleanupAnalysisMedia(paths).catch(() => {}); setBusy(""); }
   }
 
+  async function synchronizeVoices() {
+    if (syncBusy || busy) return;
+    setSyncBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch("/api/voices/sync", { method: "POST", headers: { "Content-Type": "application/json" } });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Không đồng bộ được giọng từ API.");
+      setNotice(`Đã cập nhật ${result.synced} giọng, gồm ${result.adminClones} giọng thuộc tài khoản quản trị.`);
+      await load();
+    } catch (err) { setError(friendlyError(err)); }
+    finally { setSyncBusy(false); }
+  }
+
   async function approve(voice: Voice, enabled: boolean) {
     setCatalogBusy(voice.voiceId); setError("");
     try {
@@ -157,7 +171,7 @@ export default function VoiceAiPage() {
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>01</span><h2>Chọn giọng nói</h2></div><button className={styles.textButton} onClick={() => void load()} disabled={Boolean(busy)}><PlatformIcon name="refresh" size={17}/> Làm mới</button></div>
             <div className={styles.filterBar}><input aria-label="Tìm kiếm giọng nói" placeholder="Tìm giọng theo tên..." value={search} onChange={e => setSearch(e.target.value)}/><select aria-label="Nhóm giọng" value={group} onChange={e => setGroup(e.target.value)}><option value="all">Tất cả giọng</option><option value="shared">Giọng thư viện</option><option value="personal">Giọng cá nhân</option></select></div>
-            {busy === "loading" ? <p className={styles.muted}>Đang tải giọng nói…</p> : visible.length ? <div className={styles.voiceGrid}>{visible.map(voice => <article key={voice.voiceId} className={selected === voice.voiceId ? styles.voiceSelected : styles.voiceItem}><button type="button" className={styles.voiceSelectButton} onClick={() => { setSelected(voice.voiceId); setAudio(null); setAudioSrc(""); }}><span className={styles.voiceAvatar}><PlatformIcon name="voice" size={22}/></span><span className={styles.voiceCopy}><strong>{voice.name}</strong><small>{voice.category === "cloned" ? "Giọng cá nhân" : "Giọng thư viện"}</small></span>{selected === voice.voiceId && <PlatformIcon name="check" size={19}/>}</button>{voice.previewUrl ? <audio aria-label={`Nghe thử ${voice.name}`} controls preload="none" className={styles.voicePreview} src={voice.previewUrl}>Trình duyệt chưa hỗ trợ nghe thử.</audio> : <span className={styles.previewUnavailable}>Chưa có bản nghe thử</span>}</article>)}</div> : <p className={styles.muted}>Chưa có giọng được cấp quyền trong nhóm này. {isAdmin ? "Hãy làm mới danh sách giọng." : "Quản trị viên sẽ chọn giọng phù hợp cho bạn."}</p>}
+            {busy === "loading" && voices.length === 0 ? <p className={styles.muted}>Đang tải giọng nói đã lưu…</p> : visible.length ? <div className={styles.voiceGrid}>{visible.map(voice => <article key={voice.voiceId} className={selected === voice.voiceId ? styles.voiceSelected : styles.voiceItem}><button type="button" className={styles.voiceSelectButton} onClick={() => { setSelected(voice.voiceId); setAudio(null); setAudioSrc(""); }}><span className={styles.voiceAvatar}><PlatformIcon name="voice" size={22}/></span><span className={styles.voiceCopy}><strong>{voice.name}</strong><small>{voice.category === "cloned" ? "Giọng cá nhân" : "Giọng thư viện"}</small></span>{selected === voice.voiceId && <PlatformIcon name="check" size={19}/>}</button>{voice.previewUrl ? <audio aria-label={`Nghe thử ${voice.name}`} controls preload="none" className={styles.voicePreview} src={voice.previewUrl}>Trình duyệt chưa hỗ trợ nghe thử.</audio> : <span className={styles.previewUnavailable}>Chưa có bản nghe thử</span>}</article>)}</div> : <p className={styles.muted}>Chưa có giọng được cấp quyền trong nhóm này. {isAdmin ? "Hãy làm mới danh sách giọng." : "Quản trị viên sẽ chọn giọng phù hợp cho bạn."}</p>}
           </section>
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>02</span><h2>Nhập lời thoại</h2></div><span className={styles.counter}>{text.length.toLocaleString("vi-VN")} / {MAX_SCRIPT.toLocaleString("vi-VN")}</span></div>
@@ -189,7 +203,7 @@ export default function VoiceAiPage() {
           </section>
         </aside>
       </div>
-      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{shareableVoices.map(voice => { const enabled=curated.some(item => item.voice_id === voice.voiceId && item.enabled); const isClone=voice.category === "cloned"; return <label className={styles.catalogRow} key={voice.voiceId}><span><strong>{voice.name}</strong><small>{isClone ? "Giọng nhân bản của quản trị viên" : "Giọng thư viện"} · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small></span><input type="checkbox" checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice,e.target.checked)}/></label>; })}</div></section>}
+      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div><button className={styles.textButton} disabled={syncBusy || Boolean(busy)} onClick={() => void synchronizeVoices()}>{syncBusy ? "Đang đồng bộ…" : "Đồng bộ giọng từ API"}</button></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{shareableVoices.map(voice => { const enabled=curated.some(item => item.voice_id === voice.voiceId && item.enabled); const isClone=voice.category === "cloned"; return <label className={styles.catalogRow} key={voice.voiceId}><span><strong>{voice.name}</strong><small>{isClone ? "Giọng nhân bản của quản trị viên" : "Giọng thư viện"} · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small>{voice.previewUrl && <audio controls preload="none" aria-label={`Nghe thử ${voice.name}`} className={styles.voicePreview} src={voice.previewUrl}/>}</span><input type="checkbox" checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice,e.target.checked)}/></label>; })}</div></section>}
     </>}
   </main>;
 }
