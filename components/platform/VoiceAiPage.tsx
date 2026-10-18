@@ -204,7 +204,17 @@ export default function VoiceAiPage() {
           </section>
         </aside>
       </div>
-      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div><button className={styles.textButton} disabled={syncBusy || Boolean(busy)} onClick={() => void synchronizeVoices()}>{syncBusy ? "Đang đồng bộ…" : "Đồng bộ giọng từ API"}</button></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{shareableVoices.map(voice => { const enabled=curated.some(item => item.voice_id === voice.voiceId && item.enabled); const isClone=voice.category === "cloned"; return <label className={styles.catalogRow} key={voice.voiceId}><span><strong>{voice.name}</strong><small>{isClone ? "Giọng nhân bản của quản trị viên" : "Giọng thư viện"} · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small>{voice.previewUrl && <audio controls preload="none" aria-label={`Nghe thử ${voice.name}`} className={styles.voicePreview} src={voice.previewUrl}/>}</span><input type="checkbox" checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice,e.target.checked)}/></label>; })}</div></section>}
+      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div><button className={styles.textButton} disabled={syncBusy || Boolean(busy)} onClick={() => void synchronizeVoices()}>{syncBusy ? "Đang đồng bộ…" : "Đồng bộ giọng từ API"}</button></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{shareableVoices.map(voice => {
+        const enabled = curated.some(item => item.voice_id === voice.voiceId && item.enabled);
+        const isClone = voice.category === "cloned";
+        return <article className={styles.catalogRow} key={voice.voiceId}>
+          <span><strong>{voice.name}</strong>
+            {!isClone && <small>Giọng thư viện · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small>}
+            {voice.previewUrl ? <audio controls preload="none" aria-label={`Nghe thử ${voice.name}`} className={styles.voicePreview} src={voice.previewUrl}/> : <small>Chưa có bản nghe thử</small>}
+          </span>
+          <input type="checkbox" aria-label={`Cho thành viên dùng giọng ${voice.name}`} checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice, e.target.checked)}/>
+        </article>;
+      })}</div></section>}
     </>}
   </main>;
 }

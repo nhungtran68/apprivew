@@ -53,7 +53,12 @@ async function providerJson(key: string, path: string, init: RequestInit = {}, d
   } catch { throw new StudioError("MAZIAO_UNAVAILABLE", "Chưa nhận được phản hồi từ hệ thống giọng nói. Nếu vừa tạo lời đọc, kiểm tra tác vụ hiện tại trước khi tạo lại để tránh trừ credit lặp.", 502); }
   if ([401, 403].includes(response.status)) {
     await response.body?.cancel();
-    throw new StudioError("MAZIAO_AUTH", "Hệ thống giọng nói từ chối kết nối. Quản trị viên cần kiểm tra cấu hình API và quyền của gói đang dùng.", 422, "contact_admin");
+    const message = response.status === 401 ? "Dịch vụ giọng nói chưa chấp nhận khóa API. Quản trị viên cần kiểm tra kết nối dịch vụ." :
+      path.startsWith("/voices") ? "Dịch vụ chưa cấp quyền truy cập giọng đã chọn. Quản trị viên cần đồng bộ lại giọng và kiểm tra quyền API của tài khoản chủ." :
+      path === "/configs" ? "Dịch vụ chưa cho phép đọc cấu hình model. Quản trị viên cần kiểm tra quyền API của gói đang dùng." :
+      path === "/tts/submit" ? "Dịch vụ chưa cấp quyền tạo lời đọc với giọng hoặc model đang chọn. Quản trị viên cần kiểm tra quyền sử dụng trên tài khoản chủ." :
+      "Dịch vụ chưa cấp quyền xử lý tác vụ này. Quản trị viên cần kiểm tra quyền API của tài khoản chủ.";
+    throw new StudioError("MAZIAO_AUTH", message, 422, "contact_admin");
   }
   if (response.status === 402) { await response.body?.cancel(); throw new StudioError("MAZIAO_BALANCE", "Tài khoản dịch vụ giọng nói chưa đủ credit hoặc chưa có quyền API. Quản trị viên cần kiểm tra gói và số dư.", 422, "contact_admin"); }
   if (response.status === 429) { await response.body?.cancel(); throw new StudioError("MAZIAO_LIMIT", "Hệ thống đang giới hạn số tác vụ cùng lúc. Hãy chờ tác vụ hiện tại xong rồi thử lại.", 429); }
@@ -208,7 +213,9 @@ export function normalizeAdminVoice(voice: ProviderVoice, defaultModel: MaziaoMo
   if (!rawId(voice.id) || !compatible(voice) || (model !== undefined && !MAZIAO_MODELS.some(item => item === model))) return null;
   const voiceId = scopedProviderVoiceId(voice, defaultModel);
   return { voiceId, name: cleanText(voice.name,200) || "Giọng của tôi",
-    previewUrl: safeMediaUrl(voice.previewUrl ?? voice.preview_url) || null,
+    // Account owners explicitly choose which clone samples to share. Maziao's
+    // own player uses the reference recording when no separate preview exists.
+    previewUrl: safeMediaUrl(voice.previewUrl ?? voice.preview_url) || safeMediaUrl(voice.refFile ?? voice.ref_file) || null,
     gender: voice.gender === "male" || voice.gender === "female" ? voice.gender : null };
 }
 
@@ -325,7 +332,14 @@ export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
   // Re-check the live catalog before every paid synthesis. Never let an old
   // shared grant bypass a revoked authorization.
   const { key } = await providerKey(userId, "maziao");
-  const voice = await getVoice(key, parsed.id);
+  // The account-owned list is the authority for a shared administrator clone.
+  // Some provider scopes allow this documented listing but deny the individual
+  // detail endpoint. Re-read ownership for every request; cached approval alone
+  // never grants access to a deleted or foreign clone.
+  const voice = shared?.kind === "admin_clone"
+    ? (await adminAccountVoices(key)).find(item => item.id === parsed.id)
+    : await getVoice(key, parsed.id);
+  if (!voice) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn trong tài khoản dịch vụ đã kết nối. Quản trị viên cần đồng bộ lại danh sách.", 403);
   if (!compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng hiện không đủ điều kiện sử dụng.", 403);
   if (personal || (adminCached && !shared)) {
     if (voiceModel(voice) && voiceModel(voice) !== parsed.model) throw new StudioError("MAZIAO_VOICE_MODEL", "Giọng thuộc model khác.", 422);

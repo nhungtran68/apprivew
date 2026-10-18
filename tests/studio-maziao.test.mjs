@@ -17,6 +17,8 @@ async function harness() {
   let handle = async () => { throw new Error("Unexpected provider request"); };
   let accountVoices = [];
   let accountHandler;
+  let memberRole = "admin";
+  let catalog = [];
   let failStorageAt;
   let now = 1700000000000;
   class TestDate extends Date { static now() { return now; } }
@@ -52,8 +54,8 @@ async function harness() {
     saveSharedVoiceList: async (userId, voices) => { for (const voice of voices) grant(userId, voice.voiceId, "shared", voice.name); },
     consumeAiUnits: async (_user, units) => charged.push(units),
     consumeVoiceClone: async (_user, units) => charged.push(units),
-    getMember: async () => ({ role: "admin" }),
-    sharedVoiceCatalog: async () => [],
+    getMember: async () => ({ role: memberRole, enabled: true }),
+    sharedVoiceCatalog: async () => catalog,
     providerKey: async () => ({ key, personal: false }),
     requestUser: async () => alice,
     limitedJson: async request => request.json(),
@@ -133,7 +135,7 @@ async function harness() {
     return module.namespace;
   }
   const wav = await entry("lib/studio-wav.ts");
-  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, wav, entry, setHandler(handler) { handle = handler; }, setAccountVoices(rows) { accountVoices = rows; }, setAccountHandler(handler) { accountHandler = handler; }, failStorageAt(index) { failStorageAt = index; } };
+  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, wav, entry, setHandler(handler) { handle = handler; }, setAccountVoices(rows) { accountVoices = rows; }, setAccountHandler(handler) { accountHandler = handler; }, setMemberRole(role) { memberRole = role; }, setCatalog(rows) { catalog = rows; }, failStorageAt(index) { failStorageAt = index; } };
 }
 
 function syntheticMpegFrames() {
@@ -253,6 +255,132 @@ await check("admin account clones are imported into the app with a listenable pr
   assert.ok(imported); assert.equal(imported.category, "cloned"); assert.equal(imported.name, "Giọng quản trị");
   assert.equal(imported.previewUrl, "https://r2-storage.maziao.com/samples/admin-clone.wav");
   assert.ok(h.grants.has(`${alice}:${scoped("existingAdminClone")}`));
+});
+
+await check("admin clone previews prefer the ready preview and safely fall back to the existing reference audio", async () => {
+  const h = await harness(), maziao = await provider(h);
+  const preview = "https://r2-storage.maziao.com/users/offline/preview.wav";
+  const reference = "https://r2-storage.maziao.com/users/offline/reference.wav";
+  assert.equal(maziao.normalizeAdminVoice(voice("withPreview", { previewUrl: preview, refFile: reference }), "vieten_speech").previewUrl, preview);
+  for (const missing of [undefined, null, ""]) {
+    assert.equal(maziao.normalizeAdminVoice(voice("referenceOnly", { previewUrl: missing, refFile: reference }), "vieten_speech").previewUrl, reference);
+  }
+  const snake = { id: "snakePreview", name: "Giọng mẫu", model_id: "lingual_speech_v2", language: "vi", ref_file: reference, ref_text: "Lời mẫu." };
+  assert.equal(maziao.normalizeAdminVoice(snake, "vieten_speech").previewUrl, reference);
+  for (const unsafe of ["https://private.invalid/sample.wav", "http://r2-storage.maziao.com/sample.wav", "https://r2-storage.maziao.com.evil.invalid/sample.wav", "https://user:pass@r2-storage.maziao.com/sample.wav", "https://r2-storage.maziao.com:444/sample.wav", "https://r2-storage.maziao.com/sample.wav#private"]) {
+    const normalized = maziao.normalizeAdminVoice(voice("unsafePreview", { previewUrl: unsafe, refFile: unsafe }), "vieten_speech");
+    assert.equal(normalized.previewUrl, null);
+  }
+  assert.equal(h.requests.length, 0); assert.equal(h.charged.length, 0);
+});
+
+const approvedClone = (id, model = "vieten_speech", enabled = true) => ({ voice_id: scoped(id, model), name: "Giọng đã được cấp", enabled, kind: "admin_clone", sort_order: 0 });
+
+function speechRequest(pathname, voiceId) {
+  const body = pathname === "/api/voice-over"
+    ? { voiceId, text: exactMinimumText, speed: 1, volume: 1, pitch: 1 }
+    : { voiceId, segments: [{ start: 0, end: 20, text: exactMinimumText }], duration: 20 };
+  return new Request("https://app.example" + pathname, { method: "POST", headers: { origin: "https://app.example", "content-type": "application/json" }, body: JSON.stringify(body) });
+}
+
+await check("a member's approved admin clone is verified through the fresh account list for both models", async () => {
+  for (const model of ["vieten_speech", "lingual_speech_v2"]) {
+    const h = await harness();
+    h.setMemberRole("member"); h.setCatalog([approvedClone("approvedClone", model)]);
+    h.setAccountVoices([voice("approvedClone", { userId: "provider-admin", modelId: model }), voice("unrelatedPrivateClone", { name: "Other member private voice", userId: "provider-admin", modelId: model })]);
+    h.grant(bob, scoped("unrelatedPrivateClone", model));
+    // Maziao may permit listing owned clones while its single-voice route
+    // rejects API tokens. A shared clone must not rely on that route.
+    h.setHandler(() => Response.json({ errors: ["offline-detail-route-forbidden"] }, { status: 403 }));
+    const maziao = await provider(h);
+    const resolved = await maziao.authorizeMaziaoVoice(alice, scoped("approvedClone", model));
+    assert.equal(resolved, scoped("approvedClone", model));
+    assert.equal(h.requests.length, 1);
+    assert.equal(new URL(h.requests[0].url).pathname, "/api/voices/my-voices");
+    assert.equal(h.requests[0].headers.Authorization, `Bearer ${h.key}`);
+    assert.equal(h.charged.length, 0); assert.equal(h.grants.size, 1);
+    assert.equal([...h.grants.values()].some(row => row.user_id === alice), false, "fresh ownership checks must not copy other account clones into the member's private grants");
+    const requestCount = h.requests.length;
+    await assert.rejects(maziao.authorizeMaziaoVoice(alice, scoped("unrelatedPrivateClone", model)), { code: "VOICE_NOT_AUTHORIZED" });
+    assert.equal(h.requests.length, requestCount, "another member's private clone must be denied before provider access");
+    h.setAccountVoices([]);
+    await assert.rejects(maziao.authorizeMaziaoVoice(alice, scoped("approvedClone", model)), { code: "VOICE_NOT_AUTHORIZED" });
+    assert.equal(h.requests.length, requestCount + 1, "each authorization must refresh ownership rather than reuse a successful lookup");
+    assert.equal(h.charged.length, 0);
+  }
+});
+
+await check("both speech routes let members use an approved owned clone without a single-voice lookup", async () => {
+  for (const model of ["vieten_speech", "lingual_speech_v2"]) {
+    for (const pathname of ["/api/voice-over", "/api/speech"]) {
+      const h = await harness();
+      h.setMemberRole("member"); h.setCatalog([approvedClone("approvedClone", model)]);
+      h.setAccountVoices([voice("approvedClone", { userId: "provider-admin", modelId: model })]);
+      const speech = speechHandler(h, { durations: [1] });
+      h.setHandler(request => new URL(request.url).pathname === "/api/voices/approvedClone"
+        ? Response.json({ errors: ["offline-detail-route-forbidden"] }, { status: 403 }) : speech(request));
+      const route = await h.entry(`app${pathname}/route.ts`);
+      const response = await route.POST(speechRequest(pathname, scoped("approvedClone", model)));
+      assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+      const result = await response.json();
+      assert.equal(result.voiceId, scoped("approvedClone", model)); assert.equal(result.provider, "maziao");
+      assert.equal(h.requests.filter(request => new URL(request.url).pathname === "/api/voices/my-voices").length, 1);
+      assert.equal(h.requests.some(request => new URL(request.url).pathname === "/api/voices/approvedClone"), false);
+      assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+      assert.deepEqual(h.charged, [1]); assert.equal(h.media.size, 1);
+    }
+  }
+});
+
+await check("a removed account clone cannot reuse its approved catalog row or a historical shared grant", async () => {
+  for (const pathname of ["/api/voice-over", "/api/speech"]) {
+    const h = await harness();
+    h.setMemberRole("member"); h.setCatalog([approvedClone("removedClone")]);
+    h.setAccountVoices([voice("differentOwnedClone", { userId: "provider-admin" })]);
+    h.grant(alice, scoped("removedClone"), "shared");
+    h.setHandler(() => { throw new Error("An absent owned clone must never reach detail, configs or paid speech"); });
+    const route = await h.entry(`app${pathname}/route.ts`), response = await route.POST(speechRequest(pathname, scoped("removedClone")));
+    assert.equal(response.status, 403); assert.equal((await response.json()).code, "VOICE_NOT_AUTHORIZED");
+    assert.equal(h.requests.length, 1); assert.equal(new URL(h.requests[0].url).pathname, "/api/voices/my-voices");
+    assert.equal(h.charged.length, 0); assert.equal(h.media.size, 0);
+  }
+});
+
+await check("revoking a shared admin clone blocks both routes before provider reads or quota consumption", async () => {
+  for (const pathname of ["/api/voice-over", "/api/speech"]) {
+    const h = await harness();
+    h.setMemberRole("member"); h.setCatalog([approvedClone("revokedClone", "vieten_speech", false)]);
+    h.grant(alice, scoped("revokedClone"), "shared");
+    h.setAccountVoices([voice("revokedClone", { userId: "provider-admin" })]);
+    h.setHandler(() => { throw new Error("A revoked clone must never reach the provider"); });
+    const route = await h.entry(`app${pathname}/route.ts`), response = await route.POST(speechRequest(pathname, scoped("revokedClone")));
+    assert.equal(response.status, 403); assert.equal((await response.json()).code, "VOICE_NOT_AUTHORIZED");
+    assert.equal(h.requests.length, 0); assert.equal(h.charged.length, 0); assert.equal(h.media.size, 0);
+  }
+});
+
+await check("fresh owned clones must still match the approved model and cloning requirements", async () => {
+  for (const [changes, code] of [[{ modelId: "lingual_speech_v2" }, "MAZIAO_VOICE_MODEL"], [{ refText: "" }, "VOICE_NOT_AUTHORIZED"], [{ language: "en" }, "VOICE_NOT_AUTHORIZED"]]) {
+    const h = await harness(); h.setMemberRole("member"); h.setCatalog([approvedClone("changedClone")]);
+    h.setAccountVoices([voice("changedClone", { userId: "provider-admin", ...changes })]);
+    h.setHandler(() => { throw new Error("An incompatible clone must not reach any further provider operation"); });
+    const route = await h.entry("app/api/voice-over/route.ts"), response = await route.POST(speechRequest("/api/voice-over", scoped("changedClone")));
+    assert.equal(response.status, code === "MAZIAO_VOICE_MODEL" ? 422 : 403); assert.equal((await response.json()).code, code);
+    assert.equal(h.requests.length, 1); assert.equal(h.charged.length, 0); assert.equal(h.media.size, 0);
+  }
+});
+
+await check("owned-account authentication failures remain visible and never fall back to the cached approved clone", async () => {
+  for (const status of [401, 403]) {
+    const h = await harness(); h.setMemberRole("member"); h.setCatalog([approvedClone("approvedButUnverified")]);
+    h.setAccountHandler(() => Response.json({ errors: [`${h.key} PRIVATE_PROVIDER_MESSAGE https://private.invalid/sample.wav`] }, { status }));
+    h.setHandler(() => { throw new Error("Provider auth failures must not fall back to detail, cache or speech"); });
+    const route = await h.entry("app/api/voice-over/route.ts"), response = await route.POST(speechRequest("/api/voice-over", scoped("approvedButUnverified")));
+    assert.equal(response.status, 422);
+    const result = await response.json(); assert.equal(result.code, "MAZIAO_AUTH");
+    for (const secret of [h.key, "PRIVATE_PROVIDER_MESSAGE", "private.invalid"]) assert.ok(!JSON.stringify(result).includes(secret));
+    assert.equal(h.requests.length, 1); assert.equal(h.charged.length, 0); assert.equal(h.media.size, 0);
+  }
 });
 
 function assertAccountReadsOnly(h) {
