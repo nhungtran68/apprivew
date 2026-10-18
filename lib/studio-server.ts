@@ -143,6 +143,14 @@ export async function authorizedVoiceRows(userId: string): Promise<VoiceRow[]> {
   const rows = (data || []) as VoiceRow[], verified = await Promise.all(rows.map((row) => validVoiceTag(userId, row)));
   return rows.filter((_, i) => verified[i]);
 }
+
+export async function adminCloneCandidates(userId: string) {
+  await requireAdmin(userId);
+  const rows = await authorizedVoiceRows(userId);
+  return rows
+    .filter(row => row.source === "personal" && /^maziao:(vieten_speech|lingual_speech_v2):[a-zA-Z0-9_-]{1,100}$/.test(row.voice_id))
+    .map(row => ({ voice_id: row.voice_id, name: row.name, enabled: false, sort_order: 0, kind: "admin_clone" as const }));
+}
 export async function saveAuthorizedVoice(userId: string, voiceId: string, name: string, source: string) {
   const authorization_tag = await voiceTag(userId, voiceId, source), client = await createStudioSupabaseServer();
   const { error } = await client.from("studio_voices").upsert({ user_id: userId, voice_id: voiceId, name, source, authorization_tag, verified_at: new Date().toISOString() }, { onConflict: "user_id,voice_id" });
