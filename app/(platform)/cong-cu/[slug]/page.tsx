@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import ModulePage from "@/components/platform/ModulePage";
 import VoiceAiPage from "@/components/platform/VoiceAiPage";
+import ScriptAiPage from "@/components/platform/ScriptAiPage";
 import { getModuleBySlug, getVisibleModules } from "@/lib/studio-modules";
 
 type ModuleRouteProps = { params: Promise<{ slug: string }> };
@@ -31,5 +32,6 @@ export default async function ModuleRoute({ params }: ModuleRouteProps) {
   if (!module) notFound();
 
   if (module.id === "voice") return <VoiceAiPage />;
+  if (module.id === "script") return <ScriptAiPage />;
   return <ModulePage module={module} />;
 }
