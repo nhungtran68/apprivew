@@ -129,48 +129,77 @@ async function systemVoices(key: string, search?: string): Promise<ProviderVoice
   return data.items.filter(voice => Boolean(voice && typeof voice === "object" && !Array.isArray(voice)));
 }
 
-async function adminAccountVoices(key: string): Promise<ProviderVoice[]> {
-  // Account-created voices belong to the administrator's upstream account.
-  // Prefer the dedicated account route; keep read-only list fallbacks for
-  // provider revisions that expose the same rows through /voices filters.
+export async function adminAccountVoices(key: string): Promise<ProviderVoice[]> {
   const collected = new Map<string, ProviderVoice>();
   const add = (rows: unknown) => {
-    if (!Array.isArray(rows)) return;
-    for (const voice of rows) {
-      if (!voice || typeof voice !== "object" || Array.isArray(voice)) continue;
-      const row = voice as ProviderVoice;
-      if (!rawId(row.id) || !compatible(row)) continue;
-      collected.set(row.id, row);
+    if (!Array.isArray(rows)) return false;
+    for (const row of rows) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+      const voice = row as ProviderVoice;
+      if (rawId(voice.id)) collected.set(voice.id, voice);
     }
+    return true;
   };
+  // The account endpoint may return a list, data.items, or paginated items.
+  // Missing or malformed pages fail closed rather than silently declaring the
+  // catalog complete and revoking existing voices.
+  const shapes = (result: unknown) => {
+    if (Array.isArray(result)) return { items: result, meta: {} as Record<string,unknown> };
+    if (!result || typeof result !== "object") return null;
+    const root = result as Record<string,unknown>;
+    const nested = root.data && typeof root.data === "object" && !Array.isArray(root.data)
+      ? root.data as Record<string,unknown> : null;
+    const items = Array.isArray(root.data) ? root.data :
+      Array.isArray(nested?.items) ? nested.items :
+      Array.isArray(root.items) ? root.items : null;
+    return items ? { items, meta: { ...root, ...(nested || {}) } } : null;
+  };
+  const fetchPages = async (path: string) => {
+    let offset = 0; let total: number | undefined; let previous = "";
+    for (let page = 0; page < 100; page++) {
+      const separator = path.includes("?") ? "&" : "?";
+      const target = path + separator + "limit=100&offset=" + offset;
+      const result = await providerJson(key, target);
+      const parsed = shapes(result);
+      if (!parsed || !add(parsed.items)) throw invalidResponse();
+      const ids = parsed.items.map(item => (item && typeof item === "object" ? (item as ProviderVoice).id : null)).join(",");
+      if (ids === previous && parsed.items.length > 0) throw new StudioError("VOICE_SYNC_PAGINATION", "API lặp lại trang giọng. Chưa thể xác nhận đã lấy đủ dữ liệu.", 502);
+      previous = ids;
+      const count = parsed.meta.total ?? parsed.meta.totalCount ?? parsed.meta.total_count;
+      if (typeof count === "number" && Number.isFinite(count) && count >= 0) total = count;
+      offset += parsed.items.length;
+      const more = parsed.meta.hasMore ?? parsed.meta.has_more;
+      if (more === false || (total !== undefined && offset >= total) || (more === undefined && total === undefined && parsed.items.length < 100)) return;
+      if (parsed.items.length === 0) return;
+    }
+    throw new StudioError("VOICE_SYNC_PAGINATION", "API có quá nhiều trang giọng, đồng bộ chưa hoàn tất.", 502);
+  };
+  // First try the account-specific endpoint without assuming whether it
+  // supports pagination. Query parameter rejection is handled as an optional
+  // fallback, but incomplete pages are not treated as a full sync.
   try {
-    const result = await providerJson(key, "/my-voices");
-    if (Array.isArray(result)) { add(result); return [...collected.values()]; }
-    const data = (result as Record<string, unknown>).data;
-    if (Array.isArray(data)) { add(data); return [...collected.values()]; }
-    if (data && typeof data === "object" && !Array.isArray(data) && Array.isArray((data as { items?: unknown }).items)) {
-      add((data as { items?: unknown }).items);
-      return [...collected.values()];
-    }
-    if (Array.isArray((result as { items?: unknown }).items)) {
-      add((result as { items?: unknown }).items);
-      return [...collected.values()];
-    }
+    await fetchPages("/my-voices");
+    return [...collected.values()];
   } catch (error) {
     if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND","MAZIAO_INVALID_RESPONSE"].includes(error.code)) throw error;
   }
-
   for (const type of ["custom", "user"]) {
-    const query = new URLSearchParams({ language: "vi", type, limit: "100", offset: "0" });
     try {
-      const result = await api(key, `/voices?${query}`), data = result.data as { items?: ProviderVoice[] } | undefined;
-      add(data?.items);
-      if (collected.size) break;
+      await fetchPages("/voices?language=vi&type=" + type);
+      if (collected.size) return [...collected.values()];
     } catch (error) {
       if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND","MAZIAO_INVALID_RESPONSE"].includes(error.code)) throw error;
     }
   }
   return [...collected.values()];
+}
+
+export function normalizeAdminVoice(voice: ProviderVoice, defaultModel: MaziaoModel) {
+  if (!rawId(voice.id)) return null;
+  const voiceId = scopedProviderVoiceId(voice, defaultModel);
+  return { voiceId, name: cleanText(voice.name,200) || "Giọng của tôi",
+    previewUrl: safeMediaUrl(voice.previewUrl ?? voice.preview_url) || safeMediaUrl(voice.refFile ?? voice.ref_file) || null,
+    gender: voice.gender === "male" || voice.gender === "female" ? voice.gender : null };
 }
 
 function scopedProviderVoiceId(voice: ProviderVoice, fallback: MaziaoModel) {
