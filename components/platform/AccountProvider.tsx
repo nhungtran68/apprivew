@@ -24,7 +24,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         if (controller.signal.aborted) return;
         if (response.status === 401) { setState({ status: "anonymous" }); return; }
         if (response.status === 403) {
-          setState({ status: "restricted", message: "Tài khoản đang chờ cấp quyền hoặc đã tạm khóa. Hãy liên hệ quản trị viên." }); return;
+          setState({ status: "restricted", message: "Tài khoản thành viên đang bị khóa. Hãy liên hệ quản trị viên." }); return;
         }
         if (data.code === "AUTH_NOT_CONFIGURED") {
           setState({ status: "unavailable", message: "Kết nối tài khoản đang được chuẩn bị. Bạn vẫn có thể khám phá các công cụ." }); return;
