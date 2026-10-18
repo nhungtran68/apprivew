@@ -63,8 +63,9 @@ export default function VoiceAiPage() {
   const shareableVoices = (() => {
     const byId = new Map<string, Voice>();
     for (const voice of voices) byId.set(voice.voiceId, voice);
-    for (const candidate of adminCloneCandidates) if (!byId.has(candidate.voice_id)) byId.set(candidate.voice_id, { voiceId: candidate.voice_id, name: candidate.name, category: "cloned", previewUrl: candidate.previewUrl });
-    return [...byId.values()];
+    // The verified candidate kind wins over legacy display metadata.
+    for (const candidate of adminCloneCandidates) byId.set(candidate.voice_id, { voiceId: candidate.voice_id, name: candidate.name, category: "cloned", previewUrl: candidate.previewUrl });
+    return [...byId.values()].sort((a,b) => Number(b.category === "cloned") - Number(a.category === "cloned") || a.name.localeCompare(b.name,"vi"));
   })();
   const cloning = account.status === "ready" ? (account.account as typeof account.account & { voiceCloning?: { used: number; limit: number; remaining: number | null; unlimited: boolean } })?.voiceCloning : undefined;
 

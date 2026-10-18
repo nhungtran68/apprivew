@@ -166,31 +166,25 @@ export async function adminAccountVoices(key: string): Promise<ProviderVoice[]> 
       if (ids === previous && parsed.items.length > 0) throw new StudioError("VOICE_SYNC_PAGINATION", "API lặp lại trang giọng. Chưa thể xác nhận đã lấy đủ dữ liệu.", 502);
       previous = ids;
       const count = parsed.meta.total ?? parsed.meta.totalCount ?? parsed.meta.total_count;
-      if (typeof count === "number" && Number.isFinite(count) && count >= 0) total = count;
+      if (count !== undefined) {
+        if (typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 10000) throw invalidResponse();
+        total = count;
+      }
       offset += parsed.items.length;
       const more = parsed.meta.hasMore ?? parsed.meta.has_more;
+      if ((total !== undefined && (offset > total || (more === false && offset < total))) ||
+          (parsed.items.length === 0 && (more === true || (total !== undefined && offset < total))) ||
+          (more === true && total !== undefined && offset >= total))
+        throw new StudioError("VOICE_SYNC_PAGINATION", "API chưa trả đủ danh sách giọng cá nhân. Dữ liệu trước đó được giữ nguyên; hãy thử đồng bộ lại.", 502);
       if (more === false || (total !== undefined && offset >= total) || (more === undefined && total === undefined && parsed.items.length < 100)) return;
       if (parsed.items.length === 0) return;
     }
     throw new StudioError("VOICE_SYNC_PAGINATION", "API có quá nhiều trang giọng, đồng bộ chưa hoàn tất.", 502);
   };
-  // First try the account-specific endpoint without assuming whether it
-  // supports pagination. Query parameter rejection is handled as an optional
-  // fallback, but incomplete pages are not treated as a full sync.
-  try {
-    await fetchPages("/my-voices");
-    return [...collected.values()];
-  } catch (error) {
-    if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND","MAZIAO_INVALID_RESPONSE"].includes(error.code)) throw error;
-  }
-  for (const type of ["custom", "user"]) {
-    try {
-      await fetchPages("/voices?language=vi&type=" + type);
-      if (collected.size) return [...collected.values()];
-    } catch (error) {
-      if (!(error instanceof StudioError) || !["MAZIAO_REJECTED","MAZIAO_NOT_FOUND","MAZIAO_INVALID_RESPONSE"].includes(error.code)) throw error;
-    }
-  }
+  // This documented endpoint establishes account ownership. Generic /voices
+  // types may be ignored by the provider and must never establish that proof.
+  // An error is not an empty account and must not become a successful sync.
+  await fetchPages("/voices/my-voices");
   return [...collected.values()];
 }
 
@@ -210,10 +204,11 @@ export async function fetchVoiceCatalogSnapshot(key: string) {
 }
 
 export function normalizeAdminVoice(voice: ProviderVoice, defaultModel: MaziaoModel) {
-  if (!rawId(voice.id)) return null;
+  const model = voiceModel(voice);
+  if (!rawId(voice.id) || !compatible(voice) || (model !== undefined && !MAZIAO_MODELS.some(item => item === model))) return null;
   const voiceId = scopedProviderVoiceId(voice, defaultModel);
   return { voiceId, name: cleanText(voice.name,200) || "Giọng của tôi",
-    previewUrl: safeMediaUrl(voice.previewUrl ?? voice.preview_url) || safeMediaUrl(voice.refFile ?? voice.ref_file) || null,
+    previewUrl: safeMediaUrl(voice.previewUrl ?? voice.preview_url) || null,
     gender: voice.gender === "male" || voice.gender === "female" ? voice.gender : null };
 }
 

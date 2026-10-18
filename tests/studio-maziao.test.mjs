@@ -16,6 +16,7 @@ async function harness() {
   const requests = [], grants = new Map(), charged = [], deleted = [], media = new Map(), storedMimes = new Map(), mp3Reads = [], waits = [], shortened = [], usage = [];
   let handle = async () => { throw new Error("Unexpected provider request"); };
   let accountVoices = [];
+  let accountHandler;
   let failStorageAt;
   let now = 1700000000000;
   class TestDate extends Date { static now() { return now; } }
@@ -29,7 +30,14 @@ async function harness() {
     fetch: async (url, init = {}) => {
       const request = { url: String(url), method: init.method || "GET", ...init };
       requests.push(request);
-      if (request.url.includes("/my-voices")) return Response.json({ data: { items: accountVoices } });
+      // Match the documented endpoint exactly. A substring match also accepted
+      // the incorrect /api/my-voices path and hid the production sync failure.
+      if (new URL(request.url).pathname === "/api/voices/my-voices") {
+        if (accountHandler) return accountHandler(request);
+        const query = new URL(request.url).searchParams;
+        const offset = Number(query.get("offset") || 0), limit = Number(query.get("limit") || 100);
+        return Response.json({ data: { items: accountVoices.slice(offset, offset + limit), total: accountVoices.length } });
+      }
       return handle(request);
     },
   });
@@ -125,7 +133,7 @@ async function harness() {
     return module.namespace;
   }
   const wav = await entry("lib/studio-wav.ts");
-  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, wav, entry, setHandler(handler) { handle = handler; }, setAccountVoices(rows) { accountVoices = rows; }, failStorageAt(index) { failStorageAt = index; } };
+  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, wav, entry, setHandler(handler) { handle = handler; }, setAccountVoices(rows) { accountVoices = rows; }, setAccountHandler(handler) { accountHandler = handler; }, failStorageAt(index) { failStorageAt = index; } };
 }
 
 function syntheticMpegFrames() {
@@ -245,6 +253,105 @@ await check("admin account clones are imported into the app with a listenable pr
   assert.ok(imported); assert.equal(imported.category, "cloned"); assert.equal(imported.name, "Giọng quản trị");
   assert.equal(imported.previewUrl, "https://r2-storage.maziao.com/samples/admin-clone.wav");
   assert.ok(h.grants.has(`${alice}:${scoped("existingAdminClone")}`));
+});
+
+function assertAccountReadsOnly(h) {
+  assert.ok(h.requests.length > 0);
+  for (const request of h.requests) {
+    assert.equal(new URL(request.url).pathname, "/api/voices/my-voices");
+    assert.equal(request.method, "GET");
+    assert.equal(request.headers.Authorization, `Bearer ${h.key}`);
+    assert.equal(request.redirect, "error");
+    assert.ok(!new URL(request.url).searchParams.has("type"), "account sync must not guess a public custom/user catalog filter");
+  }
+  assert.equal(h.charged.length, 0); assert.equal(h.grants.size, 0);
+}
+
+await check("account sync finds all six clones using the documented voices/my-voices endpoint and nested response", async () => {
+  const h = await harness(), maziao = await provider(h);
+  const account = Array.from({ length: 6 }, (_, index) => voice(`accountClone${index + 1}`, { userId: "offline-provider-account", modelId: index % 2 ? "lingual_speech_v2" : "vieten_speech" }));
+  h.setAccountVoices(account);
+  const result = await maziao.adminAccountVoices(h.key);
+  assert.deepEqual(Array.from(result, row => row.id), account.map(row => row.id));
+  assert.deepEqual(Array.from(result, row => row.modelId), account.map(row => row.modelId));
+  assert.equal(h.requests.length, 1); assertAccountReadsOnly(h);
+});
+
+await check("account sync follows nested total across full pages without silently truncating the clone list", async () => {
+  const h = await harness(), maziao = await provider(h);
+  const account = Array.from({ length: 105 }, (_, index) => voice(`paginatedClone${index}`));
+  h.setAccountVoices(account);
+  const result = await maziao.adminAccountVoices(h.key);
+  assert.deepEqual(Array.from(result, row => row.id), account.map(row => row.id));
+  assert.deepEqual(h.requests.map(request => Number(new URL(request.url).searchParams.get("offset"))), [0, 100]);
+  assertAccountReadsOnly(h);
+});
+
+await check("a short account page still follows the provider total until all six clones are read", async () => {
+  const h = await harness(), maziao = await provider(h), account = Array.from({ length: 6 }, (_, index) => voice(`shortPageClone${index}`));
+  h.setAccountHandler(request => {
+    const offset = Number(new URL(request.url).searchParams.get("offset"));
+    return Response.json({ data: { items: account.slice(offset, offset + 2), total: account.length } });
+  });
+  const result = await maziao.adminAccountVoices(h.key);
+  assert.deepEqual(Array.from(result, row => row.id), account.map(row => row.id));
+  assert.deepEqual(h.requests.map(request => Number(new URL(request.url).searchParams.get("offset"))), [0, 2, 4]);
+  assertAccountReadsOnly(h);
+});
+
+await check("a legitimate empty account is distinct from an unsupported endpoint and never falls back to public catalogs", async () => {
+  const empty = await harness(), maziao = await provider(empty);
+  empty.setAccountHandler(() => Response.json({ data: { items: [], total: 0 } }));
+  assert.equal((await maziao.adminAccountVoices(empty.key)).length, 0);
+  assert.equal(empty.requests.length, 1); assertAccountReadsOnly(empty);
+
+  const unsupported = await harness(), unsupportedMaziao = await provider(unsupported);
+  unsupported.setAccountHandler(() => Response.json({ errors: ["offline-private-provider-error-body"] }, { status: 404 }));
+  await assert.rejects(unsupportedMaziao.adminAccountVoices(unsupported.key), { code: "MAZIAO_NOT_FOUND" });
+  assert.equal(unsupported.requests.length, 1); assertAccountReadsOnly(unsupported);
+});
+
+await check("malformed account data fails closed without exposing provider content or guessing alternate catalogs", async () => {
+  const h = await harness(), maziao = await provider(h), marker = "offline-sensitive-provider-content";
+  h.setAccountHandler(() => Response.json({ data: { items: { private: marker }, total: 6 }, private: marker }));
+  await assert.rejects(maziao.adminAccountVoices(h.key), error => {
+    assert.equal(error.code, "MAZIAO_INVALID_RESPONSE");
+    const serialized = JSON.stringify({ code: error.code, message: error.message });
+    assert.ok(!serialized.includes(marker)); assert.ok(!serialized.includes(h.key)); return true;
+  });
+  assert.equal(h.requests.length, 1); assertAccountReadsOnly(h);
+});
+
+await check("an empty page before the advertised total rejects the incomplete account snapshot", async () => {
+  const h = await harness(), maziao = await provider(h);
+  h.setAccountHandler(request => Response.json({ data: { items: Number(new URL(request.url).searchParams.get("offset")) === 0 ? [voice("firstClone"), voice("secondClone")] : [], total: 6 } }));
+  await assert.rejects(maziao.adminAccountVoices(h.key), { code: "VOICE_SYNC_PAGINATION" });
+  assert.equal(h.requests.length, 2); assertAccountReadsOnly(h);
+});
+
+await check("an account page cannot claim completion while its total still promises missing clones", async () => {
+  const h = await harness(), maziao = await provider(h);
+  h.setAccountHandler(() => Response.json({ data: { items: [voice("partialClone")], total: 6, hasMore: false } }));
+  await assert.rejects(maziao.adminAccountVoices(h.key), { code: "VOICE_SYNC_PAGINATION" });
+  assert.equal(h.requests.length, 1); assertAccountReadsOnly(h);
+});
+
+await check("a repeated account page stops sync instead of looping or declaring a partial list complete", async () => {
+  const h = await harness(), maziao = await provider(h);
+  h.setAccountHandler(() => Response.json({ data: { items: [voice("sameClone1"), voice("sameClone2")], total: 6 } }));
+  await assert.rejects(maziao.adminAccountVoices(h.key), { code: "VOICE_SYNC_PAGINATION" });
+  assert.equal(h.requests.length, 2); assertAccountReadsOnly(h);
+});
+
+await check("a provider failure after a partial account page is not converted into a successful empty or fallback sync", async () => {
+  const h = await harness(), maziao = await provider(h);
+  h.setAccountHandler(request => Number(new URL(request.url).searchParams.get("offset")) === 0
+    ? Response.json({ data: { items: [voice("partialClone")], total: 6 } })
+    : Response.json({ errors: ["offline-private-account-details"] }, { status: 503 }));
+  await assert.rejects(maziao.adminAccountVoices(h.key), error => {
+    assert.equal(error.code, "MAZIAO_REJECTED"); assert.ok(!error.message.includes("offline-private-account-details")); return true;
+  });
+  assert.equal(h.requests.length, 2); assertAccountReadsOnly(h);
 });
 
 await check("verified public reference voices can use a compatible engine independent of their original model", async () => {

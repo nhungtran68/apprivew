@@ -136,8 +136,12 @@ export async function setSharedVoiceCatalog(userId: string, voiceId: string, nam
       .select("voice_id,kind,status").eq("voice_id",voiceId).maybeSingle();
     if (lookupError || !owned || owned.status !== "active" || owned.kind !== kind)
       throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng chưa được đồng bộ hợp lệ. Hãy đồng bộ lại trước khi chia sẻ.", 403);
+    const { publishableAdminVoiceIds } = await import("./studio-voice-guard");
+    if (!(await publishableAdminVoiceIds(userId, [voiceId])).includes(voiceId))
+      throw new StudioError("VOICE_PUBLICATION_BLOCKED", "Giọng này thuộc tài khoản riêng của thành viên nên không thể chia sẻ dùng chung.", 403);
   }
   const { data, error } = await client.from("studio_voice_catalog").upsert({ voice_id: voiceId, name: safeName, enabled, kind, updated_at: new Date().toISOString() }, { onConflict: "voice_id" }).select("voice_id,name,enabled,sort_order,kind").single();
+  if (error?.message?.includes("VOICE_PUBLICATION_BLOCKED")) throw new StudioError("VOICE_PUBLICATION_BLOCKED", "Giọng này thuộc tài khoản riêng của thành viên nên không thể chia sẻ dùng chung.", 403);
   if (error) return storageError();
   return data as SharedVoiceCatalogRow;
 }

@@ -1,5 +1,17 @@
 # Tích hợp Maziao — cập nhật 18/10/2026
 
+## Sửa đồng bộ giọng nhân bản từ tài khoản chủ
+
+Đồng bộ quản trị dùng đúng `GET /api/voices/my-voices`, đọc đủ phân trang theo `data.total`. Không thử các loại `custom`/`user` trên thư viện công khai khi endpoint lỗi. Lỗi lấy danh sách, dữ liệu sai hoặc trang thiếu phải báo lỗi trước khi ghi cache.
+
+Giọng nhập từ tài khoản chủ giữ model `vieten_speech` hoặc `lingual_speech_v2` và loại `admin_clone`; hiển thị đúng là giọng nhân bản để thao tác cấp quyền gửi đúng loại. Chỉ đồng bộ metadata và URL nghe thử được nhà cung cấp trả về, không dùng tệp mẫu gốc làm bản nghe thử.
+
+Sau khi đọc xong toàn bộ danh sách và ghi thành công, các mục `admin_clone` cũ không còn trong snapshot được chuyển thành `unavailable`. Giữ lại dữ liệu giọng và quyết định chia sẻ; không xóa grant, tệp hoặc giọng ở nhà cung cấp. Giọng của lượt đồng bộ mới hơn được giữ nguyên. Không dùng grant cũ để đưa một mục đã bị đánh dấu không còn dùng được trở lại danh sách.
+
+Áp dụng `supabase/voice-sync-guard.sql` sau schema đang có. RPC chỉ dành cho admin kiểm tra clone có thuộc thành viên khác không, so cùng ID gốc qua cả hai model. Trigger bảo vệ thao tác cấp quyền trực tiếp; admin vẫn có thể tắt chia sẻ. Chạy `tests/voice-sync-guard.sql` để kiểm chứng 25 tình huống trong giao dịch tự rollback.
+
+Vào **Tạo giọng nói AI → Giọng dùng chung cho tất cả thành viên → Đồng bộ giọng từ API**. Các giọng nhân bản được xếp trước; admin tự bật từng giọng muốn cấp. Đồng bộ không tự bật chia sẻ và không tạo tác vụ nhân bản/TTS.
+
 ## Cấu hình
 
 1. Lấy Personal Access Token từ tài khoản Maziao đã có quyền API.
