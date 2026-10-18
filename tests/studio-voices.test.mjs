@@ -20,7 +20,7 @@ async function harness(){
   authorizedVoiceRows:async(userId)=>[...grants.values()].filter(row=>row.user_id===userId),
   saveAuthorizedVoice:async(userId,voiceId,name,source)=>grant(userId,voiceId,source,name),
   saveSharedVoiceList:async(userId,voices)=>{for(const voice of voices)grant(userId,voice.voiceId,"shared",voice.name);},
-  consumeAiUnits:async(_user,units)=>charged.push(units),modelNames:()=>({voiceModel:"eleven_flash_v2_5"}),voiceProvider:()=>"eleven",providerKey:async()=>({key,personal:false}),
+  consumeAiUnits:async(_user,units)=>charged.push(units),consumeVoiceClone:async(_user,units)=>charged.push(units),getMember:async()=>({role:"admin"}),sharedVoiceCatalog:async()=>[],modelNames:()=>({voiceModel:"eleven_flash_v2_5"}),voiceProvider:()=>"eleven",providerKey:async()=>({key,personal:false}),
   providerResponse:async(response)=>{if(!response.ok)throw failure("PROVIDER_REJECTED");return response;},
   requestUser:async()=>alice,limitedJson:async(request)=>request.json(),json:(data,status=200)=>Response.json(data,{status}),apiError:error=>Response.json({code:error.code,error:error.message},{status:error.status||500}),
  };
