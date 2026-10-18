@@ -1,6 +1,6 @@
 import "server-only";
 import { StudioError, cleanText, type StudioSegment } from "./studio-contract";
-import { MAZIAO_MODELS, authorizedVoiceRows, consumeAiUnits, maziaoModel, providerKey, saveAuthorizedVoice, saveSharedVoiceList, type MaziaoModel } from "./studio-server";
+import { MAZIAO_MODELS, authorizedVoiceRows, consumeAiUnits, consumeVoiceClone, getMember, sharedVoiceCatalog, maziaoModel, providerKey, saveAuthorizedVoice, saveSharedVoiceList, type MaziaoModel } from "./studio-server";
 import { shortenSegment } from "./studio-deepseek";
 import { removeOwnedMedia, storeNarration } from "./studio-supabase";
 import { inspectWav } from "./studio-wav";
@@ -124,6 +124,9 @@ async function systemVoices(key: string, search?: string): Promise<ProviderVoice
 export async function listMaziaoVoices(key: string, userId: string): Promise<StudioVoice[]> {
   const model = maziaoModel();
   await assertModel(key, model);
+  const member = await getMember(userId);
+  const curated = await sharedVoiceCatalog(userId);
+  const approved = new Set(curated.filter(row => row.enabled).map(row => row.voice_id));
   const grants = (await authorizedVoiceRows(userId)).filter(row => row.voice_id.startsWith("maziao:"));
   const owned = grants.filter(row => row.source === "personal");
   const ownedIds = new Set(owned.map(row => row.voice_id));
@@ -132,7 +135,7 @@ export async function listMaziaoVoices(key: string, userId: string): Promise<Stu
   const shared = items.filter(voice => {
     if (!rawId(voice.id) || !catalogOwnership(voice) || !compatible(voice)) return false;
     const id = scopedId(model, voice.id);
-    if (seen.has(id) || ownedIds.has(id)) return false;
+    if ((member.role !== "admin" && !approved.has(id)) || seen.has(id) || ownedIds.has(id)) return false;
     seen.add(id); return true;
   }).slice(0, 20).map(voice => presentVoice(voice, scopedId(model, voice.id as string), false, "Giọng tiếng Việt"));
   // Resolve only the current member's signed grants. Never return the Maziao
@@ -163,7 +166,7 @@ export async function cloneMaziaoVoice(key: string, userId: string, name: string
   const form = new FormData();
   form.set("name", name); form.set("gender", gender); form.set("model", model); form.set("language", "vi");
   form.set("previewText", ""); form.set("removeNoise", "0"); form.set("refFile", sample, "voice-sample.wav");
-  await consumeAiUnits(userId, 10);
+  await consumeVoiceClone(userId, 10);
   const result = await api(key, "/voices", { method: "POST", body: form }, Date.now() + 90000);
   const voice = result.data as ProviderVoice | undefined;
   if (!voice || !rawId(voice.id)) throw invalidResponse();
@@ -179,6 +182,8 @@ export async function authorizeMaziaoVoice(userId: string, voiceId: string) {
   const { key } = await providerKey(userId, "maziao");
   const voice = await getVoice(key, parsed.id);
   if (grant.source === "shared") {
+    const member = await getMember(userId);
+    if (member.role !== "admin" && !(await sharedVoiceCatalog(userId)).some(row => row.enabled && row.voice_id === voiceId)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này chưa được quản trị viên cấp quyền.", 403);
     if (!catalogOwnership(voice) || !compatible(voice)) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn được chia sẻ. Hãy tải lại danh sách để chọn giọng khác.", 403);
     const current = await systemVoices(key, cleanText(voice.name, 200) || undefined);
     if (!current.some(item => item.id === parsed.id && catalogOwnership(item) && compatible(item))) throw new StudioError("VOICE_NOT_AUTHORIZED", "Giọng này không còn trong thư viện hệ thống. Hãy tải lại danh sách để chọn giọng khác.", 403);
