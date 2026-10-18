@@ -8,6 +8,7 @@ import styles from "./VoiceAiPage.module.css";
 
 type Voice = { voiceId: string; name: string; category: string; group?: string; previewUrl?: string };
 type CuratedVoice = { voice_id: string; name: string; enabled: boolean; kind: "system" | "admin_clone" };
+type AdminCloneCandidate = { voice_id: string; name: string; enabled: boolean; kind: "admin_clone" };
 type AudioResult = { audioPath: string; audioMime: string; duration: number; voiceId: string; audioUrl?: string };
 const scriptTypes = ".txt,.md,.csv,.srt,.vtt";
 const MAX_SCRIPT = 6000;
@@ -17,6 +18,7 @@ export default function VoiceAiPage() {
   const account = useAccount();
   const [voices, setVoices] = useState<Voice[]>([]);
   const [curated, setCurated] = useState<CuratedVoice[]>([]);
+  const [adminCloneCandidates, setAdminCloneCandidates] = useState<AdminCloneCandidate[]>([]);
   const [selected, setSelected] = useState("");
   const [text, setText] = useState("");
   const [speed, setSpeed] = useState(1);
@@ -47,7 +49,7 @@ export default function VoiceAiPage() {
       if (!vr.ok) throw new Error(vd.error || "Không tải được danh sách giọng.");
       if (!cr.ok) throw new Error(cd.error || "Không tải được danh sách giọng được duyệt.");
       const items = Array.isArray(vd.voices) ? vd.voices as Voice[] : [];
-      setVoices(items); setCurated(Array.isArray(cd.voices) ? cd.voices : []);
+      setVoices(items); setCurated(Array.isArray(cd.voices) ? cd.voices : []); setAdminCloneCandidates(Array.isArray(cd.candidates) ? cd.candidates : []);
       setSelected(previous => items.some(item => item.voiceId === previous) ? previous : items[0]?.voiceId || "");
     } catch (err) { setError(friendlyError(err)); }
     finally { setBusy(""); }
@@ -57,6 +59,12 @@ export default function VoiceAiPage() {
   useEffect(() => () => { if (activeSrc.current) URL.revokeObjectURL(activeSrc.current); }, []);
 
   const visible = voices.filter(voice => (group === "all" || (group === "personal" ? voice.category === "cloned" : voice.category !== "cloned")) && (!search.trim() || voice.name.toLocaleLowerCase("vi").includes(search.toLocaleLowerCase("vi").trim())));
+  const shareableVoices = (() => {
+    const byId = new Map<string, Voice>();
+    for (const voice of voices) byId.set(voice.voiceId, voice);
+    for (const candidate of adminCloneCandidates) if (!byId.has(candidate.voice_id)) byId.set(candidate.voice_id, { voiceId: candidate.voice_id, name: candidate.name, category: "cloned" });
+    return [...byId.values()];
+  })();
   const cloning = account.status === "ready" ? (account.account as typeof account.account & { voiceCloning?: { used: number; limit: number; remaining: number | null; unlimited: boolean } })?.voiceCloning : undefined;
 
   async function readScript(file: File) {
@@ -181,7 +189,7 @@ export default function VoiceAiPage() {
           </section>
         </aside>
       </div>
-      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{voices.map(voice => { const enabled=curated.some(item => item.voice_id === voice.voiceId && item.enabled); const isClone=voice.category === "cloned"; return <label className={styles.catalogRow} key={voice.voiceId}><span><strong>{voice.name}</strong><small>{isClone ? "Giọng nhân bản của quản trị viên" : "Giọng thư viện"} · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small></span><input type="checkbox" checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice,e.target.checked)}/></label>; })}</div></section>}
+      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{shareableVoices.map(voice => { const enabled=curated.some(item => item.voice_id === voice.voiceId && item.enabled); const isClone=voice.category === "cloned"; return <label className={styles.catalogRow} key={voice.voiceId}><span><strong>{voice.name}</strong><small>{isClone ? "Giọng nhân bản của quản trị viên" : "Giọng thư viện"} · {enabled ? "Đang dùng chung" : "Chưa chia sẻ"}</small></span><input type="checkbox" checked={enabled} disabled={Boolean(catalogBusy)} onChange={e => void approve(voice,e.target.checked)}/></label>; })}</div></section>}
     </>}
   </main>;
 }
