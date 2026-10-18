@@ -6,6 +6,7 @@ import { getVisibleModules, moduleHref } from "@/lib/studio-modules";
 import { PlatformIcon } from "./PlatformIcon";
 import common from "./Platform.module.css";
 import styles from "./Dashboard.module.css";
+import tones from "./ModuleTone.module.css";
 
 const filters = [
   { id: "all", title: "Tất cả công cụ" },
@@ -23,10 +24,10 @@ export function ToolCatalog() {
     <div className={common.sectionHeading}><div><h2 id="catalog-title">Bộ công cụ của bạn<span className={common.sectionCount}>{modules.length}</span></h2><p>Chọn công cụ phù hợp. Bắt đầu từ điều bạn muốn tạo.</p></div><span className={styles.catalogNote}><PlatformIcon name="layers" size={16} />Một nơi, nhiều khả năng</span></div>
     <div className={styles.filters} role="group" aria-label="Lọc công cụ theo mục đích">{filters.map(item => <button type="button" key={item.id} aria-pressed={filter === item.id} className={filter === item.id ? styles.filterActive : ""} onClick={() => setFilter(item.id)}>{item.title}</button>)}</div>
     <div className={styles.toolGrid}>
-      {visible.map(module => <Link className={`${styles.toolCard} ${styles[module.tone]}`} href={moduleHref(module)} key={module.id} aria-label={`Khám phá ${module.title}`}>
+      {visible.map(module => <Link className={`${styles.toolCard} ${tones[module.tone]}`} href={moduleHref(module)} key={module.id} aria-label={`Khám phá ${module.title}`}>
         <div className={styles.toolCardTop}><span className={styles.toolIcon}><PlatformIcon name={module.icon} size={27} /></span><span className={styles.toolCategory}>{categoryLabels[module.category]}</span></div>
         <h3>{module.title}</h3><p>{module.description}</p>
-        <div className={styles.toolCardBottom}><span>Khám phá công cụ<PlatformIcon name="arrow" size={16} /></span>{module.id === "review" ? <span className={styles.availableBadge}>Có Studio hiện tại</span> : <span className={styles.preparingBadge}>Đang chuẩn bị</span>}</div>
+        <div className={styles.toolCardBottom}><span className={styles.toolAction}>Mở công cụ<PlatformIcon name="arrow" size={17} /></span>{module.id === "review" ? <span className={styles.availableBadge}>Có Studio hiện tại</span> : <span className={styles.preparingBadge}>Đang chuẩn bị</span>}</div>
       </Link>)}
     </div>
     <span className="visually-hidden" role="status">Đang hiển thị {visible.length} công cụ.</span>

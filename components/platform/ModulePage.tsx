@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { getVisibleModules, moduleHref, type AiModule } from "@/lib/studio-modules";
 import { PlatformIcon } from "./PlatformIcon";
+import tones from "./ModuleTone.module.css";
 import styles from "./ModulePage.module.css";
 
 export default function ModulePage({ module }: { module: AiModule }) {
   const related = getVisibleModules().filter(item => item.id !== module.id).slice(0, 3);
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${tones[module.tone]}`}>
       <nav aria-label="Đường dẫn" className={styles.breadcrumb}>
         <Link href="/">Tổng quan</Link>
         <span aria-hidden="true">/</span>
@@ -15,7 +16,7 @@ export default function ModulePage({ module }: { module: AiModule }) {
       </nav>
 
       <header className={styles.heading}>
-        <div className={`${styles.moduleIcon} ${styles[module.tone]}`}>
+        <div className={styles.moduleIcon}>
           <PlatformIcon name={module.icon} size={26} />
         </div>
         <div className={styles.headingText}>
@@ -28,7 +29,7 @@ export default function ModulePage({ module }: { module: AiModule }) {
 
       <section className={styles.workspace} aria-labelledby="workspace-status">
         <div className={styles.preparation}>
-          <div className={`${styles.preparationIcon} ${styles[module.tone]}`} aria-hidden="true">
+          <div className={styles.preparationIcon} aria-hidden="true">
             <PlatformIcon name={module.icon} size={32} />
           </div>
           <p className={styles.sectionLabel}>MỘT KHÔNG GIAN RIÊNG CHO CÔNG VIỆC CỦA BẠN</p>
@@ -72,8 +73,8 @@ export default function ModulePage({ module }: { module: AiModule }) {
         </div>
         <div className={styles.relatedGrid}>
           {related.map(item => (
-            <Link key={item.id} href={moduleHref(item)} className={styles.relatedCard}>
-              <span className={`${styles.relatedIcon} ${styles[item.tone]}`}><PlatformIcon name={item.icon} size={21} /></span>
+            <Link key={item.id} href={moduleHref(item)} className={`${styles.relatedCard} ${tones[item.tone]}`}>
+              <span className={styles.relatedIcon}><PlatformIcon name={item.icon} size={21} /></span>
               <span><strong>{item.title}</strong><span className={styles.relatedNote}>Khám phá không gian</span></span>
               <span className={styles.relatedArrow} aria-hidden="true">→</span>
             </Link>

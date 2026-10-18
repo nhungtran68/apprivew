@@ -1,0 +1,78 @@
+/* Shared color identities for cards, navigation and individual module pages. */
+.violet {
+  --module-accent: #7142c8;
+  --module-accent-end: #895cdf;
+  --module-ink: #39215f;
+  --module-muted: #604e75;
+  --module-surface: #f0e8ff;
+  --module-surface-end: #e7dafa;
+  --module-soft: #faf7ff;
+  --module-border: #d8c5ef;
+  --module-halo: #7142c829;
+  --module-nav: #c5a8ff;
+}
+
+.blue {
+  --module-accent: #255fcb;
+  --module-accent-end: #4b80e2;
+  --module-ink: #173b72;
+  --module-muted: #476080;
+  --module-surface: #e8f1ff;
+  --module-surface-end: #dbe9fe;
+  --module-soft: #f6f9ff;
+  --module-border: #bfd4f5;
+  --module-halo: #255fcb24;
+  --module-nav: #a2c7ff;
+}
+
+.amber {
+  --module-accent: #a95313;
+  --module-accent-end: #d87525;
+  --module-ink: #683812;
+  --module-muted: #805634;
+  --module-surface: #fff0dc;
+  --module-surface-end: #ffe4c2;
+  --module-soft: #fff9f0;
+  --module-border: #f0cda3;
+  --module-halo: #a9531324;
+  --module-nav: #ffc789;
+}
+
+.rose {
+  --module-accent: #bd3d67;
+  --module-accent-end: #dd6186;
+  --module-ink: #652740;
+  --module-muted: #79455b;
+  --module-surface: #ffeaf0;
+  --module-surface-end: #ffdce7;
+  --module-soft: #fff7fa;
+  --module-border: #eebdd0;
+  --module-halo: #bd3d6726;
+  --module-nav: #ffaec6;
+}
+
+.green {
+  --module-accent: #117b60;
+  --module-accent-end: #269b79;
+  --module-ink: #184e40;
+  --module-muted: #3a6656;
+  --module-surface: #e0f5ed;
+  --module-surface-end: #cef0e2;
+  --module-soft: #f4fcf8;
+  --module-border: #aad9c6;
+  --module-halo: #117b6026;
+  --module-nav: #8bdcc0;
+}
+
+.slate {
+  --module-accent: #0b748d;
+  --module-accent-end: #1597af;
+  --module-ink: #194e60;
+  --module-muted: #3d6471;
+  --module-surface: #e2f4f9;
+  --module-surface-end: #cfedf5;
+  --module-soft: #f5fbfd;
+  --module-border: #add5e1;
+  --module-halo: #0b748d24;
+  --module-nav: #93dce9;
+}

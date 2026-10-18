@@ -34,6 +34,9 @@ Nguồn triển khai chính:
 - [AccountProvider](../components/platform/AccountProvider.tsx): lấy trạng thái thành viên từ API hiện có.
 - [ToolSearch](../components/platform/ToolSearch.tsx): tìm module theo tên và mô tả, hỗ trợ từ khóa tiếng Việt có hoặc không dấu.
 - [ModulePage](../components/platform/ModulePage.tsx): trang chuẩn bị dùng chung cho các module.
+- [ModuleTone](../components/platform/ModuleTone.module.css): biến màu dùng chung cho nền, chữ, biểu tượng, nút và điều hướng của từng module.
+
+Nhận diện màu gồm giọng nói tím, video xanh dương, kịch bản cam, review hồng, ảnh xanh ngọc và công cụ khác cyan. Trường `tone` trong registry chọn bộ biến tương ứng; khóa `slate` hiện mang màu cyan để giữ nguyên hợp đồng cấu hình. Muốn đổi màu một module, sửa bộ biến tại `ModuleTone.module.css` để Dashboard, menu và trang chức năng cập nhật đồng nhất. Tên, biểu tượng và trạng thái vẫn hiển thị bằng chữ; màu không thay thế nội dung hoặc quyền truy cập.
 - [Studio](../components/Studio.tsx): quy trình tạo và lưu video hiện có.
 
 ## Bản đồ route

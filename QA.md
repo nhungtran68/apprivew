@@ -1,5 +1,15 @@
 # Kiểm chứng giao diện, Supabase và AI
 
+## Nhận diện màu từng công cụ — 18/10/2026
+
+Theo ảnh phản hồi của người dùng, thẻ công cụ được đổi từ nền trắng sang sáu nền có màu rõ ràng: tím, xanh dương, cam, hồng, xanh ngọc và cyan. Nền, chữ, biểu tượng, nút và điều hướng dùng cùng bộ biến trong `ModuleTone.module.css`. Trang module và các thẻ liên quan kế thừa đúng màu của công cụ tương ứng; giữ nguyên URL, dữ liệu, tài khoản và trạng thái trang khung.
+
+- Production build và TypeScript đạt. Không thêm dependency hoặc thay đổi xử lý AI.
+- Bốn nhóm kiểm tra trình duyệt trên bản production cục bộ đều đạt: sáu bộ màu/tương phản; lưới thẻ ở **320, 360, 430, 768, 1440 px**; sáu trang module ở **360 px**; tìm kiếm, bộ lọc, menu và bàn phím.
+- Đo từ CSS thực trong trình duyệt: chữ trắng trên nút đạt **5,21–6,33:1**; mức thấp nhất trong các cặp chữ/nền được kiểm tra là **5,19:1**, gồm hai đầu màu của nền chuyển sắc. Đây là kiểm tra các cặp màu này, không phải chứng nhận toàn bộ WCAG.
+- Không tràn ngang toàn trang. Tiêu đề trang, thẻ Dashboard và thẻ công cụ liên quan đều dùng đúng biến màu riêng. Bộ lọc trả đúng 6/1/3/1 công cụ; tìm kiếm bằng Enter và menu điện thoại hoạt động. Vòng focus bàn phím rộng 3 px, nhìn thấy ở màn hình 320 px.
+- Không có lỗi JavaScript/hydration, tài nguyên JS/CSS lỗi, yêu cầu AI hoặc tải sớm Studio/FFmpeg. Kiểm tra dùng Chrome Headless 155 với tài khoản chưa đăng nhập được mô phỏng; chưa thay thế thử trên điện thoại vật lý/Safari iOS. Các bài khôi phục và nghiệp vụ đã kiểm tra ở đợt trước không được chạy lại thủ công cho thay đổi màu này.
+
 ## Dashboard nền tảng AI — 18/10/2026
 
 Giao diện mới được xây trên commit `330346c8` để giữ các sửa lỗi lời đọc và thời lượng trước đó. Trang `/` trở thành Dashboard; Studio, dự án, giọng nói và hồ sơ hiện tại được giữ tại `/studio` cùng các view đã có. Không thay schema, biến môi trường, khóa nhà cung cấp hoặc cơ chế trừ lượt.
