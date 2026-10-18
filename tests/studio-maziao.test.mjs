@@ -54,7 +54,7 @@ async function harness() {
       generateSpeech: async () => { throw new Error("Maziao selection must not use ElevenLabs generation"); },
     }],
     [path.join(root, "lib/studio-deepseek.ts"), {
-      shortenSegment: async (_key, segment) => { shortened.push(segment.text); return segment.text.length > 10 ? segment.text.slice(0, 10) : segment.text; },
+      shortenSegment: async (_key, segment, _duration, charge) => { await charge?.(); shortened.push(segment.text); return segment.text.length > 10 ? segment.text.slice(0, 10) : segment.text; },
     }],
     [path.join(root, "lib/studio-supabase.ts"), {
       removeOwnedMedia: async (userId, paths) => {
@@ -124,11 +124,13 @@ function wavBytes(duration = 1, { sampleRate = 24000, channels = 1, bits = 16, j
 let passed = 0;
 async function check(name, run) { await run(); console.log(`PASS ${name}`); passed++; }
 const scoped = (id, model = "vieten_speech") => `maziao:${model}:${id}`;
-const config = () => Response.json({ data: { ttsModels: [{ id: "vieten_speech", support_cloning: true, supported_languages: ["vi", "en"] }] } });
+const config = () => Response.json({ data: { ttsModels: ["vieten_speech", "lingual_speech_v2"].map(id => ({ id, support_cloning: true, supported_languages: ["vi", "en"] })) } });
 // The live system catalog omits ownership fields; its fixed server-selected
 // system query supplies public membership evidence, never a detail response alone.
 const voice = (id, extra = {}) => ({ id, name: id, language: "vi", modelId: "vieten_speech", refFile: `https://r2-storage.maziao.com/voices/${id}.wav`, refText: "Trong vườn hoa nở rực rỡ.", previewUrl: `https://r2-storage.maziao.com/samples/${id}.wav`, ...extra });
 const sampleSegments = () => [{ start: 0, end: 3, text: "Xin chào." }, { start: 4, end: 7, text: "Một câu chuyện nhỏ." }];
+const shortSpeechVoice = () => scoped("publicVoice", "lingual_speech_v2");
+const exactMinimumText = "Xin chào, đây là lời đọc tiếng Việt thử nghiệm của ứng dụng Lời Kể. Chúc bạn có một ngày vui vẻ nhé!";
 const isApi = request => request.url.startsWith("https://app.maziao.com/api/");
 async function provider(h) { return h.entry("lib/studio-maziao.ts"); }
 
@@ -342,12 +344,12 @@ await check("provider errors never reflect API secrets, private text or raw prov
 await check("speech submits the entire timeline once, polls at six seconds, and stores actual WAV durations", async () => {
   const h = await harness(), maziao = await provider(h), original = sampleSegments();
   h.setHandler(speechHandler(h, { status: "processing-first", onSubmit: body => {
-    assert.equal(body.mode, "multiParts"); assert.equal(body.modelId, "vieten_speech");
+    assert.equal(body.mode, "multiParts"); assert.equal(body.modelId, "lingual_speech_v2");
     assert.deepEqual(body.parts, original.map(item => ({ text: item.text, voiceId: "publicVoice", speed: 1, pitch: 1 })));
     assert.equal(body.config.export_srt, false);
   } }));
-  const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: original, duration: 7 });
-  assert.equal(result.provider, "maziao"); assert.equal(result.voiceId, scoped("publicVoice"));
+  const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: original, duration: 7 });
+  assert.equal(result.provider, "maziao"); assert.equal(result.voiceId, shortSpeechVoice());
   assert.equal(result.usage.credits, 34.5); assert.equal(result.usage.jobs, 1);
   assert.deepEqual(Array.from(result.segments, item => item.duration), [1, 2]);
   assert.deepEqual(Array.from(result.segments, item => item.revised), [false, false]);
@@ -362,11 +364,87 @@ await check("speech submits the entire timeline once, polls at six seconds, and 
   }
 });
 
+await check("vieten rejects totals below 100 characters before network, quota or script changes", async () => {
+  const h = await harness(), maziao = await provider(h);
+  assert.equal(exactMinimumText.length, 100);
+  const segments = [{ start: 0, end: 20, text: exactMinimumText.slice(0, 99) }];
+  const original = JSON.stringify(segments);
+  h.setHandler(() => { throw new Error("Short script must fail before any provider read or submission"); });
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 20 }), { code: "MAZIAO_TEXT_TOO_SHORT", action: "script" });
+  assert.equal(h.requests.length, 0); assert.equal(h.charged.length, 0); assert.equal(h.usage.length, 0);
+  assert.equal(JSON.stringify(segments), original); assert.equal(h.shortened.length, 0);
+});
+
+await check("vieten submits an exact 100-character script unchanged and logs its validated task ID", async () => {
+  const h = await harness(), maziao = await provider(h);
+  const segments = [{ start: 0, end: 20, text: exactMinimumText }];
+  h.setHandler(speechHandler(h, { durations: [2], onSubmit: body => {
+    assert.equal(body.modelId, "vieten_speech");
+    assert.equal(body.parts.length, 1); assert.equal(body.parts[0].text, exactMinimumText);
+  } }));
+  const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 20 });
+  assert.equal(result.segments[0].text, exactMinimumText); assert.equal(result.segments[0].revised, false);
+  assert.equal(result.usage.jobs, 1); assert.deepEqual(h.charged, [1]);
+  assert.equal(h.usage[0].taskId, "task_1"); assert.equal(h.usage[0].characters, 100);
+  assert.ok(!JSON.stringify(h.usage).includes(exactMinimumText));
+});
+
+await check("vieten preflight counts the batch total without assuming a minimum for each part", async () => {
+  const h = await harness(), maziao = await provider(h);
+  const segments = [{ start: 0, end: 10, text: exactMinimumText.slice(0, 40) }, { start: 10, end: 20, text: exactMinimumText.slice(40) }];
+  h.setHandler(speechHandler(h, { durations: [1, 2], onSubmit: body => {
+    assert.deepEqual(body.parts.map(part => part.text), segments.map(segment => segment.text));
+  } }));
+  const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 20 });
+  assert.equal(result.segments.length, 2); assert.deepEqual(h.charged, [1]);
+  assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+});
+
+await check("vieten stops a short offending batch before rewriting or charging a replacement job", async () => {
+  const h = await harness(), maziao = await provider(h);
+  const segments = [{ start: 0, end: 20, text: exactMinimumText }, { start: 21, end: 24, text: "Xin chào." }];
+  h.setHandler(speechHandler(h, { durations: [2, 6] }));
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 24 }), { code: "TIMING_NEEDS_EDIT", action: "script" });
+  assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+  assert.deepEqual(h.charged, [2]); assert.equal(h.shortened.length, 0);
+  assert.equal(h.usage.length, 1); assert.equal(h.media.size, 0); assert.equal(segments[1].text, "Xin chào.");
+});
+
+await check("vieten never pads a shortened retry below its minimum or submits a second paid job", async () => {
+  const h = await harness(), maziao = await provider(h);
+  const segments = [{ start: 0, end: 3, text: exactMinimumText }];
+  h.setHandler(speechHandler(h, { durations: [6] }));
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 3 }), { code: "TIMING_NEEDS_EDIT", action: "script" });
+  assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+  // One accepted Maziao job and one attempted rewrite; no replacement quota.
+  assert.deepEqual(h.charged, [1, 1]); assert.deepEqual(h.shortened, [exactMinimumText]);
+  assert.equal(h.usage.length, 1); assert.equal(h.media.size, 0); assert.equal(segments[0].text, exactMinimumText);
+});
+
+await check("accepted job IDs and actual credits remain logged when audio validation fails", async () => {
+  const h = await harness(), maziao = await provider(h);
+  const valid = speechHandler(h, { durations: [1], totalCost: 35.25 });
+  h.setHandler(request => isApi(request) ? valid(request) : new Response(new Uint8Array([1, 2, 3, 4])));
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: [{ start: 0, end: 20, text: exactMinimumText }], duration: 20 }), { code: "INVALID_AUDIO" });
+  assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+  assert.equal(h.usage.length, 1); assert.equal(h.usage[0].taskId, "task_1"); assert.equal(h.usage[0].credits, 35.25);
+  for (const secret of [h.key, exactMinimumText, "https://", "remainingCredits"]) assert.ok(!JSON.stringify(h.usage).includes(secret));
+  assert.equal(h.media.size, 0);
+});
+
+await check("unvalidated provider task IDs are never logged, polled or used for recovery", async () => {
+  const h = await harness(), maziao = await provider(h);
+  h.setHandler(request => request.url.endsWith("/configs") ? config() : Response.json({ data: { taskId: `https://private.invalid/${h.key}`, totalCost: 20 } }));
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: sampleSegments(), duration: 7 }), { code: "MAZIAO_INVALID_RESPONSE" });
+  assert.equal(h.usage.length, 0); assert.ok(!h.requests.some(request => request.url.endsWith("/tts/status")));
+  assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+});
+
 await check("foreign, insecure and credential-bearing audio URLs never receive requests or secrets", async () => {
   for (const url of ["http://r2-storage.maziao.com/x.wav", "https://127.0.0.1/x.wav", "https://r2-storage.maziao.com.attacker.invalid/x.wav", "https://user:password@r2-storage.maziao.com/x.wav", "https://r2-storage.maziao.com:8443/x.wav", "https://r2-storage.maziao.com/x.wav#fragment"]) {
     const h = await harness(), maziao = await provider(h);
     h.setHandler(speechHandler(h, { durations: [1], urls: [url] }));
-    await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: [sampleSegments()[0]], duration: 3 }), { code: "MAZIAO_INVALID_RESPONSE" });
+    await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: [sampleSegments()[0]], duration: 3 }), { code: "MAZIAO_INVALID_RESPONSE" });
     assert.ok(h.requests.every(isApi)); assert.equal(h.media.size, 0);
   }
 });
@@ -374,7 +452,7 @@ await check("foreign, insecure and credential-bearing audio URLs never receive r
 await check("a submit transport failure never blindly creates a second paid job", async () => {
   const h = await harness(), maziao = await provider(h);
   h.setHandler(request => { if (request.url.endsWith("/configs")) return config(); throw new Error(`Network failure ${h.key}`); });
-  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: sampleSegments(), duration: 7 }), error => error.code === "MAZIAO_UNAVAILABLE" && !error.message.includes(h.key));
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: sampleSegments(), duration: 7 }), error => error.code === "MAZIAO_UNAVAILABLE" && !error.message.includes(h.key));
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
   assert.equal(h.media.size, 0);
 });
@@ -387,7 +465,7 @@ await check("a pending provider job reaches a bounded timeout without submitting
     assert.ok(request.url.endsWith("/tts/status"));
     return Response.json({ data: [{ id: "slow_task", status: "processing", completedTasks: 0, totalTasks: 2 }] });
   });
-  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: sampleSegments(), duration: 7 }), { code: "MAZIAO_TIMEOUT" });
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: sampleSegments(), duration: 7 }), { code: "MAZIAO_TIMEOUT" });
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
   assert.equal(h.waits.reduce((total, value) => total + value, 0), 240000);
   assert.equal(h.media.size, 0);
@@ -396,7 +474,7 @@ await check("a pending provider job reaches a bounded timeout without submitting
 await check("failed provider tasks stop without downloads, hidden retries or secret-bearing messages", async () => {
   const h = await harness(), maziao = await provider(h);
   h.setHandler(speechHandler(h, { status: "failed" }));
-  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: sampleSegments(), duration: 7 }), error => error.code === "MAZIAO_TASK_FAILED" && !error.message.includes(h.key));
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: sampleSegments(), duration: 7 }), error => error.code === "MAZIAO_TASK_FAILED" && !error.message.includes(h.key));
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
   assert.ok(h.requests.every(isApi)); assert.equal(h.media.size, 0);
 });
@@ -417,7 +495,7 @@ await check("overlong speech retries only the offending segment and never trunca
     const index = Number(request.url.match(/_(\d+)\.wav$/)[1]);
     return new Response(wavBytes(activeDurations[index]));
   });
-  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 7 }), { code: "TIMING_NEEDS_EDIT", action: "script" });
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments, duration: 7 }), { code: "TIMING_NEEDS_EDIT", action: "script" });
   assert.equal(submissions, 3); assert.equal(h.shortened.length, 2); assert.equal(h.media.size, 0); assert.equal(h.deleted.length, 0);
   assert.equal(segments[1].text, "Một câu chuyện nhỏ.");
   assert.equal(h.usage.length, submissions); assert.equal(h.usage.reduce((sum, event) => sum + event.credits, 0), 10 * submissions);
@@ -439,7 +517,7 @@ await check("successful timing corrections include the cost of every accepted ge
       const index = Number(request.url.match(/_(\d+)\.wav$/)[1]);
       return new Response(wavBytes(durations[index]));
     });
-    const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 7 });
+    const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments, duration: 7 });
     assert.equal(submissions, 2); assert.equal(result.usage.jobs, submissions);
     assert.equal(result.usage.credits, costs.includes(null) ? null : 10 * submissions);
     assert.deepEqual(Array.from(result.segments, segment => segment.duration), [1, 2]);
@@ -452,7 +530,7 @@ await check("missing or invalid provider costs stay unknown rather than appearin
   for (const totalCost of [undefined, null, "34.5", -1, 1000000001]) {
     const h = await harness(), maziao = await provider(h);
     h.setHandler(speechHandler(h, { durations: [1], totalCost, omitCost: totalCost === undefined }));
-    const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: [sampleSegments()[0]], duration: 3 });
+    const result = await maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: [sampleSegments()[0]], duration: 3 });
     assert.equal(result.usage.credits, null); assert.equal(result.usage.jobs, 1); assert.equal(h.usage[0].credits, null);
     assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
   }
@@ -461,7 +539,7 @@ await check("missing or invalid provider costs stay unknown rather than appearin
 await check("partial storage failure removes the narration already stored for the member", async () => {
   const h = await harness(), maziao = await provider(h);
   h.setHandler(speechHandler(h)); h.failStorageAt(1);
-  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments: sampleSegments(), duration: 7 }), /Simulated storage failure/);
+  await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), segments: sampleSegments(), duration: 7 }), /Simulated storage failure/);
   assert.equal(h.media.size, 0); assert.deepEqual(h.deleted, [`${alice}/narration/0.wav`]);
 });
 

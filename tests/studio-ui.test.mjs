@@ -13,7 +13,7 @@ import ts from "typescript";
 
 const sourcePath = fileURLToPath(new URL("../components/Studio.tsx", import.meta.url));
 const source = readFileSync(sourcePath, "utf8");
-const exportsForTests = "\nexport {restoreArchive,freshProject,applyProjectChanges,applySegmentChange,scriptKey,intentKey,safeProfile,applySavedProfile,configurationFrom,affectsExport};";
+const exportsForTests = "\nexport {restoreArchive,freshProject,applyProjectChanges,applySegmentChange,scriptKey,intentKey,safeProfile,applySavedProfile,configurationFrom,affectsExport,voiceScriptMinimumHint};";
 const compiled = ts.transpileModule(source + exportsForTests, {
   fileName: sourcePath,
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -28,7 +28,7 @@ const downloadModule = { exports: {} };
 new Function("module", "exports", downloadCompiled)(downloadModule, downloadModule.exports);
 const componentRequire = (specifier) => specifier === "@/lib/video-download" ? downloadModule.exports : baseRequire(specifier);
 new Function("require", "module", "exports", compiled)(componentRequire, evaluated, evaluated.exports);
-const { restoreArchive, freshProject, applyProjectChanges, applySegmentChange, scriptKey, intentKey, safeProfile, applySavedProfile, configurationFrom, affectsExport, default: Studio } = evaluated.exports;
+const { restoreArchive, freshProject, applyProjectChanges, applySegmentChange, scriptKey, intentKey, safeProfile, applySavedProfile, configurationFrom, affectsExport, voiceScriptMinimumHint, default: Studio } = evaluated.exports;
 
 const audio = { start: 0, end: 3, text: "Lời kể thử nghiệm", audioBase64: "AQID", audioMime: "audio/wav", duration: 1 };
 const archive = {
@@ -119,6 +119,33 @@ test("Maziao readiness works without ElevenLabs and an explicitly unavailable pr
   assert.equal(unavailable.voiceConfigured, false, "an ElevenLabs key must not enable a disconnected Maziao selection");
   const legacy = configurationFrom({ elevenConfigured: true }, "local");
   assert.equal(legacy.voiceProvider, "eleven"); assert.equal(legacy.voiceConfigured, true);
+});
+
+test("only Vieten voices require 100 cleaned characters across the whole script, without padding or changing it", () => {
+  const segments = [{ ...audio, text: `  ${"a".repeat(49)}  ` }, { ...audio, text: `\n${"b".repeat(50)}\n` }];
+  const original = structuredClone(segments);
+  assert.ok(voiceScriptMinimumHint("maziao:vieten_speech:voice-1", segments).includes("ít nhất 100 ký tự"));
+  assert.equal(voiceScriptMinimumHint("maziao:vieten_speech:voice-1", [{ ...segments[0], text: "a".repeat(50) }, segments[1]]), "");
+  for (const voiceId of ["maziao:lingual_speech_v2:voice-1", "eleven-voice", "", "maziao:vieten_speech:"]) assert.equal(voiceScriptMinimumHint(voiceId, segments), "");
+  assert.deepEqual(segments, original);
+});
+
+test("the actual speech screen explains Vieten's short-script limit while leaving manual audio and other models available", () => {
+  for (const [voiceId, characters, blocked] of [["maziao:vieten_speech:voice-1", 99, true], ["maziao:vieten_speech:voice-1", 100, false], ["maziao:lingual_speech_v2:voice-1", 30, false], ["eleven-voice", 30, false]]) {
+    const initialProject = `{ ...freshProject("member"), source: new Blob(["video"], { type: "video/mp4" }), duration: 20, step: 3, voiceId: ${JSON.stringify(voiceId)}, segments: [{ start: 0, end: 20, text: ${JSON.stringify("a".repeat(characters))} }] }`;
+    const configuredSource = source.replace('useState<Project>(() => freshProject("local"))', `useState<Project>(() => (${initialProject}))`)
+      .replace('useState<Configuration>({ userId: "local", deepseek: false, eleven: false })', 'useState<Configuration>({ userId: "member", deepseek: true, eleven: false, voiceProvider: "maziao", voiceConfigured: true, maziaoConfigured: true })');
+    const output = ts.transpileModule(configuredSource, { fileName: sourcePath, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+    const viewModule = { exports: {} };
+    new Function("require", "module", "exports", output)(componentRequire, viewModule, viewModule.exports);
+    const html = renderToString(React.createElement(viewModule.exports.default));
+    const createButton = html.match(/<button\b([^>]*)>(?:(?!<\/button>)[\s\S])*Tạo giọng đọc<\/button>/)?.[1];
+    assert.equal(typeof createButton, "string");
+    assert.equal(createButton.includes("disabled"), blocked, voiceId);
+    assert.equal(html.includes("Giọng này cần ít nhất 100 ký tự lời thoại."), blocked);
+    const manualButton = html.match(/<button\b([^>]*)>(?:(?!<\/button>)[\s\S])*Tải bản thu lời thoại<\/button>/)?.[1];
+    assert.equal(typeof manualButton, "string"); assert.equal(manualButton.includes("disabled"), false);
+  }
 });
 
 test("the actual voice screen presents provider-specific clone requirements while keeping ElevenLabs uploads", () => {

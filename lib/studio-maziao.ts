@@ -18,6 +18,8 @@ type Audio = { wav: Uint8Array; duration: number; sampleRate: number; channels: 
 const invalidResponse = () => new StudioError("MAZIAO_INVALID_RESPONSE", "Maziao trả kết quả chưa hợp lệ. Vui lòng thử lại sau.", 502);
 const rawId = (value: unknown): value is string => typeof value === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
 const scopedId = (model: MaziaoModel, id: string) => `maziao:${model}:${id}`;
+const belowObservedMinimum = (model: MaziaoModel, segments: StudioSegment[]) => model === "vieten_speech" && segments.reduce((sum, segment) => sum + segment.text.length, 0) < 100;
+const minimumTimingError = () => new StudioError("TIMING_NEEDS_EDIT", "Maziao cần ít nhất 100 ký tự cho lần tạo lại với model tiếng Việt này. Hãy chỉnh kịch bản để khớp cảnh rồi tạo lại; app không tự thêm lời.", 422, "script");
 export function parseMaziaoVoiceId(value: string) {
   const [provider, model, id, extra] = value.split(":");
   if (provider !== "maziao" || extra !== undefined || !MAZIAO_MODELS.some(item => item === model) || !rawId(id)) throw new StudioError("INVALID_VOICE", "Chọn một giọng Maziao trong danh sách của bạn.");
@@ -217,7 +219,7 @@ async function synthesizeBatch(key: string, userId: string, voiceId: string, seg
   // Actual provider credits, never estimated as 1 character = 1 credit.
   const credits = typeof data.totalCost === "number" && Number.isFinite(data.totalCost) && data.totalCost >= 0 && data.totalCost <= 1000000000 ? data.totalCost : null;
   costs.push(credits);
-  console.info(JSON.stringify({ event: "studio_voice_usage", provider: "maziao", model: parsed.model, characters: segments.reduce((sum, segment) => sum + segment.text.length, 0), credits, segments: segments.length, elapsedMs: Date.now() - started }));
+  console.info(JSON.stringify({ event: "studio_voice_usage", provider: "maziao", model: parsed.model, taskId: data.taskId, characters: segments.reduce((sum, segment) => sum + segment.text.length, 0), credits, segments: segments.length, elapsedMs: Date.now() - started }));
   while (Date.now() < deadline) {
     const polled = await api(key, "/tts/status", { method: "POST", body: JSON.stringify({ ids: [data.taskId] }) }, deadline);
     const job = Array.isArray(polled.data) ? (polled.data as SpeechJob[]).find(item => item?.id === data.taskId) : undefined;
@@ -236,6 +238,9 @@ async function synthesizeBatch(key: string, userId: string, voiceId: string, seg
 
 export async function generateMaziaoSpeech(input: { key: string; userId: string; voiceId: string; segments: StudioSegment[]; duration: number }) {
   const parsed = parseMaziaoVoiceId(input.voiceId), deadline = Date.now() + 240000;
+  // Live vieten_speech requests reject short totals. Keep this observed limit
+  // scoped to that engine; never pad the member's script or assume other models.
+  if (belowObservedMinimum(parsed.model, input.segments)) throw new StudioError("MAZIAO_TEXT_TOO_SHORT", "Model Maziao tiếng Việt này cần ít nhất 100 ký tự cho mỗi lần tạo lời đọc. Hãy chỉnh kịch bản; app không tự thêm lời.", 422, "script");
   await assertModel(input.key, parsed.model, deadline);
   const segments = input.segments.map(segment => ({ ...segment }));
   const costs: (number | null)[] = [];
@@ -244,13 +249,18 @@ export async function generateMaziaoSpeech(input: { key: string; userId: string;
   for (let attempt = 0; attempt < 2; attempt++) {
     const indexes = segments.flatMap((segment, index) => audio[index].duration > segment.end - segment.start ? [index] : []);
     if (!indexes.length) break;
+    // Shortening cannot rescue a replacement batch already below the minimum.
+    // Stop before spending on either rewriting or another Maziao submission.
+    if (belowObservedMinimum(parsed.model, indexes.map(index => segments[index]))) throw minimumTimingError();
     if (Date.now() + 30000 >= deadline) throw new StudioError("TIMING_NEEDS_EDIT", "Lời đọc dài hơn cảnh. Rút gọn kịch bản rồi tạo lại; app không cắt mất lời.", 422, "script");
     const { key } = await providerKey(input.userId, "deepseek");
     for (const index of indexes) {
       if (Date.now() + 30000 >= deadline) throw new StudioError("TIMING_NEEDS_EDIT", "Cần rút gọn thêm lời thoại để khớp cảnh. Chỉnh kịch bản rồi tạo lại.", 422, "script");
       segments[index].text = await shortenSegment(key, segments[index], audio[index].duration, () => consumeAiUnits(input.userId, 1), Math.min(30000, deadline - Date.now() - 30000));
     }
-    const replacements = await synthesizeBatch(input.key, input.userId, input.voiceId, indexes.map(index => segments[index]), deadline, costs);
+    const replacementSegments = indexes.map(index => segments[index]);
+    if (belowObservedMinimum(parsed.model, replacementSegments)) throw minimumTimingError();
+    const replacements = await synthesizeBatch(input.key, input.userId, input.voiceId, replacementSegments, deadline, costs);
     indexes.forEach((index, offset) => { audio[index] = replacements[offset]; });
   }
   const overlong = segments.findIndex((segment, index) => audio[index].duration > segment.end - segment.start);

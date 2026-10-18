@@ -45,7 +45,7 @@ function matches(row: Row) {
   const parts = parsed(row.parts), created = row.createdAt ?? row.created_at;
   const time = typeof created === "string" || typeof created === "number" ? new Date(created).getTime() : NaN;
   return Number.isFinite(time) && time >= SINCE && time <= UNTIL && typeof row.id === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(row.id)
-    && Array.isArray(parts) && parts.length === 1 && record(parts[0])?.text === EXPECTED;
+    && Array.isArray(parts) && (parts.length === 1 && record(parts[0])?.text === EXPECTED || parts.length === 0 && row.mode === "multiParts" && row.previewText === EXPECTED);
 }
 function audioUrl(row: Row): string | undefined {
   let value = row.resultUrls ?? row.result_urls ?? row.resultUrl ?? row.result_url;
