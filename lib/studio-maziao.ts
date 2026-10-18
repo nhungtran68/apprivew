@@ -194,6 +194,21 @@ export async function adminAccountVoices(key: string): Promise<ProviderVoice[]> 
   return [...collected.values()];
 }
 
+export async function fetchVoiceCatalogSnapshot(key: string) {
+  const model = maziaoModel();
+  const [publicRows, ownedRows] = await Promise.all([systemVoices(key), adminAccountVoices(key)]);
+  const system = publicRows.filter(v => rawId(v.id) && catalogOwnership(v) && compatible(v))
+    .map(v => ({ voiceId: scopedProviderVoiceId(v, model), name: cleanText(v.name, 200) || "Giọng thư viện",
+      kind: "system" as const, previewUrl: safeMediaUrl(v.previewUrl ?? v.preview_url) || safeMediaUrl(v.refFile ?? v.ref_file) || null,
+      gender: v.gender === "male" || v.gender === "female" ? v.gender : null }));
+  const personal = ownedRows.map(v => normalizeAdminVoice(v, model)).filter((v): v is NonNullable<typeof v> => Boolean(v))
+    .map(v => ({ ...v, kind: "admin_clone" as const }));
+  const byId = new Map<string, typeof system[number] | typeof personal[number]>();
+  for (const voice of system) byId.set(voice.voiceId, voice);
+  for (const voice of personal) byId.set(voice.voiceId, voice);
+  return [...byId.values()];
+}
+
 export function normalizeAdminVoice(voice: ProviderVoice, defaultModel: MaziaoModel) {
   if (!rawId(voice.id)) return null;
   const voiceId = scopedProviderVoiceId(voice, defaultModel);
