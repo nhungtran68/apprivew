@@ -148,7 +148,7 @@ export async function planStockScenes(key: string, input: { script: string; aspe
     try { return { videos: await findCandidates(item.query, item.alternateQuery, search), warning: undefined as string | undefined }; }
     catch (error) {
       if (error instanceof StudioError && ["PIXABAY_RATE_LIMIT", "PIXABAY_KEY_REJECTED", "PIXABAY_NOT_CONFIGURED"].includes(error.code)) throw error;
-      return { videos: [] as StockVideo[], warning: "Pixabay chưa tìm được cảnh này. Hãy thử tìm và thay thủ công." };
+      return { videos: [] as StockVideo[], warning: "Chưa tìm được cảnh phù hợp. Hãy thử tìm và thay thủ công." };
     }
   }));
   const used = new Set<number>();

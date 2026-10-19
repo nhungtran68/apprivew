@@ -198,7 +198,7 @@ export interface PlannedStockScene {
 export function planStockTimeline(sourceDurations: number[], narrationDuration: number, scenes?: StockVideoScene[]): PlannedStockScene[] {
   if (!sourceDurations.length || sourceDurations.length > MAX_STOCK_CLIPS
     || sourceDurations.some((duration) => !finitePositive(duration) || duration < FRAME)) {
-    throw new ExportError("Danh sách video nguồn không hợp lệ. Hãy chọn lại video Pixabay.");
+    throw new ExportError("Danh sách video nguồn không hợp lệ. Hãy chọn lại video thư viện.");
   }
   if (!finitePositive(narrationDuration) || narrationDuration > MAX_DURATION) {
     throw new ExportError("Bản thử hỗ trợ lời thoại dài tối đa 90 giây.");
@@ -465,7 +465,7 @@ export async function exportStockVideo(options: ExportStockVideoOptions): Promis
   if (exportInProgress) throw new ExportError("Một video đang được xuất. Hãy chờ video đó hoàn tất.");
   if (!Array.isArray(options.clips) || !options.clips.length || options.clips.length > MAX_STOCK_CLIPS
     || options.clips.some((clip) => !(clip instanceof Blob) || clip.size === 0)) {
-    throw new ExportError("Hãy chọn từ 1 đến 12 video Pixabay hợp lệ trước khi xuất.");
+    throw new ExportError("Hãy chọn từ 1 đến 12 video thư viện hợp lệ trước khi xuất.");
   }
   if (options.clips.reduce((sum, clip) => sum + clip.size, 0) > MAX_STOCK_VIDEO_BYTES) {
     throw new ExportError("Tổng video nguồn vượt 90 MB. Hãy chọn clip ngắn hoặc chất lượng thấp hơn.");

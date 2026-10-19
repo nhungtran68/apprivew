@@ -38,7 +38,7 @@ let cacheKey = "";
 
 function apiKey(): string {
   const key = process.env.PIXABAY_API_KEY?.trim();
-  if (!key) throw new StudioError("PIXABAY_NOT_CONFIGURED", "Quản trị viên cần thêm PIXABAY_API_KEY vào cấu hình Vercel để dùng kho video Pixabay.", 503, "contact_admin");
+  if (!key) throw new StudioError("PIXABAY_NOT_CONFIGURED", "Kho video chưa được cấu hình. Vui lòng liên hệ quản trị viên.", 503, "contact_admin");
   return key;
 }
 
@@ -87,7 +87,7 @@ function validateQuery(query: string): string {
 }
 
 function validatePage(page: number): number {
-  if (!Number.isSafeInteger(page) || page < 1 || page > 10) throw new StudioError("INVALID_PIXABAY_PAGE", "Trang kết quả Pixabay không hợp lệ.");
+  if (!Number.isSafeInteger(page) || page < 1 || page > 10) throw new StudioError("INVALID_PIXABAY_PAGE", "Trang kết quả tìm kiếm không hợp lệ.");
   return page;
 }
 
@@ -127,20 +127,20 @@ async function pixabayRequest(params: URLSearchParams): Promise<PixabayResult> {
   try {
     response = await fetch(url, { cache: "force-cache", next: { revalidate: CACHE_SECONDS }, redirect: "error", signal: AbortSignal.timeout(15_000) });
   } catch {
-    throw new StudioError("PIXABAY_UNAVAILABLE", "Chưa kết nối được Pixabay. Vui lòng thử lại sau.", 503);
+    throw new StudioError("PIXABAY_UNAVAILABLE", "Chưa kết nối được kho video. Vui lòng thử lại sau.", 503);
   }
-  if (response.status === 429) throw new StudioError("PIXABAY_RATE_LIMIT", "Pixabay đang giới hạn lượt tìm kiếm. Vui lòng thử lại sau.", 429);
-  if (response.status === 401 || response.status === 403) throw new StudioError("PIXABAY_KEY_REJECTED", "Pixabay từ chối khóa API. Quản trị viên cần kiểm tra PIXABAY_API_KEY.", 503, "contact_admin");
-  if (!response.ok) throw new StudioError("PIXABAY_UNAVAILABLE", "Pixabay chưa trả được kết quả. Vui lòng thử lại sau.", 502);
+  if (response.status === 429) throw new StudioError("PIXABAY_RATE_LIMIT", "Kho video đang giới hạn lượt tìm kiếm. Vui lòng thử lại sau.", 429);
+  if (response.status === 401 || response.status === 403) throw new StudioError("PIXABAY_KEY_REJECTED", "Kho video từ chối kết nối. Quản trị viên cần kiểm tra khóa API.", 503, "contact_admin");
+  if (!response.ok) throw new StudioError("PIXABAY_UNAVAILABLE", "Kho video chưa trả được kết quả. Vui lòng thử lại sau.", 502);
   const contentLength = Number(response.headers.get("content-length"));
-  if (contentLength > MAX_RESPONSE_BYTES) throw new StudioError("PIXABAY_INVALID_RESPONSE", "Dữ liệu Pixabay quá lớn. Vui lòng thử lại.", 502);
+  if (contentLength > MAX_RESPONSE_BYTES) throw new StudioError("PIXABAY_INVALID_RESPONSE", "Dữ liệu tìm kiếm quá lớn. Vui lòng thử lại.", 502);
   let data: unknown;
   try {
     data = JSON.parse(await limitedResponseText(response));
   } catch {
-    throw new StudioError("PIXABAY_INVALID_RESPONSE", "Pixabay trả về dữ liệu không hợp lệ. Vui lòng thử lại.", 502);
+    throw new StudioError("PIXABAY_INVALID_RESPONSE", "Kho video trả về dữ liệu không hợp lệ. Vui lòng thử lại.", 502);
   }
-  if (!data || typeof data !== "object" || !Array.isArray((data as PixabayResult).hits)) throw new StudioError("PIXABAY_INVALID_RESPONSE", "Pixabay trả về dữ liệu không hợp lệ. Vui lòng thử lại.", 502);
+  if (!data || typeof data !== "object" || !Array.isArray((data as PixabayResult).hits)) throw new StudioError("PIXABAY_INVALID_RESPONSE", "Kho video trả về dữ liệu không hợp lệ. Vui lòng thử lại.", 502);
   const result = data as PixabayResult;
   if (resultCache.size >= MAX_RESULTS) resultCache.delete(resultCache.keys().next().value!);
   resultCache.set(cacheId, { value: result, expiresAt: Date.now() + CACHE_SECONDS * 1000 });
@@ -165,13 +165,13 @@ export async function searchPixabayVideos(query: string, page = 1, lang: "vi" | 
 }
 
 export async function getPixabayVideo(id: number, quality: "medium" | "small" | "tiny") {
-  if (!Number.isSafeInteger(id) || id < 1 || id > 9_999_999_999) throw new StudioError("INVALID_PIXABAY_ID", "Video Pixabay không hợp lệ.");
+  if (!Number.isSafeInteger(id) || id < 1 || id > 9_999_999_999) throw new StudioError("INVALID_PIXABAY_ID", "Video đã chọn không hợp lệ.");
   const params = new URLSearchParams({ id: String(id) });
   const result = await pixabayRequest(params);
   const hit = result.hits.find(item => item && typeof item === "object" && Number(item.id) === id);
   const selected = hit && rendition(hit, quality);
-  if (!selected) throw new StudioError("PIXABAY_VIDEO_NOT_FOUND", "Video Pixabay đã chọn không còn khả dụng. Hãy chọn video khác.", 404);
+  if (!selected) throw new StudioError("PIXABAY_VIDEO_NOT_FOUND", "Video đã chọn không còn khả dụng. Hãy chọn video khác.", 404);
   const url = allowedUrl(selected.url, "cdn.pixabay.com");
-  if (!url) throw new StudioError("PIXABAY_VIDEO_NOT_FOUND", "Video Pixabay đã chọn không còn khả dụng. Hãy chọn video khác.", 404);
+  if (!url) throw new StudioError("PIXABAY_VIDEO_NOT_FOUND", "Video đã chọn không còn khả dụng. Hãy chọn video khác.", 404);
   return { url, size: finiteNonnegative(selected.size) };
 }

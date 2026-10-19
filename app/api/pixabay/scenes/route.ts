@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     const aspectRatio = validStockAspectRatio(body.aspectRatio);
     const { key } = await providerKey(userId, "deepseek");
     if (!process.env.PIXABAY_API_KEY?.trim())
-      throw new StudioError("PIXABAY_NOT_CONFIGURED", "Quản trị viên cần thêm PIXABAY_API_KEY vào cấu hình Vercel để dùng kho video Pixabay.", 503, "contact_admin");
+      throw new StudioError("PIXABAY_NOT_CONFIGURED", "Kho video chưa được cấu hình. Vui lòng liên hệ quản trị viên.", 503, "contact_admin");
     return json(await planStockScenes(key, { script, aspectRatio }, () => consumeAiUnits(userId, 1)));
   } catch (error) { return apiError(error); }
 }

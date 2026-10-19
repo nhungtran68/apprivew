@@ -92,6 +92,7 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
   const [hasMore, setHasMore] = useState(false);
   const [searched, setSearched] = useState(false);
   const [results, setResults] = useState<StockVideo[]>([]);
+  const [visibleResults, setVisibleResults] = useState(4);
   const [preview, setPreview] = useState<StockVideo | null>(null);
   const [selected, setSelected] = useState<StockVideo[]>([]);
   const [replacementId, setReplacementId] = useState<string | null>(null);
@@ -133,7 +134,7 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
 
   useEffect(() => { onBusyChange(Boolean(busy)); }, [busy, onBusyChange]);
   useEffect(() => () => onBusyChange(false), [onBusyChange]);
-  useEffect(() => { setExported(undefined); setResults([]); setPreview(null); setReplacementId(null); setSearched(false); }, [mode]);
+  useEffect(() => { setExported(undefined); setResults([]); setVisibleResults(4); setPreview(null); setReplacementId(null); setSearched(false); }, [mode]);
 
   function invalidateVideo() { setExported(undefined); }
   function changeScript(value: string) {
@@ -155,6 +156,8 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
       const result = await api(`/api/pixabay/videos?q=${encodeURIComponent(cleaned)}&page=${page}&lang=${lang}`, { cache: "no-store" });
       const videos = Array.isArray(result.videos) ? result.videos.filter(validVideo) as StockVideo[] : [];
       setResults(current => page === 1 ? videos : [...current, ...videos.filter(video => !current.some(item => item.id === video.id))]);
+      if (page === 1) { setVisibleResults(4); setPreview(null); }
+      else setVisibleResults(current => current + 4);
       setSearchPage(page); setHasMore(Boolean(result.hasMore)); setSearched(true); setQuery(cleaned);
       if (!videos.length && page === 1) setNote("Chưa có video phù hợp. Hãy thử từ khóa tiếng Anh ngắn hơn hoặc chủ đề gần nghĩa.");
     } catch (cause) { setError(message(cause)); if (page === 1) setResults([]); }
@@ -289,7 +292,7 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
     const response = await fetch("/api/pixabay/video", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: video.id, quality: video.size > 45 * 1024 * 1024 ? "small" : "medium" }) });
     if (!response.ok) {
       const data = await response.json().catch(() => ({})) as { error?: string };
-      throw new Error(data.error || `Chưa tải được cảnh Pixabay #${video.id}. Hãy chọn cảnh khác.`);
+      throw new Error(data.error || `Chưa tải được cảnh #${video.id}. Hãy chọn cảnh khác.`);
     }
     const blob = await response.blob();
     if (!blob.size || blob.size > 60 * 1024 * 1024) throw new Error(`Cảnh #${video.id} quá lớn hoặc không hợp lệ. Hãy chọn cảnh khác.`);
@@ -305,7 +308,7 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
       const uniqueVideos = [...new Map(orderedVideos.map(video => [video.id, video])).values()];
       const clips: Blob[] = [];
       for (let index = 0; index < uniqueVideos.length; index++) {
-        setProgressText(`Đang tải cảnh ${index + 1}/${uniqueVideos.length} từ Pixabay…`);
+        setProgressText(`Đang tải cảnh ${index + 1}/${uniqueVideos.length} từ thư viện…`);
         clips.push(await fetchClip(uniqueVideos[index]));
       }
       let alignmentNote = "";
@@ -334,12 +337,25 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
     finally { setBusy(null); }
   }
 
-  async function saveExport() { if (!exported) return; try { await saveVideoFile(exported, title || "video-pixabay"); } catch (cause) { setError(message(cause)); } }
-  async function shareExport() { if (!exported) return; try { await shareVideoFile(exported, title || "video-pixabay"); } catch (cause) { setError(message(cause)); } }
+  async function saveExport() { if (!exported) return; try { await saveVideoFile(exported, title || "video-thu-vien"); } catch (cause) { setError(message(cause)); } }
+  async function shareExport() { if (!exported) return; try { await shareVideoFile(exported, title || "video-thu-vien"); } catch (cause) { setError(message(cause)); } }
+
+  function showMoreVideos() {
+    if (busy) return;
+    if (visibleResults < results.length) { setVisibleResults(current => current + 4); return; }
+    if (hasMore) void searchVideos(query, searchPage + 1, replacementId);
+  }
+
+  const searchResultsPanel = (results.length || searched) ? <div className={styles.searchResults}>
+    <div className={styles.sectionHeading}><span className={styles.number}>⌕</span><div><h3>{replacementId ? "Cảnh thay thế" : "Kết quả tìm kiếm"}</h3><p>{results.length ? `Đang hiện ${Math.min(visibleResults, results.length)} video. Chạm vào cảnh để xem thử.` : "Chưa tìm được video. Thử từ khóa khác."}</p></div></div>
+    <div className={styles.results}>{results.slice(0, visibleResults).map(video => <button type="button" key={video.id} className={`${styles.result} ${preview?.id === video.id ? styles.resultActive : ""}`} onClick={() => setPreview(video)} aria-pressed={preview?.id === video.id}><img src={video.thumbnail} alt="" loading="lazy" /><span><strong>{video.tags || `Video #${video.id}`}</strong><small>{seconds(video.duration)} · {video.width} × {video.height}</small></span></button>)}</div>
+    {(visibleResults < results.length || hasMore) ? <button type="button" className={styles.secondary} onClick={showMoreVideos} disabled={Boolean(busy)}>{busy === "search" ? "Đang tải…" : "Xem thêm video"}</button> : null}
+    {preview ? <div className={styles.preview}><video src={preview.videoUrl} poster={preview.thumbnail} controls playsInline preload="metadata" aria-label={`Xem trước ${preview.tags}`} /><div><strong>{preview.tags || `Video #${preview.id}`}</strong><button type="button" className={styles.primary} onClick={() => addVideo(preview)} disabled={Boolean(busy) || (!replacementId && selected.some(item => item.id === preview.id))}>{replacementId ? "Dùng cảnh này" : selected.some(item => item.id === preview.id) ? "Đã thêm" : "Thêm cảnh"}</button></div></div> : null}
+  </div> : null;
 
   const modeTitle = mode === "library" ? "Tạo Video Thư Viện" : "Tạo Video Văn Bản";
   return <section className={styles.workspace} aria-labelledby="stock-mode-title">
-    <div className={styles.intro}><span className={styles.eyebrow}>PIXABAY · CẢNH MINH HỌA</span><h2 id="stock-mode-title">{modeTitle}</h2><p>{mode === "library" ? "Tự chọn một hoặc nhiều cảnh, thêm lời thoại rồi app tự lặp hoặc cắt hình theo đúng độ dài âm thanh." : "Duyệt kịch bản, thêm lời thoại, để AI tìm cảnh theo mạch nội dung rồi chỉnh lại trước khi ghép."}</p></div>
+    <div className={styles.intro}><span className={styles.eyebrow}>THƯ VIỆN CẢNH MINH HỌA</span><h2 id="stock-mode-title">{modeTitle}</h2><p>{mode === "library" ? "Tự chọn một hoặc nhiều cảnh, thêm lời thoại rồi app tự lặp hoặc cắt hình theo đúng độ dài âm thanh." : "Duyệt kịch bản, thêm lời thoại, để AI tìm cảnh theo mạch nội dung rồi chỉnh lại trước khi ghép."}</p></div>
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
     {note ? <p className={styles.note} role="status">{note}</p> : null}
 
@@ -353,8 +369,9 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
     </div>
 
     {mode === "library" ? <div className={styles.section}>
-      <div className={styles.sectionHeading}><span className={styles.number}>1</span><div><h3>Chọn cảnh từ Pixabay</h3><p>Tìm, xem thử rồi thêm tối đa 8 video. Thứ tự dưới đây cũng là thứ tự ghép.</p></div></div>
+      <div className={styles.sectionHeading}><span className={styles.number}>1</span><div><h3>Chọn cảnh trong thư viện</h3><p>Tìm, xem thử rồi thêm tối đa 8 video. Thứ tự dưới đây cũng là thứ tự ghép.</p></div></div>
       <form className={styles.search} onSubmit={(event: FormEvent) => { event.preventDefault(); void searchVideos(query, 1, null); }}><label className={styles.field}>Tìm theo từ khóa hoặc chủ đề<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Ví dụ: coffee shop, packing orders…" maxLength={100} disabled={Boolean(busy)} /></label><button type="submit" className={styles.primary} disabled={Boolean(busy)}>{busy === "search" ? "Đang tìm…" : "Tìm video"}</button></form>
+      {searchResultsPanel}
       {selected.length ? <div className={styles.selectedList}><h4>Đã chọn {selected.length} cảnh</h4>{selected.map((video, index) => <div className={styles.selectedRow} key={video.id}><span className={styles.selectedIndex}>{index + 1}</span><img src={video.thumbnail} alt="" loading="lazy" /><div><strong>{video.tags || `Video #${video.id}`}</strong><small>{seconds(video.duration)} · {video.width} × {video.height}</small></div><div className={styles.rowActions}><button type="button" onClick={() => moveVideo(index, -1)} disabled={index === 0 || Boolean(busy)} aria-label={`Đưa cảnh ${index + 1} lên trước`}>↑</button><button type="button" onClick={() => moveVideo(index, 1)} disabled={index === selected.length - 1 || Boolean(busy)} aria-label={`Đưa cảnh ${index + 1} xuống sau`}>↓</button><button type="button" onClick={() => { setSelected(current => current.filter(item => item.id !== video.id)); invalidateVideo(); }} disabled={Boolean(busy)} aria-label={`Xóa cảnh ${index + 1}`}>×</button></div></div>)}</div> : null}
     </div> : null}
 
@@ -384,18 +401,13 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
     </div>
 
     {mode === "text" ? <div className={styles.section}>
-      <div className={styles.sectionHeading}><span className={styles.number}>3</span><div><h3>AI tìm cảnh theo kịch bản</h3><p>AI hiểu ý nghĩa từng đoạn và tìm cảnh Pixabay bằng từ khóa phù hợp. Bạn duyệt từng cảnh trước khi ghép.</p></div></div>
+      <div className={styles.sectionHeading}><span className={styles.number}>3</span><div><h3>AI tìm cảnh theo kịch bản</h3><p>AI hiểu ý nghĩa từng đoạn và tìm cảnh minh họa bằng từ khóa phù hợp. Bạn duyệt từng cảnh trước khi ghép.</p></div></div>
       <button type="button" className={styles.primary} onClick={() => void planScenes()} disabled={Boolean(busy) || !approvedScript || !audioDuration || !deepseekReady}>{busy === "plan" ? "Đang chia cảnh và tìm video…" : scenes.length ? "Tìm lại toàn bộ cảnh" : "AI tìm video theo nội dung"}</button>
-      {scenes.length ? <div className={styles.sceneList}><h4>{scenes.length} phân cảnh · lời thoại {audioDuration.toFixed(1)} giây</h4>{scenes.map((scene, index) => <article className={styles.sceneCard} key={scene.id}><div className={styles.sceneTop}><span className={styles.selectedIndex}>{index + 1}</span><div><strong>{scene.description || `Cảnh ${index + 1}`}</strong><small>Khoảng {seconds(Math.max(0, scene.startFraction) * audioDuration)} – {seconds(Math.max(0, scene.endFraction) * audioDuration)} · Tìm: {scene.query}</small></div><div className={styles.rowActions}><button type="button" onClick={() => moveScene(index, -1)} disabled={index === 0 || Boolean(busy)} aria-label={`Hoán đổi video cảnh ${index + 1} với cảnh trước`}>↑</button><button type="button" onClick={() => moveScene(index, 1)} disabled={index === scenes.length - 1 || Boolean(busy)} aria-label={`Hoán đổi video cảnh ${index + 1} với cảnh sau`}>↓</button></div></div><p className={styles.sceneText}>“{scene.text}”</p>{scene.video ? <video src={scene.video.videoUrl} poster={scene.video.thumbnail} controls playsInline preload="metadata" aria-label={`Xem trước cảnh ${index + 1}`} /> : <p className={styles.warning}>Chưa tìm được video cho cảnh này.</p>}{scene.warning ? <p className={styles.warning}>{scene.warning}</p> : null}<div className={styles.sceneActions}><button type="button" className={styles.textButton} onClick={() => { setReplacementId(scene.id); void searchVideos(scene.query || scene.description || "people", 1, scene.id); }} disabled={Boolean(busy)}>Tìm video thay thế</button>{scene.alternatives.length ? <label className={styles.field}>Đổi nhanh sang cảnh khác<select value={scene.video?.id || ""} disabled={Boolean(busy)} onChange={event => { const video = scene.alternatives.find(item => String(item.id) === event.target.value); if (video) { setScenes(current => current.map(item => item.id === scene.id ? { ...item, video } : item)); invalidateVideo(); } }}><option value={scene.video?.id || ""}>Cảnh đang chọn</option>{scene.alternatives.filter(video => video.id !== scene.video?.id).map(video => <option key={video.id} value={video.id}>{video.tags || `Video #${video.id}`}</option>)}</select></label> : null}</div>{scene.video ? <a className={styles.sourceLink} href={scene.video.pageUrl} target="_blank" rel="noopener noreferrer">Nguồn cảnh trên Pixabay ↗</a> : null}</article>)}</div> : null}
+      {scenes.length ? <div className={styles.sceneList}><h4>{scenes.length} phân cảnh · lời thoại {audioDuration.toFixed(1)} giây</h4>{scenes.map((scene, index) => <article className={styles.sceneCard} key={scene.id}><div className={styles.sceneTop}><span className={styles.selectedIndex}>{index + 1}</span><div><strong>{scene.description || `Cảnh ${index + 1}`}</strong><small>Khoảng {seconds(Math.max(0, scene.startFraction) * audioDuration)} – {seconds(Math.max(0, scene.endFraction) * audioDuration)} · Tìm: {scene.query}</small></div><div className={styles.rowActions}><button type="button" onClick={() => moveScene(index, -1)} disabled={index === 0 || Boolean(busy)} aria-label={`Hoán đổi video cảnh ${index + 1} với cảnh trước`}>↑</button><button type="button" onClick={() => moveScene(index, 1)} disabled={index === scenes.length - 1 || Boolean(busy)} aria-label={`Hoán đổi video cảnh ${index + 1} với cảnh sau`}>↓</button></div></div><p className={styles.sceneText}>“{scene.text}”</p>{scene.video ? <video src={scene.video.videoUrl} poster={scene.video.thumbnail} controls playsInline preload="metadata" aria-label={`Xem trước cảnh ${index + 1}`} /> : <p className={styles.warning}>Chưa tìm được video cho cảnh này.</p>}{scene.warning ? <p className={styles.warning}>{scene.warning}</p> : null}<div className={styles.sceneActions}><button type="button" className={styles.textButton} onClick={() => { setReplacementId(scene.id); void searchVideos(scene.query || scene.description || "people", 1, scene.id); }} disabled={Boolean(busy)}>Tìm video thay thế</button>{scene.alternatives.length ? <label className={styles.field}>Đổi nhanh sang cảnh khác<select value={scene.video?.id || ""} disabled={Boolean(busy)} onChange={event => { const video = scene.alternatives.find(item => String(item.id) === event.target.value); if (video) { setScenes(current => current.map(item => item.id === scene.id ? { ...item, video } : item)); invalidateVideo(); } }}><option value={scene.video?.id || ""}>Cảnh đang chọn</option>{scene.alternatives.filter(video => video.id !== scene.video?.id).map(video => <option key={video.id} value={video.id}>{video.tags || `Video #${video.id}`}</option>)}</select></label> : null}</div></article>)}</div> : null}
       {replacementId ? <div className={styles.replaceSearch}><div className={styles.replaceHeading}><strong>Chọn cảnh thay thế</strong><button type="button" className={styles.textButton} onClick={() => { setReplacementId(null); setResults([]); }}>Đóng</button></div><form className={styles.search} onSubmit={event => { event.preventDefault(); void searchVideos(query, 1, replacementId); }}><label className={styles.field}>Tìm cảnh khác<input value={query} onChange={event => setQuery(event.target.value)} maxLength={100} /></label><button type="submit" className={styles.primary} disabled={Boolean(busy)}>Tìm</button></form></div> : null}
     </div> : null}
 
-    {(mode === "library" || replacementId) && (results.length || searched) ? <div className={styles.section}>
-      <div className={styles.sectionHeading}><span className={styles.number}>⌕</span><div><h3>{replacementId ? "Cảnh thay thế" : "Kết quả tìm kiếm"}</h3><p>{results.length ? "Chạm vào một video để xem thử, rồi thêm vào video của bạn." : "Chưa tìm được video. Thử từ khóa khác."}</p></div></div>
-      <div className={styles.results}>{results.map(video => <button type="button" key={video.id} className={`${styles.result} ${preview?.id === video.id ? styles.resultActive : ""}`} onClick={() => setPreview(video)} aria-pressed={preview?.id === video.id}><img src={video.thumbnail} alt="" loading="lazy" /><span><strong>{video.tags || `Video #${video.id}`}</strong><small>{seconds(video.duration)} · {video.width} × {video.height}</small></span></button>)}</div>
-      {preview ? <div className={styles.preview}><video src={preview.videoUrl} poster={preview.thumbnail} controls playsInline preload="metadata" aria-label={`Xem trước ${preview.tags}`} /><div><strong>{preview.tags || `Video #${preview.id}`}</strong><button type="button" className={styles.primary} onClick={() => addVideo(preview)} disabled={Boolean(busy) || (!replacementId && selected.some(item => item.id === preview.id))}>{replacementId ? "Dùng cảnh này" : selected.some(item => item.id === preview.id) ? "Đã thêm" : "Thêm cảnh"}</button></div><a href={preview.pageUrl} target="_blank" rel="noopener noreferrer">Xem nguồn Pixabay ↗</a></div> : null}
-      {hasMore ? <button type="button" className={styles.secondary} onClick={() => void searchVideos(query, searchPage + 1)} disabled={Boolean(busy)}>{busy === "search" ? "Đang tải…" : "Xem thêm video"}</button> : null}
-    </div> : null}
+    {mode === "text" && replacementId && searchResultsPanel ? <div className={styles.section}>{searchResultsPanel}</div> : null}
 
     <div className={styles.section}>
       <div className={styles.sectionHeading}><span className={styles.number}>{mode === "library" ? "4" : "4"}</span><div><h3>Ghép và tải video</h3><p>{mode === "library" ? "App tự luân phiên hoặc lặp cảnh khi lời thoại dài hơn, cắt phần hình dư khi ngắn hơn." : "Hình chạy theo thứ tự phân cảnh đã duyệt; độ dài tổng thể bám theo âm thanh thực tế."}</p></div></div>
@@ -403,8 +415,8 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
       {mode === "text" && scenes.some(scene => !scene.video) ? <p className={styles.warning}>Một số phân cảnh chưa có video. Hãy chọn cảnh thay thế trước khi ghép.</p> : null}
       <button type="button" className={styles.primary} onClick={() => void renderVideo()} disabled={!canExport}>{busy === "export" ? "Đang ghép video…" : exported ? "Ghép lại bản đã chỉnh" : "Ghép và xem trước"}</button>
       {busy === "export" ? <div className={styles.exportProgress} role="status"><progress value={progress} max={100} /><span>{Math.round(progress)}% · {progressText}</span></div> : null}
-      {exported && exportedUrl ? <div className={styles.finished}><video src={exportedUrl} controls playsInline preload="metadata" aria-label="Xem trước video hoàn chỉnh" /><p>Đã ghép xong. Hãy xem lại toàn bộ hình và tiếng.</p><div className={styles.finishedActions}><a className={styles.primary} href={exportedUrl} download={videoDownloadName(title || "video-pixabay")}>Tải video MP4</a>{supportsVideoSave() ? <button type="button" className={styles.secondary} onClick={() => void saveExport()}>Lưu vào thư mục…</button> : null}{canShareVideoFile(exported, title || "video-pixabay") ? <button type="button" className={styles.secondary} onClick={() => void shareExport()}>Chia sẻ video</button> : null}</div></div> : null}
+      {exported && exportedUrl ? <div className={styles.finished}><video src={exportedUrl} controls playsInline preload="metadata" aria-label="Xem trước video hoàn chỉnh" /><p>Đã ghép xong. Hãy xem lại toàn bộ hình và tiếng.</p><div className={styles.finishedActions}><a className={styles.primary} href={exportedUrl} download={videoDownloadName(title || "video-thu-vien")}>Tải video MP4</a>{supportsVideoSave() ? <button type="button" className={styles.secondary} onClick={() => void saveExport()}>Lưu vào thư mục…</button> : null}{canShareVideoFile(exported, title || "video-thu-vien") ? <button type="button" className={styles.secondary} onClick={() => void shareExport()}>Chia sẻ video</button> : null}</div></div> : null}
     </div>
-    <p className={styles.credit}>Cảnh minh họa từ <a href="https://pixabay.com/videos/" target="_blank" rel="noopener noreferrer">Pixabay</a>. Hãy duyệt nội dung và quyền sử dụng của từng cảnh trước khi đăng. App không thêm watermark.</p>
+    <p className={styles.credit}>Hãy duyệt nội dung và quyền sử dụng của từng cảnh trước khi đăng. App không thêm watermark.</p>
   </section>;
 }

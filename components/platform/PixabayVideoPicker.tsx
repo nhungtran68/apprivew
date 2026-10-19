@@ -46,7 +46,7 @@ export default function PixabayVideoPicker({ onSelect, disabled = false }: { onS
     setPreview(null);
     try {
       const response = await fetch(`/api/pixabay/videos?q=${encodeURIComponent(term)}`, { cache: "no-store" });
-      if (!response.ok) throw new Error(await errorFrom(response, "Chưa tìm được cảnh Pixabay. Hãy thử lại."));
+      if (!response.ok) throw new Error(await errorFrom(response, "Chưa tìm được cảnh phù hợp. Hãy thử lại."));
       const result = await response.json() as SearchResult;
       setVideos((result.videos || []).filter(video => Number.isFinite(video.duration) && video.duration >= 2 && video.duration <= 90));
       setLastQuery(term);
@@ -54,7 +54,7 @@ export default function PixabayVideoPicker({ onSelect, disabled = false }: { onS
     } catch (cause) {
       setVideos([]);
       setSearched(true);
-      setError(cause instanceof Error ? cause.message : "Chưa tìm được cảnh Pixabay. Hãy thử lại.");
+      setError(cause instanceof Error ? cause.message : "Chưa tìm được cảnh phù hợp. Hãy thử lại.");
     } finally {
       setSearching(false);
     }
@@ -75,7 +75,7 @@ export default function PixabayVideoPicker({ onSelect, disabled = false }: { onS
       if (Number.isFinite(length) && length > 60 * 1024 * 1024) throw new Error("Cảnh này lớn hơn 60 MB. Hãy chọn cảnh khác.");
       const blob = await response.blob();
       if (!blob.size || blob.size > 60 * 1024 * 1024) throw new Error("Cảnh này chưa phù hợp để xuất video. Hãy chọn cảnh khác.");
-      await onSelect(new File([blob], `pixabay-${video.id}.mp4`, { type: "video/mp4" }));
+      await onSelect(new File([blob], `thu-vien-${video.id}.mp4`, { type: "video/mp4" }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Chưa dùng được cảnh này. Hãy thử cảnh khác.");
     } finally {
@@ -87,10 +87,10 @@ export default function PixabayVideoPicker({ onSelect, disabled = false }: { onS
     <div className={styles.heading}>
       <div>
         <span className={styles.eyebrow}>Thư viện cảnh minh họa</span>
-        <h2 id="pixabay-picker-title">Tạo video từ Pixabay</h2>
+        <h2 id="pixabay-picker-title">Chọn video từ thư viện</h2>
         <p>Tìm một video có sẵn để làm nền cho lời kể của bạn. Sau khi chọn cảnh, hãy nhập ý muốn chia sẻ và chọn dạng kịch bản.</p>
       </div>
-      <span className={styles.mark}>P</span>
+      <span className={styles.mark} aria-hidden="true">▶</span>
     </div>
 
     <form className={styles.search} onSubmit={search}>
@@ -114,7 +114,7 @@ export default function PixabayVideoPicker({ onSelect, disabled = false }: { onS
             <img src={video.thumbnail} alt="" loading="lazy" />
             <span className={styles.duration}>{durationLabel(video.duration)}</span>
           </span>
-          <span className={styles.cardText}><strong>{video.tags || `Video #${video.id}`}</strong><small>Pixabay · {video.user || "Tác giả"}</small></span>
+          <span className={styles.cardText}><strong>{video.tags || `Video #${video.id}`}</strong><small>{video.user || "Tác giả"}</small></span>
         </button>)}
       </div>
     </> : null}
@@ -125,9 +125,9 @@ export default function PixabayVideoPicker({ onSelect, disabled = false }: { onS
         <div><strong>{preview.tags || "Cảnh đã chọn"}</strong><span>{durationLabel(preview.duration)} · {preview.width} × {preview.height}</span></div>
         <button type="button" onClick={() => void useVideo(preview)} disabled={loadingVideo || disabled}>{loadingVideo ? "Đang chuẩn bị…" : "Dùng cảnh này"}</button>
       </div>
-      <p>Cảnh kho chỉ để minh họa, không thay cho hình ảnh thật hoặc bằng chứng về sản phẩm. <a href={preview.pageUrl} target="_blank" rel="noopener noreferrer">Xem nguồn trên Pixabay</a></p>
+      <p>Cảnh kho chỉ để minh họa, không thay cho hình ảnh thật hoặc bằng chứng về sản phẩm.</p>
     </div> : null}
 
-    <p className={styles.credit}>Video có sẵn từ <a href="https://pixabay.com/videos/" target="_blank" rel="noopener noreferrer">Pixabay</a>. Bạn sẽ tự duyệt cảnh trước khi dùng.</p>
+    <p className={styles.credit}>Hãy duyệt nội dung và quyền sử dụng của từng cảnh trước khi đăng.</p>
   </section>;
 }
