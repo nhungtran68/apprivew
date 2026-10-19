@@ -152,6 +152,14 @@ Clip2–90giây, tối đa60MB. Xuất MP4 H.264/yuv420p, AAC48kHz,30fps; giữ 
 
 ## Chạy local
 
+### Nạp credit qua payOS
+
+Thêm `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` từ cùng một kênh thanh toán payOS vào biến môi trường máy chủ Vercel. Không đặt các khóa này trong biến `NEXT_PUBLIC_*` hoặc trình duyệt. Ứng dụng cần `SUPABASE_SERVICE_ROLE_KEY` và ba migration trong `supabase/migrations/20261019*` (sau `supabase/credits-ledger.sql`). Ba gói ban đầu: 500 credit/50.000đ, 1.000 credit/100.000đ và 3.000 credit/300.000đ; có thể chỉnh giá và trạng thái gói trong bảng `studio_payment_packs` trước khi mở bán.
+
+Sau khi triển khai bản Production, quản trị viên vào **Quản trị → Thanh toán payOS → Xác nhận kết nối payOS**. App đăng ký và xác thực webhook cố định tại `https://apprivew.vercel.app/api/payments/payos/webhook`. Chỉ khi webhook được xác nhận và lưu trong Supabase, nút mua mới mở. Nếu đang dùng cùng khóa ở Preview, thao tác xác nhận vẫn dùng webhook Production để tránh ghi đè. Khi đổi khóa hoặc kênh payOS, hãy xác nhận lại trước khi nhận thanh toán mới.
+
+Người mua chỉ được cộng credit sau webhook có chữ ký hợp lệ hoặc khi app tự đối soát trạng thái `PAID` và đủ tiền từ payOS. Trả về trang web không tự cộng. Một đơn chỉ cộng một lần; đơn bị lỗi hoặc thanh toán dở không cộng. Không thay đổi số dư thủ công để xử lý đơn đang chờ: dùng mã đơn trong trang **Nạp credit** để đối soát. Chạy `supabase/verify-payment-orders.sql` để kiểm tra giao dịch dữ liệu (bài kiểm tra tự rollback). Trước khi mở bán rộng, thực hiện một giao dịch thật giá nhỏ trên tài khoản thử và kiểm tra cả payOS, lịch sử đơn, ví credit và sự kiện `purchase`; payOS không cung cấp sandbox riêng.
+
 Cần Node.js22+ và pnpm11.25.
 
     pnpm install --frozen-lockfile

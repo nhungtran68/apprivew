@@ -25,6 +25,7 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
     <p className={styles.navLabel}>KHÔNG GIAN CỦA BẠN</p>
     {navLink("/thu-vien", "Thư viện của tôi", "folder")}
     {navLink("/ca-nhan", "Tài khoản cá nhân", "user")}
+    {navLink("/nap-credit", "Nạp credit", "plus")}
     {account?.isAdmin ? navLink("/quan-tri", "Quản trị nền tảng", "shield") : null}
   </nav>;
 }
@@ -43,7 +44,7 @@ function ShellContent({ children }: { children: ReactNode }) {
     return () => media.removeEventListener("change", closeOnDesktop);
   }, []);
   const tool = getVisibleModules().find(module => pathname === moduleHref(module));
-  const title = tool?.title || ({ "/": "Tổng quan", "/thu-vien": "Thư viện của tôi", "/ca-nhan": "Tài khoản cá nhân", "/huong-dan": "Hướng dẫn bắt đầu" }[pathname] || "Không gian sáng tạo");
+  const title = tool?.title || ({ "/": "Tổng quan", "/thu-vien": "Thư viện của tôi", "/ca-nhan": "Tài khoản cá nhân", "/nap-credit": "Nạp credit", "/huong-dan": "Hướng dẫn bắt đầu" }[pathname] || "Không gian sáng tạo");
   return <div className={styles.platform}>
     <a href="#noi-dung-chinh" className={styles.skipLink}>Đến nội dung chính</a>
     <aside className={styles.sidebar}>
@@ -64,7 +65,7 @@ function ShellContent({ children }: { children: ReactNode }) {
           <span className={styles.avatar}>{accountInitials(account?.name)}</span><span className={styles.accountName}>{account?.name || (status === "anonymous" ? "Đăng nhập" : "Tài khoản")}</span><PlatformIcon name="chevron" size={15} />
         </Link>
       </header>
-      <main className={styles.main} id="noi-dung-chinh" tabIndex={-1}>{account?.credits?.available === 0 ? <div className={styles.creditNotice} role="status"><strong>Đã hết credit khả dụng.</strong> Tác vụ AI mới đang tạm dừng. <Link href={account.isAdmin ? "/quan-tri" : "/ca-nhan"}>{account.isAdmin ? "Cấp thêm credit" : "Xem số dư và mức trừ"}</Link></div> : null}{children}</main>
+      <main className={styles.main} id="noi-dung-chinh" tabIndex={-1}>{account?.credits?.available === 0 && pathname !== "/nap-credit" ? <div className={styles.creditNotice} role="status"><strong>Đã hết credit khả dụng.</strong> Tác vụ AI mới đang tạm dừng. <Link href="/nap-credit">Nạp thêm credit</Link></div> : null}{children}</main>
       <footer className={styles.footer}><span><strong>Lời Kể AI</strong> · Từ ý tưởng đến nội dung của bạn.</span><Link href="/huong-dan">Hướng dẫn sử dụng<PlatformIcon name="arrow" size={15} /></Link></footer>
     </div>
     <nav className={styles.bottomNav} aria-label="Điều hướng trên điện thoại">
