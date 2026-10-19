@@ -4,6 +4,8 @@ Run `credits-ledger.sql` once in Supabase SQL Editor after the existing member s
 
 The one-time migration grants each existing member `max(0, ai_units_limit - ai_units_used)` application credits. An event named `legacy_conversion` records the grant. Newly registered members start at zero credits. This conversion is a promotional opening balance, not Maziao provider credits and not a financial liability calculation.
 
+Credit accounts and their transaction history use restrictive foreign keys. Deleting a member with a wallet is blocked until an explicit retention or anonymization process is implemented, preventing accidental loss of billing records. Disable the member account to stop access in the meantime.
+
 Add `SUPABASE_SERVICE_ROLE_KEY` (or a Supabase secret key with the same privileges as `SUPABASE_SECRET_KEY`) **only as a server-side Vercel environment variable** for Production and Preview. Never add `NEXT_PUBLIC_` to its name and never expose it in browser code. User-session Supabase clients can read only their own wallet and history. The reserve, settle, refund, provider-task, and admin-adjust RPCs execute only with the server-side privileged key; the browser's authenticated role has no execute grant.
 
 One application credit is currently priced at 100 VND. Tariffs are defined in `lib/studio-credits.ts`: script 10, video analysis 15, scene plan 10, speech 1 per started 100 characters, voice clone 50, and library video 1 per started 2 MiB delivered. These are retail application charges; provider costs are recorded separately in `provider_usage` when available.

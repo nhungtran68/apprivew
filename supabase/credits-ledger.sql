@@ -8,7 +8,7 @@ create schema if not exists studio_private;
 grant usage on schema studio_private to service_role;
 
 create table if not exists public.studio_credit_accounts (
-  user_id uuid primary key references public.studio_members(user_id) on delete cascade,
+  user_id uuid primary key references public.studio_members(user_id) on delete restrict,
   balance integer not null default 0 check (balance >= 0),
   reserved integer not null default 0 check (reserved >= 0 and reserved <= balance),
   updated_at timestamptz not null default now()
@@ -16,7 +16,7 @@ create table if not exists public.studio_credit_accounts (
 
 create table if not exists public.studio_credit_operations (
   request_id uuid primary key,
-  user_id uuid not null references public.studio_credit_accounts(user_id) on delete cascade,
+  user_id uuid not null references public.studio_credit_accounts(user_id) on delete restrict,
   kind text not null check (kind in ('script','analyze','scene_plan','tts','clone','stock_video')),
   reserved_credits integer not null check (reserved_credits between 1 and 10000),
   charged_credits integer not null default 0 check (charged_credits >= 0),
@@ -32,7 +32,7 @@ create table if not exists public.studio_credit_operations (
 
 create table if not exists public.studio_credit_adjustments (
   request_id uuid primary key,
-  user_id uuid not null references public.studio_credit_accounts(user_id) on delete cascade,
+  user_id uuid not null references public.studio_credit_accounts(user_id) on delete restrict,
   actor_id uuid not null references public.studio_members(user_id),
   delta integer not null check (delta <> 0),
   reason text not null check (length(reason) between 3 and 300),
@@ -41,7 +41,7 @@ create table if not exists public.studio_credit_adjustments (
 
 create table if not exists public.studio_credit_events (
   id bigint generated always as identity primary key,
-  user_id uuid not null references public.studio_credit_accounts(user_id) on delete cascade,
+  user_id uuid not null references public.studio_credit_accounts(user_id) on delete restrict,
   request_id uuid,
   event_type text not null check (event_type in ('legacy_conversion','reserve','settle','refund','adjust')),
   balance_delta integer not null,
