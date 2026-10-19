@@ -1,33 +1,35 @@
-.panel{margin-top:26px;padding:22px;border:1px solid #e0e5da;border-radius:16px;background:#fbfcf8;color:#33402e}
+.panel{margin-top:26px;padding:22px;border:1px solid #dfe6f4;border-radius:16px;background:#f7f9ff;color:#13234f}
 .heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
 .heading h2{font-size:19px;line-height:1.35;letter-spacing:-.02em;margin:5px 0 6px}
-.heading p{font-size:13px;line-height:1.7;color:#66715f;margin:0;max-width:620px}
-.eyebrow{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#b66946}
-.mark{display:grid;place-items:center;flex:none;width:38px;height:38px;border-radius:11px;background:#eef5e7;color:#659448;font-weight:800;font-size:22px}
+.heading p{font-size:13px;line-height:1.7;color:#667085;margin:0;max-width:620px}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#e96800}
+.mark{display:grid;place-items:center;flex:none;width:38px;height:38px;border-radius:11px;background:#edf3ff;color:#0b47f5;font-weight:800;font-size:22px}
 .search{margin-top:21px}
 .search label{display:block;font-size:13px;font-weight:650;margin-bottom:9px}
 .searchRow{display:flex;gap:9px}
-.searchRow input{min-width:0;flex:1;height:48px;border:1px solid #cfd8c9;border-radius:10px;background:white;color:#293527;font:inherit;font-size:16px;padding:0 13px;outline-offset:2px}
-.searchRow input:focus{outline:2px solid #7eaa67;border-color:#7eaa67}
-.searchRow button,.previewDetails button{min-height:48px;border:0;border-radius:10px;background:#e77851;color:white;font:inherit;font-size:13px;font-weight:700;padding:0 18px;cursor:pointer}
-.searchRow button:hover,.previewDetails button:hover{background:#c96342}
+.searchRow input{min-width:0;flex:1;height:48px;border:1px solid #cbd7ed;border-radius:10px;background:white;color:#13234f;font:inherit;font-size:16px;padding:0 13px;outline-offset:2px}
+.searchRow input:focus{outline:2px solid #0b47f5;border-color:#0b47f5}
+.searchRow button,.previewDetails button{min-height:48px;border:0;border-radius:10px;background:#0b47f5;color:white;font:inherit;font-size:13px;font-weight:700;padding:0 18px;cursor:pointer}
+.searchRow button:hover,.previewDetails button:hover{background:#083bd4}
+.searchRow button:focus-visible,.previewDetails button:focus-visible{outline:3px solid #ffa300;outline-offset:2px}
 .searchRow button:disabled,.previewDetails button:disabled{opacity:.6;cursor:wait}
 .error,.empty{margin:15px 0 0;font-size:13px;line-height:1.6}
-.error{color:#a53d33}.empty{color:#66715f}
-.resultHeading{display:flex;align-items:baseline;gap:10px;margin:24px 0 12px}.resultHeading strong{font-size:14px}.resultHeading span{font-size:12px;color:#75816e}
+.error{color:#b42318}.empty{color:#667085}
+.resultHeading{display:flex;align-items:baseline;gap:10px;margin:24px 0 12px}.resultHeading strong{font-size:14px}.resultHeading span{font-size:12px;color:#667085}
 .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;max-height:490px;overflow:auto}
-.card{min-width:0;text-align:left;overflow:hidden;border:1px solid #dbe2d5;border-radius:12px;background:#fff;padding:0;cursor:pointer;color:inherit}
-.card:hover,.selected{border-color:#dd805e;box-shadow:0 0 0 2px #f7dccf}
+.card{min-width:0;text-align:left;overflow:hidden;border:1px solid #dfe6f4;border-radius:12px;background:#fff;padding:0;cursor:pointer;color:inherit}
+.card:hover,.selected{border-color:#0b47f5;box-shadow:0 0 0 2px #dce8ff}
+.card:focus-visible{outline:3px solid #ffa300;outline-offset:2px}
 .card:disabled{cursor:wait}
-.thumbnail{position:relative;display:block;aspect-ratio:16/9;background:#e7ebdf;overflow:hidden}
+.thumbnail{position:relative;display:block;aspect-ratio:16/9;background:#edf3ff;overflow:hidden}
 .thumbnail img{width:100%;height:100%;object-fit:cover;display:block}
-.duration{position:absolute;bottom:8px;right:8px;border-radius:5px;background:#17201bcc;color:white;font-size:11px;font-weight:700;padding:3px 6px}
-.cardText{display:block;padding:10px 11px}.cardText strong{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px;font-weight:650}.cardText small{display:block;color:#74816e;margin-top:4px;font-size:11px}
-.preview{margin-top:18px;padding:13px;border:1px solid #dfdfd4;border-radius:12px;background:#fff}
-.preview video{display:block;width:100%;max-height:330px;border-radius:8px;background:#1f261f}
+.duration{position:absolute;bottom:8px;right:8px;border-radius:5px;background:#13234fcc;color:white;font-size:11px;font-weight:700;padding:3px 6px}
+.cardText{display:block;padding:10px 11px}.cardText strong{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px;font-weight:650}.cardText small{display:block;color:#667085;margin-top:4px;font-size:11px}
+.preview{margin-top:18px;padding:13px;border:1px solid #dfe6f4;border-radius:12px;background:#fff}
+.preview video{display:block;width:100%;max-height:330px;border-radius:8px;background:#13234f}
 .previewDetails{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:13px}
-.previewDetails div{min-width:0}.previewDetails strong{display:block;font-size:14px;line-height:1.5}.previewDetails span{display:block;color:#66715f;font-size:12px;margin-top:3px}
-.preview p,.credit{font-size:11px;line-height:1.6;color:#727e6a}.preview p{margin:12px 0 0}.credit{margin:16px 0 0}
-.preview a,.credit a{color:#4d7250;text-decoration:underline;text-underline-offset:2px}
+.previewDetails div{min-width:0}.previewDetails strong{display:block;font-size:14px;line-height:1.5}.previewDetails span{display:block;color:#667085;font-size:12px;margin-top:3px}
+.preview p,.credit{font-size:11px;line-height:1.6;color:#667085}.preview p{margin:12px 0 0}.credit{margin:16px 0 0}
+.preview a,.credit a{color:#0b47f5;text-decoration:underline;text-underline-offset:2px}
 @media(max-width:760px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.panel{padding:18px}}
 @media(max-width:520px){.panel{padding:16px;border-radius:13px}.heading h2{font-size:17px}.heading p{font-size:12px}.mark{width:32px;height:32px;font-size:19px}.searchRow{flex-direction:column}.searchRow button{width:100%}.grid{gap:8px;max-height:420px}.cardText{padding:8px}.cardText strong{font-size:11px}.cardText small{font-size:10px}.previewDetails{align-items:stretch;flex-direction:column}.previewDetails button{width:100%}}

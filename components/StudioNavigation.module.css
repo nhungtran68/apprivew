@@ -32,50 +32,103 @@
 .exportDialog p { font-size: 15px; line-height: 1.85; }
 .reminderDownloads { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; margin-top: 22px; }
 
-:global(.studio-app).embeddedApp { padding-bottom: 0; }
+:global(.studio-app).embeddedApp {
+  --paper: #f7f9ff;
+  --ink: #13234f;
+  --muted: #667085;
+  --line: #dfe6f4;
+  --accent: #0b47f5;
+  --accent-dark: #083bd4;
+  --accent-soft: #edf3ff;
+  --green: #0b47f5;
+  padding-bottom: 0;
+  color: #13234f;
+  background: transparent;
+}
 :global(.workspace).embeddedWorkspace {
   width: 100%;
   max-width: 1040px;
   min-height: 0;
   padding: 0 0 24px;
 }
-.localTabs {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding: 1px 0 18px;
-  margin-bottom: 12px;
-  scrollbar-width: thin;
-}
-.localTabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex: 0 0 auto;
-  min-height: 44px;
-  padding: 9px 13px;
-  border: 1px solid #dfe5db;
-  border-radius: 10px;
+:global(.studio-app).embeddedApp :global(.project-name),
+:global(.studio-app).embeddedApp :global(.project-name-static),
+:global(.studio-app).embeddedApp :global(.step-heading h1),
+:global(.studio-app).embeddedApp :global(.view-heading h1),
+:global(.studio-app).embeddedApp :global(.camera-empty > strong) { color: #13234f; }
+:global(.studio-app).embeddedApp :global(.step-heading p),
+:global(.studio-app).embeddedApp :global(.view-heading p),
+:global(.studio-app).embeddedApp :global(.camera-empty > p),
+:global(.studio-app).embeddedApp :global(.helper-text),
+:global(.studio-app).embeddedApp :global(.save-label) { color: #667085; }
+:global(.studio-app).embeddedApp :global(.step-kicker) { color: #e96800; }
+:global(.studio-app).embeddedApp :global(.step-card),
+:global(.studio-app).embeddedApp :global(.segment-editor),
+:global(.studio-app).embeddedApp :global(.project-card),
+:global(.studio-app).embeddedApp :global(.voice-library-card),
+:global(.studio-app).embeddedApp :global(.clone-card) {
+  border-color: #dfe6f4;
   background: #fff;
-  color: #5d6a59;
-  font-size: 13px;
-  font-weight: 550;
 }
-.localTabs button.activeTab {
-  border-color: #ef9a75;
-  background: #fff2eb;
-  color: #a7492e;
-}
+:global(.studio-app).embeddedApp :global(.workflow-step) { color: #667085; border-bottom-color: #dfe6f4; }
+:global(.studio-app).embeddedApp :global(.workflow-step.current) { color: #0b47f5; border-bottom-color: #0b47f5; }
+:global(.studio-app).embeddedApp :global(.workflow-step.complete) { color: #315ac1; border-bottom-color: #9bb9ff; }
+:global(.studio-app).embeddedApp :global(.workflow-step.complete .step-number) { color: #0b47f5; border-color: #d8e5ff; background: #edf3ff; }
+:global(.studio-app).embeddedApp :global(.mobile-progress) { color: #13234f; }
+:global(.studio-app).embeddedApp :global(.mobile-progress > span) { color: #667085; }
+:global(.studio-app).embeddedApp :global(.button.primary) { background: #0b47f5; color: #fff; box-shadow: 0 6px 18px #0b47f51a; }
+:global(.studio-app).embeddedApp :global(.button.primary:hover:not(:disabled)) { background: #083bd4; box-shadow: 0 8px 22px #0b47f52a; }
+:global(.studio-app).embeddedApp :global(.button.secondary) { color: #0b47f5; border-color: #cbd7ed; background: #fff; }
+:global(.studio-app).embeddedApp :global(.button.secondary:hover:not(:disabled)) { border-color: #0b47f5; background: #edf3ff; }
+:global(.studio-app).embeddedApp :global(.text-button),
+:global(.studio-app).embeddedApp :global(.quiet-details > summary),
+:global(.studio-app).embeddedApp :global(.clip-details > summary) { color: #315ac1; }
+:global(.studio-app).embeddedApp :global(.text-button:hover:not(:disabled)) { color: #083bd4; }
+:global(.studio-app).embeddedApp :global(.camera-stage) { border-color: #d8e5ff; background: #f3f7ff; }
+:global(.studio-app).embeddedApp :global(.camera-stage.dragging) { border-color: #0b47f5; background: #edf3ff; }
+:global(.studio-app).embeddedApp :global(.camera-orbit) { color: #0b47f5; border-color: #d8e5ff; background: #e6efff; box-shadow: 0 0 0 10px #f1f6ff; }
+:global(.studio-app).embeddedApp :global(.camera-orbit > span) { color: #e96800; }
+:global(.studio-app).embeddedApp :global(.canvas-note) { color: #667085; }
+:global(.studio-app).embeddedApp :global(.field-label),
+:global(.studio-app).embeddedApp :global(.context-details .field-label),
+:global(.studio-app).embeddedApp :global(.segment-top > .field-label) { color: #13234f; }
+:global(.studio-app).embeddedApp :global(input),
+:global(.studio-app).embeddedApp :global(textarea),
+:global(.studio-app).embeddedApp :global(select) { color: #13234f; border-color: #cbd7ed; }
+:global(.studio-app).embeddedApp :global(input:focus),
+:global(.studio-app).embeddedApp :global(textarea:focus),
+:global(.studio-app).embeddedApp :global(select:focus) { border-color: #0b47f5; box-shadow: 0 0 0 3px #0b47f51a; }
+:global(.studio-app).embeddedApp :global(button:focus-visible),
+:global(.studio-app).embeddedApp :global(a:focus-visible),
+:global(.studio-app).embeddedApp :global(summary:focus-visible) { outline-color: #ffa300; }
+:global(.studio-app).embeddedApp :global(.clip-details),
+:global(.studio-app).embeddedApp :global(.creator-context),
+:global(.studio-app).embeddedApp :global(.speech-preview),
+:global(.studio-app).embeddedApp :global(.narration-preview) { border-color: #dfe6f4; background: #f7f9ff; }
+:global(.studio-app).embeddedApp :global(.creator-context),
+:global(.studio-app).embeddedApp :global(.creator-context .text-button),
+:global(.studio-app).embeddedApp :global(.speech-preview > p),
+:global(.studio-app).embeddedApp :global(.narration-preview strong) { color: #315ac1; }
+:global(.studio-app).embeddedApp :global(.quiet-details) { border-top-color: #dfe6f4; }
+:global(.studio-app).embeddedApp :global(.format-picker legend),
+:global(.studio-app).embeddedApp :global(.format-picker button strong) { color: #13234f; }
+:global(.studio-app).embeddedApp :global(.format-picker button) { border-color: #dfe6f4; background: #fff; }
+:global(.studio-app).embeddedApp :global(.format-picker button span) { color: #667085; }
+:global(.studio-app).embeddedApp :global(.format-picker button.active) { border-color: #0b47f5; background: #edf3ff; box-shadow: 0 0 0 1px #0b47f5; }
+:global(.studio-app).embeddedApp :global(.status-banner) { border-color: #f6d4a7; background: #fff8eb; color: #815019; }
+:global(.studio-app).embeddedApp :global(.status-banner.warning) { border-color: #dfe6f4; background: #f7f9ff; color: #315ac1; }
+:global(.studio-app).embeddedApp :global(.status-banner a),
+:global(.studio-app).embeddedApp :global(.status-banner button) { color: #0b47f5; }
 .analysisReady {
   display: flex;
   align-items: flex-start;
   gap: 9px;
   padding: 13px 15px;
   margin-top: 20px;
-  border: 1px solid #d9e8d6;
+  border: 1px solid #d8e5ff;
   border-radius: 10px;
-  background: #f5fbf4;
-  color: #3f704c;
+  background: #edf3ff;
+  color: #315ac1;
   font-size: 13px;
   line-height: 1.7;
 }
@@ -85,22 +138,21 @@
   flex: 0 0 auto;
   min-height: 30px;
   padding: 0 2px;
-  color: #397258;
+  color: #0b47f5;
   font-size: 12px;
   text-decoration: underline;
 }
-.typeHint { margin: -5px 0 13px; color: #62705e; font-size: 13px; line-height: 1.7; }
-.typeScope { display: inline-block; margin-top: 8px; color: #ad6a43; font-size: 11px; }
+.typeHint { margin: -5px 0 13px; color: #667085; font-size: 13px; line-height: 1.7; }
+.typeScope { display: inline-block; margin-top: 8px; color: #e96800; font-size: 11px; }
 .typeActions { display: flex; gap: 12px 20px; align-items: center; flex-wrap: wrap; margin-top: 12px; font-size: 12px; }
-.typeActions a, .typeActions button { color: #a65338; min-height: 38px; display: inline-flex; align-items: center; padding: 0; }
+.typeActions a, .typeActions button { color: #0b47f5; min-height: 38px; display: inline-flex; align-items: center; padding: 0; }
 .typeActions a:hover, .typeActions button:hover { text-decoration: underline; }
 
 @media (max-width: 700px) {
   .navigation { padding-inline: 16px; }
   :global(.studio-app).embeddedApp { padding-bottom: 80px; }
   :global(.workspace).embeddedWorkspace { padding: 0 0 20px; }
-  .localTabs { margin-bottom: 8px; }
-  .localTabs button { font-size: 12px; }
+  :global(.studio-app).embeddedApp :global(.camera-orbit) { box-shadow: 0 0 0 6px #f1f6ff; }
   .analysisReady { flex-wrap: wrap; font-size: 12px; }
   .analysisReady button { margin-left: 27px; }
 }

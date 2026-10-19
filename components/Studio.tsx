@@ -778,7 +778,6 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
     </header> : null}
 
     <WorkspaceTag className={`workspace ${embedded ? navigationStyles.embeddedWorkspace : ""}`} id="workspace" inert={navigationLocked}>
-      {embedded ? <nav className={navigationStyles.localTabs} aria-label="Mục trong công cụ Tạo Video AI">{NAV_ITEMS.map(item => <button type="button" key={item.view} className={view === item.view ? navigationStyles.activeTab : ""} aria-current={view === item.view ? "page" : undefined} onClick={() => setView(item.view)} disabled={working}><Icon name={item.icon} size={18} />{item.label}</button>)}</nav> : null}
       {loginRequired ? <div className="status-banner"><Icon name="lock" size={19} /><span>Đăng nhập để dùng AI và hồ sơ của bạn.</span><a href="/dang-nhap">Đăng nhập</a></div> : null}
       {configError ? <div className="status-banner warning" role="alert"><Icon name="info" size={19} /><span>Chưa tải được kết nối tài khoản. Bạn vẫn có thể chỉnh video thủ công.</span><button onClick={() => void refreshConfiguration()} disabled={configRefreshing || working}>{configRefreshing ? "Đang thử…" : "Thử lại"}</button></div> : null}
 
