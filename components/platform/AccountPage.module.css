@@ -22,6 +22,7 @@
 .quotaCard .quotaDescription { font-size: 13px; line-height: 1.75; margin-top: 14px; }
 .quotaCard .missingQuota { font-size: 15px; line-height: 1.8; margin: 16px 0 20px; }
 .quotaFooter { margin-top: auto; padding-top: 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 3px 12px; width: 100%; }
+.topUpButton { margin-top: 18px; }
 .quotaFooter > span { font-size: 11px; color: #758378; }
 .quotaFooter button { padding: 0; background: transparent; border: 0; }
 .quotaFooter button:disabled { cursor: wait; opacity: .55; }

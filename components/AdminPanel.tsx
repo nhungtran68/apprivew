@@ -24,6 +24,8 @@ export default function AdminPanel() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
+  const [paymentReady, setPaymentReady] = useState<boolean | null>(null);
+  const [paymentBusy, setPaymentBusy] = useState(false);
   const pendingGrants = useRef<Record<string, { amount: number; key: string }>>({});
 
   const load = useCallback(async (): Promise<boolean> => {
@@ -42,6 +44,29 @@ export default function AdminPanel() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void fetch("/api/payments/packs", { cache: "no-store" })
+      .then(response => response.json()).then(data => setPaymentReady(data.paymentReady === true))
+      .catch(() => setPaymentReady(null));
+  }, []);
+
+  async function activatePayment() {
+    if (paymentBusy) return;
+    setPaymentBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/admin/payments/payos/confirm-webhook", { method: "POST", credentials: "same-origin" });
+      const data = await response.json();
+      if (!response.ok || data.ok !== true) throw new Error(data.error || "Chưa kết nối được payOS.");
+      setPaymentReady(true);
+      setIsError(false);
+      setMessage("Đã xác nhận payOS. Thành viên có thể nạp credit.");
+    } catch (error) {
+      setPaymentReady(false);
+      setIsError(true);
+      setMessage(error instanceof Error ? error.message : "Chưa kết nối được payOS.");
+    } finally { setPaymentBusy(false); }
+  }
 
   async function save(member: Member, values: Record<string, unknown>, successMessage: string, idempotencyKey?: string) {
     setBusy(member.user_id);
@@ -84,6 +109,10 @@ export default function AdminPanel() {
     <Link href="/" className={styles.back}>← Về tổng quan</Link>
     <header className={styles.heading}><span>QUẢN TRỊ THÀNH VIÊN</span><h1>Credit của thành viên</h1><p>Cấp credit để thành viên sử dụng các công cụ AI. Khi credit khả dụng về 0, hệ thống dừng tác vụ AI mới.</p></header>
     {message && <p className={`${styles.message} ${isError ? styles.error : ""}`} role={isError ? "alert" : "status"}>{message}</p>}
+    <section className={`${styles.card} ${styles.paymentCard}`} aria-labelledby="payos-heading">
+      <div><h2 id="payos-heading">Thanh toán payOS</h2><p>Thành viên mua credit tại trang Nạp credit. Sau khi thêm ba khóa payOS vào Vercel, bấm xác nhận để bật thanh toán tự động.</p><span className={`${styles.status} ${paymentReady ? styles.active : styles.locked}`}>{paymentReady === null ? "Đang kiểm tra" : paymentReady ? "Đã kích hoạt" : "Chưa kích hoạt"}</span></div>
+      <div className={styles.paymentActions}><Link href="/nap-credit" className={styles.toggle}>Xem trang nạp</Link><button type="button" className={styles.grant} onClick={() => void activatePayment()} disabled={paymentBusy}>{paymentBusy ? "Đang xác nhận…" : paymentReady ? "Xác nhận lại payOS" : "Xác nhận kết nối payOS"}</button></div>
+    </section>
     <div className={styles.list}>
       {members.map(member => {
         const available = Number.isSafeInteger(member.credit_available) ? member.credit_available! : null;

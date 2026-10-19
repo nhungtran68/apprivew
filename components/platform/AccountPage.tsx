@@ -72,9 +72,10 @@ export default function AccountPage() {
         {credits ? <>
           <p className={styles.quotaValue}><strong>{formatNumber(credits.available)}</strong><span>credit</span></p>
           <div className={styles.creditDetails}><span>Số dư: <strong>{formatNumber(credits.balance)}</strong></span><span>Đang giữ cho tác vụ: <strong>{formatNumber(credits.reserved)}</strong></span></div>
-          {credits.available === 0 ? <p className={styles.exhausted} role="status">Bạn đã hết credit khả dụng. Các tác vụ AI sẽ tạm dừng; liên hệ quản trị viên để được cấp thêm.</p> : <p className={styles.quotaDescription}>Mỗi tác vụ trừ credit theo bảng bên dưới khi thực hiện thành công.</p>}
+          {credits.available === 0 ? <p className={styles.exhausted} role="status">Bạn đã hết credit khả dụng. Các tác vụ AI sẽ tạm dừng cho đến khi nạp thêm credit.</p> : <p className={styles.quotaDescription}>Mỗi tác vụ trừ credit theo bảng bên dưới khi thực hiện thành công.</p>}
         </> : <p className={styles.missingQuota}>Chưa tải được số dư credit. Hãy cập nhật lại trước khi tạo nội dung.</p>}
-        <div className={styles.quotaFooter}><span>Credit do quản trị viên cấp.</span><button type="button" className={shared.textLink} onClick={refresh} disabled={signingOut}><PlatformIcon name="refresh" size={15} />Cập nhật số dư</button></div>
+        <Link href="/nap-credit" className={`${shared.primaryButton} ${styles.topUpButton}`}><PlatformIcon name="plus" size={18} />Nạp credit</Link>
+        <div className={styles.quotaFooter}><span>Credit nạp qua payOS hoặc do quản trị viên cấp.</span><button type="button" className={shared.textLink} onClick={refresh} disabled={signingOut}><PlatformIcon name="refresh" size={15} />Cập nhật số dư</button></div>
       </section>
     </div> : status === "loading" ? <section className={`${shared.panel} ${styles.loadingPanel}`} role="status" aria-live="polite" aria-busy="true">
       <span className={styles.loadingAvatar} aria-hidden="true" />
