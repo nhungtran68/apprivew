@@ -1,5 +1,15 @@
 # Kiểm chứng giao diện, Supabase và AI
 
+## Tạo Video AI và Pixabay — 19/10/2026
+
+`/cong-cu/video-ai` dùng luồng quay/tải video, tạo giọng và xuất MP4 của Studio; route `/studio` và dự án IndexedDB cũ vẫn hoạt động. Sau phân tích, trang chỉ báo hoàn tất và tải cùng danh sách dạng kịch bản của tab Kịch bản AI. Prompt chia sẻ do máy chủ giải mã; thành viên không nhận prompt trong phản hồi. Phân tích mới chỉ tạo quan sát hình ảnh, không tạo ba góc cũ rồi bỏ đi. Chọn kiểu khác làm mất hiệu lực lời thoại/âm thanh đã tạo.
+
+Pixabay có API tìm video đã xác thực, lưu đệm yêu cầu 24 giờ, gắn nguồn ở kết quả và tải clip được chọn qua luồng máy chủ giới hạn 60 MB. Giao diện xem trước và duyệt một clip rồi dùng luồng Studio để viết và xuất MP4. Đã thử các đường lỗi: chưa đăng nhập, ID/host không hợp lệ, clip quá lớn và yêu cầu khác origin. Chưa thử tìm/tải bằng khóa thật trên Vercel vì môi trường kiểm tra cục bộ không có khóa hoặc phiên đăng nhập.
+
+- Toàn bộ 12 nhóm kiểm tra ngoại tuyến, TypeScript và production build đạt. Các nhóm mới xác nhận quyền truy cập mẫu kịch bản, prompt không lộ, phân tích gọn, tìm/tải Pixabay và giao diện không hiện bản phân tích làm lời thoại.
+- Kiểm tra HTTP cục bộ trả `200` cho tab Video AI; API Pixabay từ môi trường chưa cấu hình Auth trả lỗi cấu hình như dự kiến. Đã xem ảnh Chrome Headless ở chiều rộng điện thoại 390 px và desktop 1440 px; chưa kiểm tra thao tác thực trên điện thoại vật lý hoặc API Pixabay với khóa Production.
+
+
 ## Nhận diện màu từng công cụ — 18/10/2026
 
 Theo ảnh phản hồi của người dùng, thẻ công cụ được đổi từ nền trắng sang sáu nền có màu rõ ràng: tím, xanh dương, cam, hồng, xanh ngọc và cyan. Nền, chữ, biểu tượng, nút và điều hướng dùng cùng bộ biến trong `ModuleTone.module.css`. Trang module và các thẻ liên quan kế thừa đúng màu của công cụ tương ứng; giữ nguyên URL, dữ liệu, tài khoản và trạng thái trang khung.

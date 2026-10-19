@@ -50,7 +50,7 @@ function ShellContent({ children }: { children: ReactNode }) {
       <div className={styles.sidebarBrand}><Brand /><span className={styles.brandTagline}>Sáng tạo cho kinh doanh</span></div>
       <Navigation />
       <div className={styles.sidebarBottom}>
-        <div className={styles.studioShortcut}><span className={styles.shortcutIcon}><PlatformIcon name="review" /></span><strong>Ý tưởng thành video</strong><p>Tiếp tục sáng tạo trong Studio video hiện tại.</p><a href="/studio">Mở Studio video<PlatformIcon name="arrow" size={17} /></a></div>
+        <div className={styles.studioShortcut}><span className={styles.shortcutIcon}><PlatformIcon name="review" /></span><strong>Ý tưởng thành video</strong><p>Quay, chọn cảnh, viết lời thoại và ghép video trong một công cụ.</p><a href="/cong-cu/video-ai">Mở Tạo Video AI<PlatformIcon name="arrow" size={17} /></a></div>
         <Link href="/huong-dan" className={styles.helpLink}><PlatformIcon name="help" size={20} />Hướng dẫn bắt đầu<PlatformIcon name="chevron" size={15} /></Link>
       </div>
     </aside>

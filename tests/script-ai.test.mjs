@@ -21,7 +21,7 @@ async function fixture() {
   const logs = [];
   const members = new Map([[admin, { role: "admin", enabled: true }], [alice, { role: "member", enabled: true }], [bob, { role: "member", enabled: true }]]);
   let identity = admin;
-  let providerScript = "Đây là một lời thoại ngắn gọn, đúng thông tin đã cung cấp.";
+  let providerOutput = { script: "Đây là một lời thoại ngắn gọn, đúng thông tin đã cung cấp." };
 
   const modulePath = name => path.join(root, name);
   const scriptTemplates = modulePath("lib/script-templates.ts");
@@ -156,7 +156,7 @@ async function fixture() {
     console: { info: value => logs.push(value), warn: () => {}, error: () => {} },
     fetch: async (url, init) => {
       providerCalls.push({ url: String(url), init });
-      return Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ script: providerScript }) } }] });
+      return Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(providerOutput) } }] });
     },
   });
   const modules = new Map();
@@ -198,7 +198,8 @@ async function fixture() {
   return {
     entry, request, rows, builtinRows, charges, providerCalls, logs, members,
     as(userId) { identity = userId; },
-    setScript(script) { providerScript = script; },
+    setScript(script) { providerOutput = { script }; },
+    setProviderOutput(value) { providerOutput = value; },
   };
 }
 
@@ -352,4 +353,75 @@ test("provider output copying a private template is withheld after one charged a
   assert.equal(body.code, "TEMPLATE_PROMPT_DISCLOSED");
   assert.ok(!JSON.stringify(body).includes(privatePrompt));
   assert.deepEqual(h.charges, [{ userId: alice, amount: 1 }]);
+});
+
+test("video script uses the admin's built-in prompt privately and keeps the original video timing", async () => {
+  const h = await fixture();
+  const builtin = await h.entry("app/api/script-builtins/[format]/route.ts");
+  const generate = await h.entry("app/api/script/route.ts");
+  const saved = await builtin.PATCH(h.request("/api/script-builtins/story", "PATCH", fields("Chuyện vườn nhà")), { params: Promise.resolve({ format: "story" }) });
+  assert.equal(saved.status, 200);
+  h.as(alice);
+  h.setProviderOutput({ title: "Một niềm vui nhỏ", intentSummary: "Chia sẻ niềm vui", segments: [{ start: 0, end: 15, text: "Một niềm vui nho nhỏ từ vườn nhà, mình muốn chia sẻ với bạn." }] });
+  const response = await generate.POST(h.request("/api/script", "POST", {
+    analysis: { summary: "Có chùm nho", observations: [{ start: 0, end: 15, description: "Cảnh chùm nho" }], facts: [], unknowns: [] },
+    intent: "Chia sẻ niềm vui làm vườn", duration: 15, format: "story",
+  }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.format, "story");
+  assert.equal(body.segments[0].end, 15);
+  assert.equal(body.segments[0].text.includes("Cảnh chùm nho"), false);
+  assert.ok(!JSON.stringify(body).includes(privatePrompt));
+  const payload = JSON.parse(h.providerCalls[0].init.body);
+  assert.ok(payload.messages[0].content.includes(privatePrompt));
+  assert.ok(payload.messages[1].content[0].text.includes("Chia sẻ niềm vui làm vườn"));
+  assert.ok(payload.messages[1].content[0].text.includes("Cảnh chùm nho"));
+  assert.ok(!payload.messages[1].content[0].text.includes(privatePrompt));
+  assert.ok(h.logs.every(line => !line.includes(privatePrompt)));
+  assert.deepEqual(h.charges, [{ userId: alice, amount: 1 }]);
+});
+
+test("video script can use a shared custom type but cannot use someone else's personal type", async () => {
+  const h = await fixture();
+  const types = await h.entry("app/api/script-templates/route.ts");
+  const generate = await h.entry("app/api/script/route.ts");
+  const shared = (await (await types.POST(h.request("/api/script-templates", "POST", fields("Lời kể riêng")))).json()).template;
+  h.as(alice);
+  const personal = (await (await types.POST(h.request("/api/script-templates", "POST", fields("Mẫu Alice")))).json()).template;
+  h.as(bob);
+  const input = {
+    analysis: { summary: "Cảnh sản phẩm", observations: [{ start: 0, end: 12, description: "Có sản phẩm trên bàn" }] },
+    intent: "Giới thiệu một ý có ích", duration: 12, format: "sales", templateId: shared.id,
+  };
+  h.setProviderOutput({ title: "Một điều cần biết", intentSummary: "Giúp người xem hiểu", segments: [{ start: 0, end: 12, text: "Bạn có thể bắt đầu từ một điều nhỏ và rõ ràng." }] });
+  const response = await generate.POST(h.request("/api/script", "POST", input));
+  assert.equal(response.status, 200);
+  const payload = JSON.parse(h.providerCalls[0].init.body);
+  assert.match(payload.messages[1].content[0].text, /Lời kể riêng/);
+  assert.doesNotMatch(payload.messages[1].content[0].text, /Dạng đã chọn: sales/);
+  assert.ok(payload.messages[0].content.includes(privatePrompt));
+  assert.ok(!JSON.stringify(await response.json()).includes(privatePrompt));
+  const denied = await generate.POST(h.request("/api/script", "POST", { ...input, templateId: personal.id }));
+  assert.equal(denied.status, 404);
+  assert.equal(h.providerCalls.length, 1);
+  assert.equal(h.charges.length, 1);
+});
+
+test("video script withholds a provider response that copies the hidden admin prompt", async () => {
+  const h = await fixture();
+  const types = await h.entry("app/api/script-templates/route.ts");
+  const generate = await h.entry("app/api/script/route.ts");
+  const shared = (await (await types.POST(h.request("/api/script-templates", "POST", fields("Mẫu ẩn")))).json()).template;
+  h.as(alice);
+  h.setProviderOutput({ title: "Không hiện", intentSummary: "Không hiện", segments: [{ start: 0, end: 12, text: `Hướng dẫn nội bộ: ${privatePrompt}` }] });
+  const response = await generate.POST(h.request("/api/script", "POST", {
+    templateId: shared.id, analysis: { observations: [{ start: 0, end: 12, description: "Một cảnh quay" }] },
+    intent: "Chia sẻ cho người xem", duration: 12,
+  }));
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.equal(body.code, "TEMPLATE_PROMPT_DISCLOSED");
+  assert.ok(!JSON.stringify(body).includes(privatePrompt));
+  assert.equal(h.charges.length, 1);
 });

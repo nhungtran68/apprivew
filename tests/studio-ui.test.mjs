@@ -27,6 +27,7 @@ const downloadCompiled = ts.transpileModule(downloadSource, {
 const downloadModule = { exports: {} };
 new Function("module", "exports", downloadCompiled)(downloadModule, downloadModule.exports);
 const componentRequire = (specifier) => specifier === "@/lib/video-download" ? downloadModule.exports
+  : specifier === "@/components/platform/PixabayVideoPicker" ? { default: () => null }
   : specifier === "./StudioNavigation.module.css" ? { default: { navigation: "studio-navigation", exit: "studio-exit", label: "studio-label" } }
   : baseRequire(specifier);
 new Function("require", "module", "exports", compiled)(componentRequire, evaluated, evaluated.exports);
@@ -182,9 +183,20 @@ test("request fingerprints change after a script edit, allowing stale AI results
   assert.notEqual(scriptKey(project), scriptKey(edited));
 });
 
-test("AI request fingerprints reject results after format, angle, mode or creator preferences change", () => {
-  for (const changes of [{format:"story"}, {angleId:"angle-2"}, {mode:"face"}, {profile:{...project.profile,customPrompt:"Giữ một giọng văn khác"}}, {profile:{...project.profile,audience:"Khán giả khác"}}]) assert.notEqual(intentKey(project), intentKey({...project,...changes}));
+test("AI request fingerprints reject results after script type, mode or creator preferences change", () => {
+  for (const changes of [{format:"story"}, {templateId:"e0b8aa89-af07-4551-87c0-2bcb8ae15930"}, {angleId:"angle-2"}, {mode:"face"}, {profile:{...project.profile,customPrompt:"Giữ một giọng văn khác"}}, {profile:{...project.profile,audience:"Khán giả khác"}}]) assert.notEqual(intentKey(project), intentKey({...project,...changes}));
   assert.equal(intentKey(project), intentKey({...project,step:4}), "navigation does not change the AI request's editorial inputs");
+});
+
+test("analyzed video shows script types without revealing the analysis as narration", () => {
+  const hiddenAnalysis = "Cảnh chỉ có hộp sản phẩm màu xanh";
+  const html = renderStudioState({ step: 1, duration: 20, intent: "Giải thích cách dùng sản phẩm", analysis: { summary: hiddenAnalysis, suggestedAngles: [{ id: "old", title: "Góc cũ", format: "review" }] } });
+  assert.ok(html.includes("Chọn dạng kịch bản"));
+  assert.ok(html.includes("Review sản phẩm"));
+  assert.ok(html.includes("Giải thích cách dùng sản phẩm"));
+  assert.ok(!html.includes(hiddenAnalysis));
+  assert.ok(!html.includes("Góc cũ"));
+  assert.ok(!html.includes("AI đã nhìn thấy gì?"));
 });
 
 test("saving new account defaults preserves explicit per-video preferences and sanitizes the result", () => {

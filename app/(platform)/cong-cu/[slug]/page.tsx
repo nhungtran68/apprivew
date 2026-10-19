@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import ModulePage from "@/components/platform/ModulePage";
 import VoiceAiPage from "@/components/platform/VoiceAiPage";
 import ScriptAiPage from "@/components/platform/ScriptAiPage";
+import Studio from "@/components/Studio";
 import { getModuleBySlug, getVisibleModules } from "@/lib/studio-modules";
 
 type ModuleRouteProps = { params: Promise<{ slug: string }> };
@@ -33,5 +34,6 @@ export default async function ModuleRoute({ params }: ModuleRouteProps) {
 
   if (module.id === "voice") return <VoiceAiPage />;
   if (module.id === "script") return <ScriptAiPage />;
+  if (module.id === "video") return <Studio embedded />;
   return <ModulePage module={module} />;
 }

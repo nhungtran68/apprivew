@@ -8,6 +8,11 @@ export async function POST(request: Request) {
   try {
     const userId = await requestUser(request, true), body = await limitedJson(request, 3 * 1024 * 1024), duration = validDuration(body.duration), frames = validateFrames(body.frames, duration);
     const { key } = await providerKey(userId, "deepseek");
-    return json({ analysis: await analyzeFrames(key, { frames, duration, intent: cleanText(body.intent, 5000), profile: await projectProfile(userId, body.profile), format: validFormat(body.format), transcript: cleanText(body.transcript, 10000) }, () => consumeAiUnits(userId, 1)) });
+    const observationsOnly = body.observationsOnly === true;
+    return json({ analysis: await analyzeFrames(key, {
+      frames, duration, intent: cleanText(body.intent, 5000), profile: await projectProfile(userId, body.profile),
+      format: observationsOnly ? undefined : validFormat(body.format),
+      transcript: cleanText(body.transcript, 10000), observationsOnly,
+    }, () => consumeAiUnits(userId, 1)) });
   } catch (error) { return apiError(error); }
 }

@@ -1,10 +1,10 @@
 # Lời Kể AI · apprivew
 
-Nền tảng AI tiếng Việt cho người kinh doanh online. Trang chủ là Dashboard sáu công cụ; Studio hiện tại tiếp tục cung cấp quy trình quay video → xác định thông điệp → chọn hướng kịch bản → tạo giọng → tải MP4.
+Nền tảng AI tiếng Việt cho người kinh doanh online. Tab **Tạo Video AI** dùng lại quy trình quay hoặc tải video → nêu thông điệp → AI xem cảnh làm tư liệu → chọn dạng kịch bản → tạo giọng → xuất MP4. Người dùng cũng có thể chọn một cảnh minh họa từ Pixabay để bắt đầu.
 
 ## Dashboard và các module
 
-Giai đoạn này xây dựng giao diện, hệ thống điều hướng và trang khung độc lập. Chưa thêm tác vụ AI, nhà cung cấp, thanh toán hay cơ chế credit mới.
+Dashboard và hệ thống điều hướng dùng module độc lập. Giọng nói AI, Kịch bản AI và Video AI đã có luồng hoạt động; những công cụ còn lại tiếp tục phát triển theo từng giai đoạn. Chưa có hệ thống thanh toán mới.
 
 | Khu vực | Đường dẫn |
 | --- | --- |
@@ -20,7 +20,7 @@ Giai đoạn này xây dựng giao diện, hệ thống điều hướng và tra
 | Hướng dẫn bắt đầu | `/huong-dan` |
 | Studio đang hoạt động | `/studio` |
 
-Studio nhận các đường dẫn `/studio?view=projects`, `?view=profile`, `?view=voices`, `?view=guide`. Tài khoản, hạn mức, quyền quản trị và các API hiện tại được giữ nguyên. Dự án vẫn dùng IndexedDB `loike-studio-v1` trên cùng trình duyệt, thiết bị và origin; việc đổi đường dẫn từ `/` sang `/studio` không cần di chuyển dữ liệu. Bản xem trước khác domain không chia sẻ kho dự án với Production.
+Tab `/cong-cu/video-ai` nhúng Studio đang hoạt động; đường dẫn `/studio` cũ vẫn dùng được, cùng dự án trên một origin. Studio nhận thêm `/studio?view=projects`, `?view=profile`, `?view=voices`, `?view=guide`. Tài khoản, hạn mức, quyền quản trị và các API hiện tại được giữ nguyên. Dự án vẫn dùng IndexedDB `loike-studio-v1` trên cùng trình duyệt, thiết bị và origin. Bản xem trước khác domain không chia sẻ kho dự án với Production.
 
 Registry `lib/studio-modules.ts` là nguồn chung cho thẻ công cụ, tìm kiếm, điều hướng và trang khung. Đặt `available: false` để ẩn module và chặn đường dẫn của nó; đây là cấu hình hiển thị, không thay thế kiểm tra quyền phía máy chủ. Xem [kiến trúc nền tảng AI](docs/AI-PLATFORM.md) để thêm module hoặc triển khai từng công cụ sau này.
 
@@ -30,9 +30,15 @@ Giao diện dùng các CSS Module độc lập; giữ nguyên giao diện Studio
 
 Mỗi thành viên có mục **Hiểu về tôi**: tên kênh, chủ đề, người xem, giọng điệu, cách xưng hô, thông tin nền, lời nhắn cuối và lời dặn riêng cho AI. Hồ sơ lưu theo tài khoản trong Supabase, tách quyền bằng RLS; không tự suy diễn tính cách hoặc học từ nội dung thành viên khác. Video mới dùng hồ sơ đã lưu; từng video có thể đổi người xem, giọng kể và thông tin cần nói đúng.
 
-Chọn một trong bốn dạng: **review, kể chuyện, chia sẻ mẹo, giới thiệu sản phẩm**. AI phân tích ảnh làm tư liệu và đề xuất ba góc có thông điệp, câu mở và lý do phù hợp. Người dùng chọn góc rồi mới tạo một kịch bản có mở đầu, ý chính và kết thúc theo thời lượng. Phân tích cảnh không được dùng làm lời thoại mặc định. Khi thiếu giá, trải nghiệm, công dụng hoặc kết quả, AI cần hỏi hoặc chọn góc ít giả định thay vì bịa.
+Sau khi AI phân tích các ảnh trích từ video, giao diện chỉ báo đã xem cảnh và hiện **cùng danh sách dạng kịch bản** với tab Kịch bản AI. Bốn dạng có sẵn thuộc quản trị viên; các dạng chia sẻ của quản trị viên và dạng riêng của thành viên cũng xuất hiện. Prompt của dạng chia sẻ được đọc ở máy chủ, không trả cho thành viên. Người dùng chọn một dạng để viết lời thoại theo thời lượng video; bản phân tích không hiện hoặc trở thành lời thoại. Khi thiếu dữ kiện về giá, trải nghiệm, công dụng hoặc kết quả, AI không được bịa.
 
-Ba góc ý tưởng nằm trong cùng lần phân tích; chỉ góc đã chọn được viết thành kịch bản. Đổi góc rồi viết lại là một yêu cầu DeepSeek mới, tạo lại lời đọc tính riêng.
+Đổi dạng hoặc thông điệp sẽ làm mất hiệu lực lời thoại và âm thanh cũ. Phân tích và viết kịch bản là hai lượt AI riêng; tạo lại giọng đọc tính riêng theo nhà cung cấp giọng.
+
+## Video từ Pixabay
+
+Pixabay là kho cảnh có sẵn, không tạo video mới từ prompt. Trong bước đầu của Tạo Video AI, thành viên tìm cảnh, xem trước và chọn **một clip** dài 2–90 giây làm nền. Sau đó họ nhập ý muốn chia sẻ, chọn dạng kịch bản, tạo giọng và xuất MP4 bằng luồng Studio. Clip Pixabay chỉ là hình minh họa; AI không xem nó là bằng chứng về sản phẩm hoặc kết quả thực tế. Phiên bản này chưa tự ghép nhiều clip kho cảnh thành một video.
+
+API tìm kiếm và tải clip yêu cầu tài khoản đăng nhập. Khóa `PIXABAY_API_KEY` chỉ ở máy chủ; kết quả tìm kiếm được lưu đệm 24 giờ, hiển thị nguồn Pixabay và video được chuyển về dự án trong giới hạn 60 MB. Xem [tài liệu Pixabay](https://pixabay.com/api/docs/) và [tóm tắt giấy phép](https://pixabay.com/service/license-summary/) trước khi dùng cảnh trong quảng cáo.
 
 ## Giọng tiếng Việt và thư viện phổ biến
 
@@ -96,6 +102,7 @@ Chỉ hai biến NEXT_PUBLIC_SUPABASE_URL và NEXT_PUBLIC_SUPABASE_PUBLISHABLE_K
 | ELEVENLABS_API_KEY | Khóa ElevenLabs dùng chung |
 | ELEVENLABS_MODEL | Mặc định eleven_flash_v2_5, hỗ trợ tiếng Việt |
 | MAZIAO_API_KEY | Personal Access Token Maziao, chỉ ở server |
+| PIXABAY_API_KEY | Khóa Pixabay cho tìm và chọn video kho cảnh, chỉ ở server |
 | MAZIAO_MODEL | vieten_speech (mặc định) hoặc lingual_speech_v2 |
 | STUDIO_VOICE_PROVIDER | maziao hoặc eleven; mặc định Maziao khi có MAZIAO_API_KEY |
 | STUDIO_ENCRYPTION_KEY | Chuỗi ngẫu nhiên ít nhất32 ký tự, bảo vệ quyền dùng giọng cá nhân; giữ ổn định |
@@ -117,7 +124,7 @@ Khóa DeepSeek, Maziao và ElevenLabs do quản trị viên nối một lần. T
 
 ## Phân tích video với DeepSeek
 
-Bản này trích4–16 ảnh JPEG có thời gian từ clip, tối đa640px/ảnh, tổng yêu cầu dưới3MB để hợp giới hạn Vercel. DeepSeek nhìn ảnh mẫu, không xem liên tục và không nghe tiếng gốc. Những thao tác nhanh giữa hai ảnh có thể bị bỏ sót. Người dùng cần kiểm tra cảnh và xác nhận ý định. Có thể gõ ý tưởng; nút nói dùng nhận dạng giọng nói của trình duyệt nếu có hỗ trợ, với sự cho phép của người dùng.
+Bản này trích 4–16 ảnh JPEG có mốc thời gian từ clip, tối đa 640px/ảnh, tổng yêu cầu dưới 3 MB để hợp giới hạn Vercel. DeepSeek nhìn ảnh mẫu, không xem liên tục và không nghe tiếng gốc. Những thao tác nhanh giữa hai ảnh có thể bị bỏ sót. Chế độ Video AI mới chỉ yêu cầu quan sát hình ảnh; dạng kịch bản được chọn sau phân tích. Có thể gõ ý tưởng; nút nói dùng nhận dạng giọng nói của trình duyệt nếu có hỗ trợ, với sự cho phép của người dùng.
 
 API DeepSeek hiện được cấu hình theo tài liệu chính thức: https://api-docs.deepseek.com/guides/vision/ và https://api-docs.deepseek.com/guides/json_mode/ .
 

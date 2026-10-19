@@ -2,19 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { videoDownloadName, supportsVideoSave, saveVideoFile, canShareVideoFile, shareVideoFile } from "@/lib/video-download";
+import PixabayVideoPicker from "@/components/platform/PixabayVideoPicker";
 import navigationStyles from "./StudioNavigation.module.css";
 
 type Step = 0 | 1 | 2 | 3 | 4;
 type View = "studio" | "projects" | "voices" | "profile" | "guide";
 type Profile = { name: string; channel: string; brand: string; audience: string; topic: string; tone: string; pronoun: string; cta: string; facts: string; customPrompt: string };
 type VideoFormat = "review" | "story" | "tips" | "sales";
-type Angle = { id: string; title: string; format: VideoFormat; purpose: string; hook: string; reason: string };
+type ScriptType = { id: string; title: string; description?: string; scope: "shared" | "personal" };
+type BuiltinScriptType = { format: VideoFormat; title: string; description: string };
 type Segment = { start: number; end: number; text: string; audioBase64?: string; audioMime?: string; mimeType?: string; duration?: number; audioPath?: string };
 type Project = {
   id: string; userId: string; title: string; createdAt: number; updatedAt: number;
   source?: Blob; sourceName?: string; duration: number; manualDuration?: boolean; width: number; height: number;
   intent: string; profile: Profile; analysis?: Record<string, unknown>; summary: string;
-  format: VideoFormat; angleId: string;
+  format: VideoFormat; angleId: string; templateId?: string;
   segments: Segment[]; narration?: Blob; narrationName?: string; narrationDuration?: number; voiceId: string;
   mode: "scenery" | "talking" | "face"; keepAmbient: boolean; step: Step;
 };
@@ -24,7 +26,7 @@ type Notice = { text: string; type: "success" | "error" | "info" };
 type BrowserRecognition = { lang: string; continuous: boolean; interimResults: boolean; onresult: ((event: { results: { length: number; [index: number]: { isFinal: boolean; 0: { transcript: string } } } }) => void) | null; onerror: ((event: { error: string }) => void) | null; onend: (() => void) | null; start: () => void; stop: () => void; abort: () => void };
 
 const EMPTY_PROFILE: Profile = { name: "", channel: "", brand: "", audience: "", topic: "", tone: "Gần gũi, tự nhiên", pronoun: "", cta: "", facts: "", customPrompt: "" };
-const FORMATS: { id: VideoFormat; name: string; note: string }[] = [{id:"review",name:"Review, trải nghiệm",note:"Nhận xét có ích cho người xem"},{id:"story",name:"Kể chuyện",note:"Một câu chuyện, một thông điệp"},{id:"tips",name:"Chia sẻ mẹo",note:"Giải thích một điều hữu ích"},{id:"sales",name:"Giới thiệu sản phẩm",note:"Nêu giá trị, mời tìm hiểu"}];
+const FORMATS: { id: VideoFormat; name: string; note: string }[] = [{id:"review",name:"Review sản phẩm",note:"Chia sẻ trải nghiệm chân thật"},{id:"story",name:"Kể chuyện",note:"Tạo sự gần gũi, cảm xúc"},{id:"tips",name:"Mẹo & hướng dẫn",note:"Đưa kiến thức hữu ích"},{id:"sales",name:"Bán hàng",note:"Nêu lợi ích, mời hành động"}];
 const VOICE_GROUPS = [{id:"vietnamese",name:"Tiếng Việt · hợp review"},{id:"popular",name:"Được nhiều người thêm"},{id:"personal",name:"Giọng cá nhân"},{id:"default",name:"Giọng có sẵn"}];
 const STEPS = ["Quay video", "Ý muốn chia sẻ", "Kịch bản", "Giọng đọc", "Xuất video"];
 const NAV_ITEMS: {view:View;label:string;short:string;icon:string}[] = [{view:"studio",label:"Tạo video",short:"Tạo video",icon:"camera"},{view:"projects",label:"Video của tôi",short:"Video của tôi",icon:"grid"},{view:"voices",label:"Giọng của tôi",short:"Giọng đọc",icon:"mic"},{view:"profile",label:"Hiểu về tôi",short:"Hiểu về tôi",icon:"settings"}];
@@ -118,7 +120,6 @@ function pendingSpeechSegments(value: unknown, duration: number, userId: string)
 function withoutSpeechPaths(segments: Segment[]): Segment[] {
   return segments.map(({ audioPath: _path, ...segment }) => segment);
 }
-function summaryFrom(data: Record<string, any>) { return String(data.intentSummary || data.suggestedIntent || ""); }
 function downloadBlob(blob: Blob, filename: string) { const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 5000); }
 function blobBase64(blob: Blob): Promise<string> { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = reject; reader.readAsDataURL(blob); }); }
 function fromBase64(base64: string, type: string) { const binary = atob(base64); const bytes = new Uint8Array(binary.length); for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i); return new Blob([bytes], { type }); }
@@ -136,7 +137,7 @@ function voiceScriptMinimumHint(voiceId: string, segments: Segment[]) {
   const characters = segments.reduce((total, segment) => total + segment.text.trim().slice(0, 2400).length, 0);
   return characters < 100 ? "Giọng này cần ít nhất 100 ký tự lời thoại. Hãy chỉnh kịch bản cho phù hợp video hoặc tải bản thu lời thoại của bạn." : "";
 }
-function intentKey(project: Project) { return JSON.stringify({ id: project.id, intent: project.intent, profile: project.profile, mode: project.mode, format:project.format,angleId:project.angleId,sourceName: project.sourceName, sourceSize: project.source?.size, duration: project.duration }); }
+function intentKey(project: Project) { return JSON.stringify({ id: project.id, intent: project.intent, profile: project.profile, mode: project.mode, format:project.format,angleId:project.angleId,templateId:project.templateId,sourceName: project.sourceName, sourceSize: project.source?.size, duration: project.duration }); }
 function affectsExport(changes: Partial<Project>) { return ["id","source","duration","segments","narration","voiceId","keepAmbient"].some(key => Object.hasOwn(changes,key)); }
 function applyProjectChanges(current: Project, changes: Partial<Project>): Project {
   const next = { ...changes };
@@ -193,7 +194,7 @@ function restoreArchive(data: unknown, userId: string): Project {
   });
   const source = decode(archive.video, "video", 60 * 1024 * 1024), narration = decode(archive.narration, "audio", 32 * 1024 * 1024);
   const project = freshProject(userId, safeProfile(raw.profile));
-  return { ...project, title: text(raw.title, 200) || project.title, source, sourceName: text(raw.sourceName, 300), duration, manualDuration: Boolean(raw.manualDuration) || !duration, width: Math.max(0, Math.min(16384, Number(raw.width) || 0)), height: Math.max(0, Math.min(16384, Number(raw.height) || 0)), intent: text(raw.intent), summary: text(raw.summary), format: FORMATS.some(format=>format.id===raw.format) ? raw.format : "review", angleId:text(raw.angleId,80), analysis: safeAnalysis(raw.analysis), segments, narration, narrationName: narration ? text(raw.narrationName, 300) : undefined, narrationDuration: narration && Number.isFinite(Number(raw.narrationDuration)) ? Number(raw.narrationDuration) : undefined, voiceId: text(raw.voiceId, 300), mode: ["scenery", "talking", "face"].includes(raw.mode) ? raw.mode : "scenery", keepAmbient: Boolean(raw.keepAmbient), step: source ? Math.max(0, Math.min(4, Math.floor(Number(raw.step) || 0))) as Step : 0 };
+  return { ...project, title: text(raw.title, 200) || project.title, source, sourceName: text(raw.sourceName, 300), duration, manualDuration: Boolean(raw.manualDuration) || !duration, width: Math.max(0, Math.min(16384, Number(raw.width) || 0)), height: Math.max(0, Math.min(16384, Number(raw.height) || 0)), intent: text(raw.intent), summary: text(raw.summary), format: FORMATS.some(format=>format.id===raw.format) ? raw.format : "review", angleId:text(raw.angleId,80), templateId: typeof raw.templateId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw.templateId) ? raw.templateId : undefined, analysis: safeAnalysis(raw.analysis), segments, narration, narrationName: narration ? text(raw.narrationName, 300) : undefined, narrationDuration: narration && Number.isFinite(Number(raw.narrationDuration)) ? Number(raw.narrationDuration) : undefined, voiceId: text(raw.voiceId, 300), mode: ["scenery", "talking", "face"].includes(raw.mode) ? raw.mode : "scenery", keepAmbient: Boolean(raw.keepAmbient), step: source ? Math.max(0, Math.min(4, Math.floor(Number(raw.step) || 0))) as Step : 0 };
 }
 function audioMetadata(file: Blob): Promise<number | undefined> {
   return new Promise(resolve => {
@@ -205,7 +206,7 @@ function audioMetadata(file: Blob): Promise<number | undefined> {
   });
 }
 
-export default function Studio({ initialView = "studio" }: { initialView?: View } = {}) {
+export default function Studio({ initialView = "studio", embedded = false }: { initialView?: View; embedded?: boolean } = {}) {
   const [view, setView] = useState<View>(initialView);
   const [leavingStudio, setLeavingStudio] = useState(false);
   const [exitPrompt, setExitPrompt] = useState(false);
@@ -246,6 +247,10 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [dragging, setDragging] = useState(false);
   const [scriptInstruction, setScriptInstruction] = useState("");
+  const [builtinScriptTypes, setBuiltinScriptTypes] = useState<BuiltinScriptType[]>(FORMATS.map(item => ({ format: item.id, title: item.name, description: item.note })));
+  const [customScriptTypes, setCustomScriptTypes] = useState<ScriptType[]>([]);
+  const [scriptTypesLoading, setScriptTypesLoading] = useState(false);
+  const [scriptTypesError, setScriptTypesError] = useState("");
   const [keyboardOpen,setKeyboardOpen] = useState(false);
   const previousScreen = useRef("");
   const cameraVideo = useRef<HTMLVideoElement>(null);
@@ -284,6 +289,10 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
   const isMaziao = voiceProvider === "maziao";
   const voiceProviderLabel = "Dịch vụ giọng nói";
   const voicePlanNote = "Giọng đọc dùng kết nối chung do quản trị viên cấu hình. Chi phí và hạn mức phụ thuộc model và gói dịch vụ hiện tại.";
+  const selectedScriptTypeName = project.templateId
+    ? customScriptTypes.find(item => item.id === project.templateId)?.title || "Dạng kịch bản đã chọn"
+    : builtinScriptTypes.find(item => item.format === project.format)?.title || FORMATS.find(item => item.id === project.format)?.name || "Kịch bản";
+  const isStockClip = Boolean(project.sourceName?.startsWith("pixabay-"));
   const update = useCallback((changes: Partial<Project>) => {
     const next = applyProjectChanges(projectRef.current, changes);
     projectRef.current = next;
@@ -291,7 +300,32 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
     if (affectsExport(changes)) setExported(undefined);
   }, []);
   const updateProfile = (changes: Partial<Profile>) => update({ profile: { ...project.profile, ...changes } });
+  const chooseBuiltinScriptType = (format: VideoFormat) => {
+    if (!project.templateId && project.format === format) return;
+    update({ format, templateId: undefined, angleId: "", segments: [], narration: undefined });
+  };
+  const chooseCustomScriptType = (templateId: string) => {
+    if (project.templateId === templateId) return;
+    update({ templateId, angleId: "", segments: [], narration: undefined });
+  };
   const notify = (text: string, type: Notice["type"] = "info") => setNotice({ text, type });
+  const loadScriptTypes = useCallback(async () => {
+    setScriptTypesLoading(true);
+    setScriptTypesError("");
+    try {
+      const result = await requestJson("/api/script-templates", { cache: "no-store" });
+      const builtins = Array.isArray(result.builtins) ? result.builtins as BuiltinScriptType[] : [];
+      const templates = Array.isArray(result.templates) ? result.templates as ScriptType[] : [];
+      setBuiltinScriptTypes(FORMATS.map(item => {
+        const saved = builtins.find(value => value.format === item.id);
+        return { format: item.id, title: saved?.title || item.name, description: saved?.description ?? item.note };
+      }));
+      setCustomScriptTypes(templates.filter(item => typeof item.id === "string" && typeof item.title === "string" && (item.scope === "shared" || item.scope === "personal")));
+      if (projectRef.current.templateId && !templates.some(item => item.id === projectRef.current.templateId)) update({ templateId: undefined, segments: [], narration: undefined });
+    } catch (error) { setScriptTypesError(errorText(error)); }
+    finally { setScriptTypesLoading(false); }
+  }, [update]);
+  useEffect(() => { if (ready && config.authenticated) void loadScriptTypes(); }, [ready, config.userId, config.authenticated, loadScriptTypes]);
   function storeProject(target: Project): Promise<void> {
     if (deletedProjectIds.current.has(target.id)) return Promise.resolve();
     // Preserve write order: an older autosave must not replace downloaded audio
@@ -443,7 +477,7 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
       const duration = Number.isFinite(metadataVideo.duration) ? metadataVideo.duration : 0;
       if (duration > 90 || (duration > 0 && duration < 2)) { URL.revokeObjectURL(url); notify("Hãy chọn một video dài từ 2 đến 90 giây cho câu chuyện này.", "error"); return; }
       const source = file.type ? file : new File([file], file.name, { type: /\.webm$/i.test(file.name) ? "video/webm" : /\.mov$/i.test(file.name) ? "video/quicktime" : "video/mp4" });
-      update({ source, sourceName: file.name, title: projectRef.current.title === "Câu chuyện chưa đặt tên" ? file.name.replace(/\.[^.]+$/, "") : projectRef.current.title, duration, manualDuration: !duration, width: metadataVideo.videoWidth, height: metadataVideo.videoHeight, step: 1, analysis: undefined, summary: "", segments: [], narration: undefined });
+      update({ source, sourceName: file.name, title: projectRef.current.title === "Câu chuyện chưa đặt tên" ? file.name.startsWith("pixabay-") ? "Video minh họa Pixabay" : file.name.replace(/\.[^.]+$/, "") : projectRef.current.title, duration, manualDuration: !duration, width: metadataVideo.videoWidth, height: metadataVideo.videoHeight, step: 1, analysis: undefined, summary: "", segments: [], narration: undefined });
       setView("studio"); URL.revokeObjectURL(url);
       if (!duration) notify("Đã mở video. Chưa đọc được thời lượng; hãy nhập số giây ở phần thông tin video."); else notify("Video đã sẵn sàng. Câu chuyện của bạn bắt đầu từ đây.", "success");
     };
@@ -461,7 +495,7 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
         if (projectRef.current.id !== projectId) return;
         let confirmed = "", interim = "";
         for (let index = 0; index < event.results.length; index++) { const result = event.results[index]; if (result.isFinal) confirmed += `${result[0].transcript} `; else interim += `${result[0].transcript} `; }
-        if (confirmed.trim()) update({ intent: `${initial}${initial ? " " : ""}${confirmed.trim()}` });
+        if (confirmed.trim()) update({ intent: `${initial}${initial ? " " : ""}${confirmed.trim()}`, analysis: undefined, summary: "" });
         setIntentInterim(interim.trim());
       };
       next.onerror = event => { setIntentRecording(false); setIntentInterim(""); notify(event.error === "not-allowed" ? "Hãy cho phép micro để nói ý tưởng, hoặc gõ trực tiếp vào ô lời dặn." : "Chưa nghe rõ lời dặn. Bạn có thể thử lại hoặc gõ trực tiếp.", "error"); };
@@ -497,23 +531,25 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
       const frames = await sampleVideoFrames(project.source, project.duration);
       if (intentKey(projectRef.current) !== expected || projectRef.current.source !== project.source) throw new Error("Ý tưởng đã thay đổi. Hãy thử lại để dùng nội dung mới nhất.");
       setAnalysisProgress("AI đang xem ảnh trích và đọc ý tưởng của bạn…");
-      const result = await requestJson("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ frames, duration: project.duration, intent: project.intent, format:project.format,profile: { ...project.profile, mode: project.mode } }) });
+      const result = await requestJson("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ frames, duration: project.duration, intent: project.intent, observationsOnly: true, profile: { ...project.profile, mode: project.mode } }) });
       if (intentKey(projectRef.current) !== expected || projectRef.current.source !== project.source) { notify("Ý tưởng đã thay đổi trong lúc phân tích. Hãy phân tích lại để dùng đúng lời dặn mới nhất."); return; }
       const data = result.analysis || result;
-      const angles = (data.suggestedAngles || []) as Angle[], preferred = angles.find(angle=>angle.id===data.recommendedAngleId) || angles[0];
-      update({ analysis: data, summary: summaryFrom(data) || project.intent, angleId:preferred?.id || "", format:preferred?.format || project.format });
-      notify("Đã phân tích cảnh. Hãy kiểm tra hướng kể, rồi xác nhận để viết kịch bản.", "success");
+      update({ analysis: data, summary: project.intent });
+      notify("Video đã được xem làm tư liệu. Hãy chọn dạng kịch bản phù hợp với ý bạn muốn chia sẻ.", "success");
     } catch (error) { notify(errorText(error), "error"); } finally { setBusy(null); setAnalysisProgress(""); void refreshUsage(); }
   }
   async function generateScript() {
     if (leavingStudioRef.current) return;
     if (!project.duration || !project.intent.trim()) { notify("Cần có thời lượng video và một câu mô tả ý muốn chia sẻ."); return; }
+    if (!project.analysis) { notify("Hãy phân tích video trước khi viết kịch bản."); return; }
     if (!config.deepseek) { notify("AI chưa sẵn sàng. Bạn có thể viết lời thoại trực tiếp."); update({ step: 2 }); return; }
-    const expectedIntent = intentKey(project), expectedScript = scriptKey(project), expectedSummary = project.summary;
+    const expectedIntent = intentKey(project), expectedScript = scriptKey(project), expectedAnalysis = project.analysis;
     setBusy("script");
     try {
-      const result = await requestJson("/api/script", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ analysis: project.analysis, intent: project.intent, confirmedIntent:project.summary || undefined,format:project.format,angleId:project.angleId || undefined,profile: { ...project.profile, mode: project.mode }, duration: project.duration, instruction: [project.summary ? `Ý định đã xác nhận: ${project.summary}` : "",scriptInstruction].filter(Boolean).join("\n") || undefined }) });
-      if (intentKey(projectRef.current) !== expectedIntent || scriptKey(projectRef.current) !== expectedScript || projectRef.current.summary !== expectedSummary) { notify("Nội dung đã được sửa trong lúc AI viết. Đã giữ nguyên thay đổi của bạn; hãy yêu cầu viết lại nếu cần."); return; }
+      const style = project.templateId ? { templateId: project.templateId } : { format: project.format };
+      const instruction = [project.sourceName?.startsWith("pixabay-") ? "Video Pixabay chỉ là cảnh minh họa; không mô tả cảnh như bằng chứng về sản phẩm, khách hàng hoặc kết quả thực tế." : "", scriptInstruction].filter(Boolean).join("\n") || undefined;
+      const result = await requestJson("/api/script", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ analysis: project.analysis, intent: project.intent, confirmedIntent: project.intent, ...style, profile: { ...project.profile, mode: project.mode }, duration: project.duration, instruction }) });
+      if (intentKey(projectRef.current) !== expectedIntent || scriptKey(projectRef.current) !== expectedScript || projectRef.current.analysis !== expectedAnalysis) { notify("Nội dung đã được sửa trong lúc AI viết. Đã giữ nguyên thay đổi của bạn; hãy yêu cầu viết lại nếu cần."); return; }
       const segments = normalizeSegments(result, project.duration);
       if (!segments.length) throw new Error("AI chưa trả về lời thoại. Hãy thử lại hoặc viết trực tiếp.");
       update({ segments, title:result.title || project.title,narration: undefined, narrationName: undefined, step: 2 }); notify("Kịch bản đã sẵn sàng để bạn chỉnh thành giọng kể của mình.", "success");
@@ -716,19 +752,19 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
   const navigationLocked = leavingStudio || exitPrompt;
   const displayName = config.displayName || project.profile.name || "Tài khoản";
   const manualScript = () => update({ step: 2, segments: project.segments.length ? project.segments : [{ start: 0, end: project.duration, text: "" }] });
-  const angles = (Array.isArray(project.analysis?.suggestedAngles) ? project.analysis.suggestedAngles : []) as Angle[];
   const selectedVoice = voices.find(voice=>(voice.voice_id || voice.id)===project.voiceId);
   const filteredVoices = voices.filter(voice=>voiceFilter === "all" || (voice.group || (voice.category === "cloned" ? "personal" : "default"))===voiceFilter);
   async function saveExport() { if(!exported)return;try{const result=await saveVideoFile(exported,project.title);if(result==="saved")notify("Đã lưu tệp MP4 vào vị trí bạn chọn.","success");}catch(error){notify(errorText(error),"error");} }
   async function shareExport() { if(!exported)return;try{const result=await shareVideoFile(exported,project.title);if(result==="shared")notify("Đã chuyển video tới ứng dụng bạn chọn.","success");}catch(error){notify(errorText(error),"error");} }
+  const WorkspaceTag = embedded ? "div" : "main";
 
-  return <div className={`studio-app view-${view} step-${step}${keyboardOpen ? " keyboard-open" : ""}`}>
-    <a className="skip-link" href="#workspace" inert={navigationLocked}>Đến nội dung chính</a>
-    <div className={navigationStyles.navigation}>
+  return <div className={`studio-app view-${view} step-${step}${keyboardOpen ? " keyboard-open" : ""} ${embedded ? navigationStyles.embeddedApp : ""}`}>
+    {!embedded ? <a className="skip-link" href="#workspace" inert={navigationLocked}>Đến nội dung chính</a> : null}
+    {!embedded ? <div className={navigationStyles.navigation}>
       <button type="button" className={navigationStyles.exit} onClick={() => void returnToDashboard()} disabled={working || !ready || narrationChecking || settingsSaving || exitPrompt}><Icon name="grid" size={16} />{leavingStudio ? "Đang lưu dự án…" : "Về tổng quan"}</button>
       <span className={navigationStyles.label} role="status" aria-live="polite">{leavingStudio ? "Đang lưu trước khi rời Studio…" : "Studio video"}</span>
-    </div>
-    <header className="app-header" inert={navigationLocked}>
+    </div> : null}
+    {!embedded ? <header className="app-header" inert={navigationLocked}>
       <div className="header-inner">
         <button className="brand" aria-label="Lời Kể — tạo video" onClick={() => setView("studio")}><span className="brand-symbol"><i /><i /><i /><i /></span>Lời Kể<span className="brand-dot">.</span></button>
         <nav className="main-nav" aria-label="Điều hướng chính">
@@ -739,9 +775,10 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
           <div className="account-dropdown"><strong>{config.authenticated ? displayName : "Không gian của bạn"}</strong>{config.quota ? <span className="quota-label">Đã dùng {config.quota.used}/{config.quota.limit} lượt AI</span> : null}<button onClick={() => setSettingsOpen(true)}><Icon name="settings" size={18} />Cài đặt</button><button onClick={() => setView("guide")} disabled={working}><Icon name="help" size={18} />Hướng dẫn</button>{config.isAdmin ? <a href="/quan-tri"><Icon name="grid" size={18} />Quản trị</a> : null}{config.authenticated ? <button onClick={() => void signOut()} disabled={working}>Đăng xuất</button> : <a href="/dang-nhap">Đăng nhập</a>}</div>
         </details>
       </div>
-    </header>
+    </header> : null}
 
-    <main className="workspace" id="workspace" inert={navigationLocked}>
+    <WorkspaceTag className={`workspace ${embedded ? navigationStyles.embeddedWorkspace : ""}`} id="workspace" inert={navigationLocked}>
+      {embedded ? <nav className={navigationStyles.localTabs} aria-label="Mục trong công cụ Tạo Video AI">{NAV_ITEMS.map(item => <button type="button" key={item.view} className={view === item.view ? navigationStyles.activeTab : ""} aria-current={view === item.view ? "page" : undefined} onClick={() => setView(item.view)} disabled={working}><Icon name={item.icon} size={18} />{item.label}</button>)}</nav> : null}
       {loginRequired ? <div className="status-banner"><Icon name="lock" size={19} /><span>Đăng nhập để dùng AI và hồ sơ của bạn.</span><a href="/dang-nhap">Đăng nhập</a></div> : null}
       {configError ? <div className="status-banner warning" role="alert"><Icon name="info" size={19} /><span>Chưa tải được kết nối tài khoản. Bạn vẫn có thể chỉnh video thủ công.</span><button onClick={() => void refreshConfiguration()} disabled={configRefreshing || working}>{configRefreshing ? "Đang thử…" : "Thử lại"}</button></div> : null}
 
@@ -762,11 +799,12 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
             {recording ? <button className="button primary large recording-button" onClick={stopRecording}><span className="stop-square" />Dừng quay</button> : hasClip ? <><button className="button primary large" onClick={() => navigateStep(1)}>Dùng video này<Icon name="arrow" /></button><button className="button secondary large" onClick={() => void startRecording()} disabled={Boolean(busy) || !ready}><Icon name="camera" />Quay lại</button></> : <><button className="button primary large" onClick={() => void startRecording()} disabled={Boolean(busy) || !ready}><span className="record-circle" />Quay video</button><button className="button secondary large" onClick={() => uploadInput.current?.click()}><Icon name="upload" />Tải video lên</button></>}
           </div>
           <div className={`camera-stage ${stream ? "camera-live" : ""} ${dragging ? "dragging" : ""}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); void ingestFile(event.dataTransfer.files[0]); }}>
-            {stream ? <video ref={cameraVideo} className={`live-camera ${facing === "user" ? "mirrored" : ""}`} autoPlay muted playsInline /> : hasClip ? <video className="source-preview" src={sourceUrl} controls playsInline preload="metadata" /> : <div className="camera-empty"><div className="camera-orbit"><Icon name="camera" size={44} /><span>✦</span></div><strong>Sẵn sàng khi bạn muốn quay.</strong><p>Giữ máy vững và quay thật tự nhiên.</p></div>}
+            {stream ? <video ref={cameraVideo} className={`live-camera ${facing === "user" ? "mirrored" : ""}`} autoPlay muted playsInline /> : hasClip ? <video className="source-preview" src={sourceUrl || undefined} controls playsInline preload="metadata" /> : <div className="camera-empty"><div className="camera-orbit"><Icon name="camera" size={44} /><span>✦</span></div><strong>Sẵn sàng khi bạn muốn quay.</strong><p>Giữ máy vững và quay thật tự nhiên.</p></div>}
             {recording ? <div className="recording-timer"><span />{time(recordSeconds)}</div> : null}
             <span className="canvas-note">{recording ? "Đang thu hình và tiếng" : hasClip ? `${time(project.duration)} · ${project.sourceName || "Video của bạn"}` : "2–90 giây · tối đa 60 MB"}</span>
           </div>
           {hasClip && !recording ? <button className="text-button centered" onClick={() => uploadInput.current?.click()}>Chọn video khác</button> : null}
+          {!recording ? <PixabayVideoPicker onSelect={ingestFile} disabled={working} /> : null}
           <details className="quiet-details camera-options"><summary>Tùy chọn camera<Icon name="chevron" size={16} /></summary><div className="camera-option-fields"><label>Tỷ lệ quay<select value={ratio} onChange={event => setRatio(event.target.value)} disabled={recording}><option value="9:16">Dọc · 9:16</option><option value="16:9">Ngang · 16:9</option></select></label><button className="button secondary" onClick={() => void switchCamera()} disabled={recording}><Icon name="refresh" size={18} />{facing === "environment" ? "Đổi sang camera trước" : "Đổi sang camera sau"}</button></div></details>
         </section> : null}
 
@@ -774,18 +812,22 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
           <div className="step-heading"><span className="step-kicker">BƯỚC 2 / 5</span><h1 id="intent-title">Video này cần nói điều gì?</h1><p>Hình ảnh là tư liệu. Ý muốn chia sẻ và phong cách của bạn quyết định kịch bản.</p></div>
           <div className="creator-context"><span><Icon name="studio" size={17} />{accountProfile.channel || accountProfile.audience || accountProfile.customPrompt ? `Phong cách: ${accountProfile.channel || accountProfile.name || "của bạn"}` : "Thêm phong cách để AI hiểu bạn hơn"}</span><button className="text-button" onClick={()=>setView("profile")} disabled={working}>Hiểu về tôi<Icon name="arrow" size={15} /></button></div>
 
-          <details className="clip-details"><summary><Icon name="play" size={16} /><span>Video của bạn · {time(project.duration)}</span><span>Xem lại</span></summary><video ref={previewVideo} src={sourceUrl} controls playsInline preload="metadata" />{project.manualDuration || !project.duration ? <label className="field-label" htmlFor="manual-duration">Thời lượng video (giây)<input id="manual-duration" type="number" inputMode="decimal" min="2" max="90" step="0.1" value={project.duration || ""} disabled={Boolean(busy)} onChange={event => update({ duration: Number(event.target.value), manualDuration: true })} /><span className="helper-text">Nhập thời lượng từ 2 đến 90 giây. Bạn có thể sửa lại số giây khi cần.</span></label> : null}</details>
-          {!project.analysis ? <div className="intent-input"><label className="field-label" htmlFor="story-intent">Điều bạn muốn người xem hiểu</label><textarea id="story-intent" className="intent-textarea" value={project.intent} onChange={event => update({ intent: event.target.value })} disabled={intentRecording} placeholder="Ví dụ: Tôi muốn kể cảm giác vui khi thấy chùm nho đầu tiên trong vườn…" rows={4} /><div className="intent-record-row"><button className={`button secondary ${intentRecording ? "listening" : ""}`} onClick={() => void toggleIntentRecording()} disabled={recording || Boolean(busy) || !speechSupported}><Icon name={intentRecording ? "close" : "mic"} size={19} />{intentRecording ? "Dừng nghe" : "Nói ý tưởng thay vì gõ"}</button>{intentRecording ? <span className="record-label"><i />Đang nghe bạn</span> : null}</div>{intentInterim ? <p className="live-transcript" role="status">{intentInterim}</p> : null}{!speechSupported ? <p className="helper-text">Trình duyệt này chưa nhận giọng nói. Bạn có thể gõ trực tiếp vào ô phía trên.</p> : <p className="helper-text">Giọng nói được trình duyệt chuyển thành chữ. Hãy đọc lại và sửa nếu cần.</p>}</div> : <div className="understood-intent"><label className="field-label" htmlFor="story-summary"><Icon name="studio" size={18} />Thông điệp bạn muốn người xem nhận được</label><textarea id="story-summary" value={project.summary} onChange={event => update({ summary: event.target.value })} rows={3} /><p>Đây là ý định, chưa phải lời thoại. Hãy chỉnh cho đúng rồi chọn một hướng bên dưới.</p><AnalysisEvidence analysis={project.analysis} facts={project.profile.facts} onFacts={facts => updateProfile({ facts })} /><details className="quiet-details original-intent"><summary>Sửa lời dặn ban đầu<Icon name="chevron" size={16} /></summary><textarea aria-label="Lời dặn ban đầu" value={project.intent} onChange={event => update({ intent: event.target.value })} rows={3} /><button className="button secondary" onClick={() => void analyze()} disabled={Boolean(busy)}>{busy === "analyze" ? <Spinner /> : <Icon name="refresh" size={17} />}Hiểu lại video</button></details></div>}
-          {project.analysis ? <details className="quiet-details change-format"><summary>Đổi dạng video<Icon name="chevron" size={16} /></summary><fieldset className="format-picker"><legend>Bạn muốn làm video dạng nào?</legend><div>{FORMATS.map(format=><button type="button" key={format.id} className={project.format===format.id ? "active" : ""} aria-pressed={project.format===format.id} disabled={Boolean(busy)} onClick={()=>update({format:format.id,angleId:""})}><strong>{format.name}</strong><span>{format.note}</span></button>)}</div></fieldset></details> : <fieldset className="format-picker"><legend>Bạn muốn làm video dạng nào?</legend><div>{FORMATS.map(format=><button type="button" key={format.id} className={project.format===format.id ? "active" : ""} aria-pressed={project.format===format.id} disabled={Boolean(busy)} onClick={()=>update({format:format.id,angleId:""})}><strong>{format.name}</strong><span>{format.note}</span></button>)}</div></fieldset>}
-          {project.analysis && angles.length ? <AngleChoices angles={angles} selected={project.angleId} recommended={String(project.analysis.recommendedAngleId || "")} onSelect={angle=>update({angleId:angle.id,format:angle.format})} disabled={Boolean(busy)} /> : null}
+          <details className="clip-details"><summary><Icon name="play" size={16} /><span>Video của bạn · {time(project.duration)}</span><span>Xem lại</span></summary><video ref={previewVideo} src={sourceUrl || undefined} controls playsInline preload="metadata" />{project.manualDuration || !project.duration ? <label className="field-label" htmlFor="manual-duration">Thời lượng video (giây)<input id="manual-duration" type="number" inputMode="decimal" min="2" max="90" step="0.1" value={project.duration || ""} disabled={Boolean(busy)} onChange={event => update({ duration: Number(event.target.value), manualDuration: true, analysis: undefined })} /><span className="helper-text">Nhập thời lượng từ 2 đến 90 giây. Bạn có thể sửa lại số giây khi cần.</span></label> : null}</details>
+          {isStockClip ? <p className="inline-note"><Icon name="info" size={18} /><span>Đây là cảnh minh họa từ Pixabay. Hãy nói rõ sản phẩm và thông điệp thật của bạn; AI không xem cảnh này là bằng chứng về sản phẩm.</span></p> : null}
+          <div className="intent-input"><label className="field-label" htmlFor="story-intent">Bạn muốn video nói điều gì?</label><textarea id="story-intent" className="intent-textarea" value={project.intent} onChange={event => update({ intent: event.target.value, summary: "", analysis: undefined })} disabled={intentRecording || Boolean(busy)} placeholder="Ví dụ: Tôi muốn giới thiệu điểm nổi bật đã kiểm chứng của sản phẩm và mời khách hỏi thêm…" rows={4} /><div className="intent-record-row"><button className={`button secondary ${intentRecording ? "listening" : ""}`} onClick={() => void toggleIntentRecording()} disabled={recording || Boolean(busy) || !speechSupported}><Icon name={intentRecording ? "close" : "mic"} size={19} />{intentRecording ? "Dừng nghe" : "Nói ý tưởng thay vì gõ"}</button>{intentRecording ? <span className="record-label"><i />Đang nghe bạn</span> : null}</div>{intentInterim ? <p className="live-transcript" role="status">{intentInterim}</p> : null}{!speechSupported ? <p className="helper-text">Trình duyệt này chưa nhận giọng nói. Bạn có thể gõ trực tiếp vào ô phía trên.</p> : <p className="helper-text">Giọng nói được trình duyệt chuyển thành chữ. Hãy đọc lại và sửa nếu cần.</p>}</div>
+          {project.analysis ? <div className={navigationStyles.analysisReady} role="status"><Icon name="check" size={18} /><span>Video đã được xem làm tư liệu. Bây giờ chọn dạng kịch bản và tạo lời thoại theo ý của bạn.</span><button type="button" onClick={() => void analyze()} disabled={Boolean(busy)}>Phân tích lại</button></div> : null}
+          {project.analysis ? <fieldset className="format-picker"><legend>Chọn dạng kịch bản</legend><p className={navigationStyles.typeHint}>Các dạng này cũng nằm trong tab Tạo Kịch Bản AI. Prompt hướng dẫn của quản trị viên được áp dụng tự động.</p><div>
+            {builtinScriptTypes.map(item => <button type="button" key={item.format} className={!project.templateId && project.format === item.format ? "active" : ""} aria-pressed={!project.templateId && project.format === item.format} disabled={Boolean(busy)} onClick={() => chooseBuiltinScriptType(item.format)}><strong>{item.title}</strong><span>{item.description}</span><small className={navigationStyles.typeScope}>Dùng chung</small></button>)}
+            {customScriptTypes.map(item => <button type="button" key={item.id} className={project.templateId === item.id ? "active" : ""} aria-pressed={project.templateId === item.id} disabled={Boolean(busy)} onClick={() => chooseCustomScriptType(item.id)}><strong>{item.title}</strong><span>{item.description}</span><small className={navigationStyles.typeScope}>{item.scope === "shared" ? "Dùng chung" : "Của tôi"}</small></button>)}
+          </div><div className={navigationStyles.typeActions}><a href="/cong-cu/kich-ban-ai">Thêm hoặc sửa dạng kịch bản</a><button type="button" onClick={() => void loadScriptTypes()} disabled={scriptTypesLoading}>Làm mới danh sách</button></div>{scriptTypesLoading ? <p role="status" className="helper-text">Đang tải dạng kịch bản…</p> : null}{scriptTypesError ? <p role="alert" className="helper-text">{scriptTypesError}</p> : null}</fieldset> : null}
           <details className="quiet-details context-details"><summary>Điều chỉnh riêng cho video này<Icon name="chevron" size={16} /></summary><div className="form-grid"><label className="field-label" htmlFor="audience">Bạn kể cho ai?<input id="audience" value={project.profile.audience} onChange={event => updateProfile({ audience: event.target.value })} placeholder="Ví dụ: người mới trồng nho" /></label><label className="field-label" htmlFor="tone">Bạn thích cách kể nào?<select id="tone" value={project.profile.tone} onChange={event => updateProfile({ tone: event.target.value })}><option>Gần gũi, tự nhiên</option><option>Chân thành, cảm xúc</option><option>Rõ ràng, hướng dẫn</option><option>Vui vẻ, dí dỏm</option><option>Chuyên nghiệp, tin cậy</option></select></label></div><label className="field-label" htmlFor="recording-mode">Trong video có lời nói sẵn không?<select id="recording-mode" value={project.mode} onChange={event => update({ mode: event.target.value as Project["mode"] })}><option value="scenery">Chỉ quay cảnh</option><option value="talking">Tôi vừa quay vừa nói</option><option value="face">Có người nói trước camera</option></select></label>{project.mode !== "scenery" ? <p className="helper-text">AI không nghe tiếng gốc. Hãy ghi lại ý chính hoặc lời cần giữ vào phần ý muốn chia sẻ.</p> : null}{project.mode === "face" ? <p className="inline-note"><Icon name="info" size={18} />Thay lời có thể lệch khẩu hình. Ứng dụng ghép giọng đọc, chưa đồng bộ chuyển động môi.</p> : null}<label className="field-label" htmlFor="facts">Những thông tin cần nói đúng<textarea id="facts" value={project.profile.facts} onChange={event => updateProfile({ facts: event.target.value })} placeholder="Tên, địa điểm, giá hoặc điều AI không được đoán…" rows={3} /></label><label className="field-label" htmlFor="cta">Cuối video, bạn muốn nhắn điều gì?<input id="cta" value={project.profile.cta} onChange={event => updateProfile({ cta: event.target.value })} placeholder="Có thể để trống" /></label></details>
-          {analysisProgress ? <p className="working-note" role="status"><Spinner />{analysisProgress}</p> : null}<p className="helper-text analysis-disclosure">AI xem ảnh trích từ video. Hãy xác nhận lại cảnh và ý định trước khi viết lời thoại.</p><div className="step-actions"><button className="text-button" onClick={() => navigateStep(0)}>Quay lại</button><button className="button primary large" onClick={() => void (project.analysis ? generateScript() : analyze())} disabled={Boolean(busy) || intentRecording}>{busy === "analyze" || busy === "script" ? <Spinner /> : <Icon name={project.analysis ? "check" : "studio"} size={19} />}{busy === "analyze" ? "Đang xem video…" : busy === "script" ? "Đang viết lời thoại…" : project.analysis ? "Viết kịch bản này" : "Phân tích và gợi ý"}{!busy ? <Icon name="arrow" size={19} /> : null}</button></div>
+          {analysisProgress ? <p className="working-note" role="status"><Spinner />{analysisProgress}</p> : null}<p className="helper-text analysis-disclosure">AI chỉ dùng cảnh trong video làm tư liệu. Kịch bản sẽ dựa trên thông điệp và thông tin bạn cung cấp.</p><div className="step-actions"><button className="text-button" onClick={() => navigateStep(0)}>Quay lại</button><button className="button primary large" onClick={() => void (project.analysis ? generateScript() : analyze())} disabled={Boolean(busy) || intentRecording}>{busy === "analyze" || busy === "script" ? <Spinner /> : <Icon name={project.analysis ? "check" : "studio"} size={19} />}{busy === "analyze" ? "Đang xem video…" : busy === "script" ? "Đang viết kịch bản…" : project.analysis ? "Tạo kịch bản" : "Phân tích video"}{!busy ? <Icon name="arrow" size={19} /> : null}</button></div>
           <button className="text-button manual-link" onClick={manualScript} disabled={Boolean(busy)}>Tôi muốn tự viết lời thoại</button>
         </section> : null}
 
         {step === 2 ? <section className="step-card" aria-labelledby="script-title">
           <div className="step-heading"><span className="step-kicker">BƯỚC 3 / 5</span><h1 id="script-title">Đọc lại lời kể của bạn</h1><p>Sửa những từ chưa giống mình. Bạn có thể viết trực tiếp vào từng đoạn.</p></div>
-          <p className="script-purpose">{FORMATS.find(format=>format.id===project.format)?.name}{angles.find(angle=>angle.id===project.angleId)?.title ? ` · ${angles.find(angle=>angle.id===project.angleId)?.title}` : ""}</p><div className="script-summary"><span><Icon name="clock" size={17} />Video {time(project.duration)}</span><span>{words} từ</span></div>
+          <p className="script-purpose">{selectedScriptTypeName}</p><div className="script-summary"><span><Icon name="clock" size={17} />Video {time(project.duration)}</span><span>{words} từ</span></div>
           <div className="segments-list">{project.segments.length ? project.segments.map((segment, index) => <div className="segment-editor" key={`${project.id}-${index}`}><div className="segment-top"><label className="field-label" htmlFor={`segment-${index}`}>Đoạn {index + 1}</label><button className="icon-button" aria-label={`Xóa đoạn ${index + 1}`} onClick={() => update({ segments: project.segments.filter((_, position) => position !== index), narration: undefined })}><Icon name="trash" size={18} /></button></div><textarea id={`segment-${index}`} placeholder="Viết lời thoại ở đây…" value={segment.text} onChange={event => editSegment(index, { text: event.target.value })} rows={4} /><details className="segment-timing"><summary><Icon name="clock" size={15} />{time(segment.start)} – {time(segment.end)}<span>Chỉnh thời gian</span></summary><div><label>Bắt đầu (giây)<input type="number" step="0.1" min="0" max={project.duration} value={segment.start} onChange={event => editSegment(index, { start: Number(event.target.value) })} /></label><label>Kết thúc (giây)<input type="number" step="0.1" min="0" max={project.duration} value={segment.end} onChange={event => editSegment(index, { end: Number(event.target.value) })} /></label></div></details></div>) : <div className="empty-small"><Icon name="file" size={32} /><p>Thêm một đoạn để bắt đầu viết lời kể.</p></div>}</div>
           <button className="text-button add-segment" onClick={addSegment}><Icon name="plus" size={18} />Thêm đoạn lời</button>
           <details className="quiet-details rewrite-details"><summary>Nhờ AI viết lại<Icon name="chevron" size={16} /></summary><label className="field-label" htmlFor="rewrite-instruction">Bạn muốn sửa thế nào?<input id="rewrite-instruction" disabled={Boolean(busy)} value={scriptInstruction} onChange={event => setScriptInstruction(event.target.value)} placeholder="Ví dụ: ngắn hơn, kể gần gũi hơn…" /></label><button className="button secondary" onClick={() => void generateScript()} disabled={Boolean(busy) || !config.deepseek || !project.analysis}>{busy === "script" ? <Spinner /> : <Icon name="studio" size={17} />}{busy === "script" ? "Đang viết lại…" : "Viết lại lời thoại"}</button>{!project.analysis ? <p className="helper-text">Hiểu video ở bước trước để AI có đủ ngữ cảnh.</p> : null}</details>
@@ -804,7 +846,7 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
 
         {step === 4 ? <section className="step-card" aria-labelledby="export-title">
           <div className="step-heading"><span className="step-kicker">BƯỚC 5 / 5</span><h1 id="export-title">Video sẵn sàng để chia sẻ</h1><p>{exported ? "Xem lại một lần rồi tải câu chuyện của bạn về máy." : "Ghép giọng đọc vào video để có một tệp hoàn chỉnh."}</p></div>
-          <div className="export-preview"><video src={exportedUrl || sourceUrl} controls playsInline preload="metadata" /></div><p className="preview-caption">{exported ? <><Icon name="check" size={16} />Đã ghép lời đọc · MP4 · {fileSize(exported.size)}</> : "Đang xem video gốc. Bấm Ghép video để thêm lời đọc."}</p>
+          <div className="export-preview"><video src={exportedUrl || sourceUrl || undefined} controls playsInline preload="metadata" /></div><p className="preview-caption">{exported ? <><Icon name="check" size={16} />Đã ghép lời đọc · MP4 · {fileSize(exported.size)}</> : "Đang xem video gốc. Bấm Ghép video để thêm lời đọc."}</p>
           {project.narration ? <NarrationTiming duration={project.narrationDuration} videoDuration={project.duration} /> : null}
           <details className="quiet-details export-options"><summary>Tùy chọn âm thanh<Icon name="chevron" size={16} /></summary><label className="checkbox-row"><input type="checkbox" checked={project.keepAmbient} disabled={busy === "export"} onChange={event => update({ keepAmbient: event.target.checked })} /><span><strong>Giữ nhẹ tiếng môi trường</strong><span>Trộn tiếng gốc nhỏ dưới giọng đọc.</span></span></label>{project.mode !== "scenery" && project.keepAmbient ? <p className="inline-note"><Icon name="info" size={18} />Video gốc có lời nói. Giữ âm thanh có thể làm chồng hai giọng.</p> : null}</details>
           {busy === "export" ? <div className="export-progress" role="status"><div><span><Spinner />Đang ghép video…</span><strong>{Math.round(exportProgress)}%</strong></div><progress max={100} value={exportProgress} /><p>{exportMessage || "Giữ trang này mở trong lúc xuất video."}</p></div> : null}
@@ -820,9 +862,9 @@ export default function Studio({ initialView = "studio" }: { initialView?: View 
 
       {view === "voices" ? <section className="library-page"><div className="view-heading"><div><h1>Giọng của tôi</h1><p>Nghe mẫu, rồi chọn giọng hợp câu chuyện.</p></div><button className="button secondary" onClick={() => void loadVoices()} disabled={!voiceReady || voicesLoading}><Icon name="refresh" size={18} />{voicesLoading ? "Đang tải…" : "Làm mới"}</button></div><VoiceFilter value={voiceFilter} onChange={setVoiceFilter} voices={voices} provider={voiceProvider} /><p className="voice-plan-note">{voicePlanNote}</p><p className="voice-library-note">{isMaziao ? "Giọng tiếng Việt được ưu tiên cho kể chuyện và review. Giọng cá nhân của bạn chỉ hiện trong tài khoản này." : "Tiếng Việt được ưu tiên theo mục đích kể chuyện, review và video mạng xã hội. Số người đã thêm lấy từ ElevenLabs, không phải điểm đánh giá chất lượng."}</p><div className="step-card voice-library-card">{!voiceReady ? <div className="empty-small"><Icon name="mic" size={36} /><h2>Giọng đọc AI chưa sẵn sàng</h2><p>Quản trị viên sẽ kết nối tính năng này cho tài khoản của bạn.</p></div> : voicesLoading ? <div className="empty-small"><Spinner /><p>Đang tải những giọng bạn có thể dùng…</p></div> : filteredVoices.length ? <div className="voice-list">{filteredVoices.map(voice => <div className="voice-list-item" key={voice.voice_id || voice.id}><span className="voice-avatar"><Icon name="mic" size={22} /></span><div><strong>{voice.name}</strong><VoiceDetail voice={voice} /></div><button className={`button ${project.voiceId === (voice.voice_id || voice.id) ? "selected-voice" : "secondary"}`} onClick={() => { update({ voiceId: voice.voice_id || voice.id || "", step: hasClip && project.segments.some(segment => segment.text.trim()) ? 3 : step }); notify(`Đã chọn giọng ${voice.name}.`, "success"); if(hasClip) setView("studio"); }}>{project.voiceId === (voice.voice_id || voice.id) ? <><Icon name="check" size={17} />Đã chọn</> : "Dùng giọng"}</button></div>)}</div> : <div className="empty-small"><Icon name="mic" size={36} /><h2>Chưa có giọng trong nhóm này</h2><p>Thử làm mới hoặc chọn nhóm Tất cả. Bạn có thể thêm giọng cá nhân ở bên dưới.</p></div>}</div><details className="step-card clone-card"><summary><span><Icon name="plus" size={21} /><strong>Thêm giọng cá nhân</strong></span><Icon name="chevron" size={19} /></summary><div className="clone-form"><p>{isMaziao ? "Chọn một bản thu có ít nhất 3 giây giọng nói rõ, tự nhiên và ít tiếng ồn. App lấy tối đa 8 giây đầu để tạo giọng." : "Chọn bản thu rõ tiếng, tự nhiên và ít tiếng ồn, nên dài 1–2 phút. Nhân bản giọng cần gói ElevenLabs Starter trở lên."}</p><label className="field-label" htmlFor="clone-name">Đặt tên giọng<input id="clone-name" value={cloneName} onChange={event => setCloneName(event.target.value)} placeholder="Ví dụ: Giọng kể của tôi" /></label>{isMaziao ? <label className="field-label" htmlFor="clone-gender">Giọng mẫu<select id="clone-gender" value={cloneGender} onChange={event => setCloneGender(event.target.value as "male" | "female")}><option value="female">Giọng nữ</option><option value="male">Giọng nam</option></select></label> : null}<label className="clone-upload" htmlFor="voice-samples"><Icon name="upload" size={24} /><strong>{cloneFiles.length ? `${cloneFiles.length} bản thu đã chọn` : "Chọn bản thu mẫu"}</strong><span>{isMaziao ? "MP3, WAV hoặc M4A · chọn một tệp" : "MP3, WAV hoặc M4A · có thể chọn nhiều tệp"}</span><input id="voice-samples" type="file" accept="audio/*" multiple={!isMaziao} onChange={event => setCloneFiles(Array.from(event.target.files || []).slice(0, isMaziao ? 1 : undefined))} /></label>{cloneFiles.length ? <ul className="sample-files">{cloneFiles.map(file => <li key={`${file.name}-${file.size}`}><Icon name="file" size={16} />{file.name}<span>{fileSize(file.size)}</span></li>)}</ul> : null}<label className="checkbox-row consent-row"><input type="checkbox" checked={cloneConsent} onChange={event => setCloneConsent(event.target.checked)} /><span>Đây là giọng của tôi, hoặc tôi có sự đồng ý của chủ giọng để tạo và sử dụng giọng AI.</span></label><button className="button primary" onClick={() => void cloneVoice()} disabled={!voiceReady || Boolean(busy) || !cloneConsent || !cloneFiles.length || !cloneName.trim()}>{busy === "clone" ? <Spinner /> : <Icon name="mic" size={19} />}{busy === "clone" ? "Đang tạo giọng…" : "Tạo giọng cá nhân"}</button></div></details>{hasClip ? <button className="text-button return-studio" onClick={() => setView("studio")}>Quay lại video đang làm<Icon name="arrow" size={17} /></button> : null}</section> : null}
 
-      {view === "guide" ? <section className="step-card guide-page"><div className="step-heading"><h1>5 bước để kể câu chuyện của bạn</h1><p>Bắt đầu từ một video, rồi làm lần lượt từng bước.</p></div><ol className="guide-list"><li><strong>Thêm video</strong><p>Quay trực tiếp hoặc chọn video dài 2–90 giây từ thiết bị.</p></li><li><strong>Nói ý muốn chia sẻ</strong><p>Gõ hoặc ghi âm điều bạn muốn người xem hiểu. Kiểm tra lại ý mà AI đề xuất.</p></li><li><strong>Chỉnh lời thoại</strong><p>Đọc lại và sửa từ ngữ theo cách nói của mình. Bạn cũng có thể tự viết toàn bộ.</p></li><li><strong>Chọn giọng đọc</strong><p>Dùng giọng AI hoặc tải bản thu có sẵn. Nghe thử trước khi ghép.</p></li><li><strong>Ghép và tải về</strong><p>Tạo tệp MP4 hoàn chỉnh, xem lại và tải về để chia sẻ.</p></li></ol><p className="inline-note"><Icon name="folder" size={20} />Dự án tự lưu trong trình duyệt. Dùng “Tải bản sao dự án” trong menu dấu ba chấm để giữ cả video gốc, lời thoại và giọng đọc.</p><button className="button primary large" onClick={() => setView("studio")}>Bắt đầu tạo video<Icon name="arrow" size={19} /></button></section> : null}
-      <footer className="app-footer"><span>Lời Kể<span className="brand-dot">.</span> Câu chuyện của bạn, giọng nói của bạn.</span><button onClick={() => setView("guide")} disabled={working}>Cần hướng dẫn?</button></footer>
-    </main>
+      {view === "guide" ? <section className="step-card guide-page"><div className="step-heading"><h1>5 bước để kể câu chuyện của bạn</h1><p>Bắt đầu từ một video, rồi làm lần lượt từng bước.</p></div><ol className="guide-list"><li><strong>Thêm video</strong><p>Quay trực tiếp, tải video dài 2–90 giây hoặc chọn một cảnh minh họa Pixabay.</p></li><li><strong>Nói ý muốn chia sẻ</strong><p>Gõ hoặc nói điều bạn muốn người xem hiểu. AI xem video làm tư liệu, không dùng bản phân tích làm lời thoại.</p></li><li><strong>Chọn dạng kịch bản</strong><p>Chọn cùng các dạng có trong tab Tạo Kịch Bản AI rồi đọc lại, sửa lời thoại theo cách nói của mình.</p></li><li><strong>Chọn giọng đọc</strong><p>Dùng giọng AI hoặc tải bản thu có sẵn. Nghe thử trước khi ghép.</p></li><li><strong>Ghép và tải về</strong><p>Tạo tệp MP4 hoàn chỉnh, xem lại và tải về để chia sẻ.</p></li></ol><p className="inline-note"><Icon name="folder" size={20} />Dự án tự lưu trong trình duyệt. Dùng “Tải bản sao dự án” trong menu dấu ba chấm để giữ cả video gốc, lời thoại và giọng đọc.</p><button className="button primary large" onClick={() => setView("studio")}>Bắt đầu tạo video<Icon name="arrow" size={19} /></button></section> : null}
+      {!embedded ? <footer className="app-footer"><span>Lời Kể<span className="brand-dot">.</span> Câu chuyện của bạn, giọng nói của bạn.</span><button onClick={() => setView("guide")} disabled={working}>Cần hướng dẫn?</button></footer> : null}
+    </WorkspaceTag>
 
     <input ref={uploadInput} className="visually-hidden" type="file" accept="video/*,.loike,.json" aria-label="Chọn video hoặc bản sao dự án" disabled={navigationLocked} onChange={event => { void ingestFile(event.target.files?.[0]); event.target.value = ""; }} />
     <input ref={narrationInput} className="visually-hidden" type="file" accept="audio/*" aria-label="Chọn tệp lời thoại" disabled={navigationLocked} onChange={event => { void ingestNarration(event.target.files?.[0]); event.target.value = ""; }} />
@@ -844,9 +886,6 @@ function ProfileEditor({profile,onChange,prefix="creator"}:{profile:Profile;onCh
     <details className="quiet-details profile-extras"><summary>Thông tin bổ sung <span>Không bắt buộc</span><Icon name="chevron" size={16} /></summary><div className="creator-fields">{field("name","Tên của bạn","Bạn muốn AI gọi bạn là gì?")}{field("pronoun","Cách xưng hô","Ví dụ: mình – bạn, em – anh chị")}{field("facts","Thông tin nền AI cần biết","Tên sản phẩm, địa điểm và những điều đã được bạn xác nhận.",3)}{field("cta","Lời nhắn cuối video thường dùng","Ví dụ: Bạn đang gặp vấn đề gì khi trồng nho? Có thể để trống.")}</div></details>
     <p className="helper-text">Hồ sơ được lưu riêng trong tài khoản và dùng làm phong cách mặc định. Lời dặn của từng video được ưu tiên hơn.</p></div>;
 }
-function AngleChoices({angles,selected,recommended,onSelect,disabled}:{angles:Angle[];selected:string;recommended:string;onSelect:(angle:Angle)=>void;disabled:boolean}) {
-  return <fieldset className="angle-picker"><legend>Chọn một hướng để AI viết kịch bản</legend><p>Ba ý tưởng từ cùng tư liệu. Bạn chỉ tạo lời đọc cho kịch bản đã chọn.</p><div>{angles.map(angle=><button type="button" key={angle.id} className={selected===angle.id ? "active" : ""} aria-pressed={selected===angle.id} disabled={disabled} onClick={()=>onSelect(angle)}><span className="angle-meta">{FORMATS.find(format=>format.id===angle.format)?.name}{recommended===angle.id ? <em>AI gợi ý</em> : null}</span><strong>{angle.title}</strong><span>{angle.purpose}</span><q>{angle.hook}</q><small>{angle.reason}</small><b>{selected===angle.id ? "Đã chọn hướng này" : "Chọn hướng này"}</b></button>)}</div></fieldset>;
-}
 function VoiceFilter({value,onChange,voices,provider}:{value:string;onChange:(value:string)=>void;voices:Voice[];provider:"maziao"|"eleven"}) { return <div className="voice-filters" aria-label="Nhóm giọng đọc">{[...VOICE_GROUPS.filter(group=>provider!=="maziao" || group.id!=="popular"),{id:"all",name:"Tất cả"}].map(group=><button key={group.id} type="button" aria-pressed={value===group.id} className={value===group.id ? "active" : ""} onClick={()=>onChange(group.id)}>{group.name}<span>{voices.filter(voice=>group.id==="all" || (voice.group || (voice.category==="cloned" ? "personal" : "default"))===group.id).length}</span></button>)}</div>; }
 function VoiceDetail({voice}:{voice:Voice}) {
   const accentLabels:Record<string,string> = {northern:"Miền Bắc",southern:"Miền Nam",central:"Miền Trung",standard:"Phổ thông"};
@@ -857,11 +896,6 @@ function NarrationTiming({ duration, videoDuration }: { duration?: number; video
   if (!duration) return <p className="narration-timing">Chưa đọc được thời lượng. Bộ xuất sẽ kiểm tra tệp trước khi ghép.</p>;
   const tooLong = duration > videoDuration + 0.001;
   return <p className={`narration-timing ${tooLong ? "too-long" : ""}`}><Icon name={tooLong ? "info" : "clock"} size={13} />{tooLong ? `Bản thu ${duration.toFixed(1)} giây dài hơn video ${videoDuration.toFixed(1)} giây. Chọn bản ngắn hơn để giữ trọn lời.` : `Bản thu ${duration.toFixed(1)} giây · bắt đầu tại 00:00.${videoDuration - duration > 0.5 ? ` Cuối video còn ${(videoDuration - duration).toFixed(1)} giây không có lời đọc.` : ""}`}</p>;
-}
-function AnalysisEvidence({ analysis, facts, onFacts }: { analysis: Record<string, unknown>; facts: string; onFacts: (value: string) => void }) {
-  const questions = Array.isArray(analysis.questions) ? analysis.questions.map(String) : [];
-  const observations = Array.isArray(analysis.observations) ? analysis.observations as { start: number; end: number; description: string }[] : [];
-  return <><details className="analysis-evidence"><summary><Icon name="eye" size={14} />AI đã nhìn thấy gì?<Icon name="plus" size={13} /></summary><p>{String(analysis.summary || "")}</p>{observations.length ? <ul>{observations.map((item, index) => <li key={index}><span>{time(Number(item.start))} – {time(Number(item.end))}</span>{item.description}</li>)}</ul> : null}</details>{questions.length ? <details className="analysis-questions"><summary>AI cần bạn làm rõ <span>{questions.length} câu hỏi</span><Icon name="chevron" size={15} /></summary><ul>{questions.map((question, index) => <li key={index}>{question}</li>)}</ul><label className="field-label" htmlFor="confirmed-facts">Bổ sung thông tin đúng trước khi viết lời</label><textarea id="confirmed-facts" value={facts} onChange={event => onFacts(event.target.value)} rows={3} placeholder="Trả lời những điều cần thiết. Nếu chưa rõ, hãy yêu cầu AI bỏ chi tiết đó." /></details> : null}</>;
 }
 function ProjectCard({ project, onOpen, onExport, onDelete }: { project: Project; onOpen: () => void; onExport: () => void; onDelete: () => void }) {
   const url = useBlobUrl(project.source);

@@ -300,6 +300,15 @@ await check("analysis offers three distinct actionable angles and strips untrust
  assert.equal(analysis.suggestedAngles.length,3);assert.equal(new Set(analysis.suggestedAngles.map(a=>a.format)).size,3);assert.equal(analysis.recommendedAngleId,"angle-2");assert.equal(analysis.suggestedAngles[0].secret,undefined);assert.equal(analysis.generatedTranscript,undefined);assert.deepEqual(charged,[1]);
  const prompt=payload.messages[1].content[0].text;assert.ok(prompt.includes("Vườn nhà"));assert.match(prompt,/TƯ LIỆU MINH HỌA/);assert.match(prompt,/không tự gán ý định/);
 });
+await check("video analysis collects observations without spending tokens on unused script angles",async()=>{
+ const route=await load(path.join(root,"app/api/analyze/route.ts"));await route.link(linker);await route.evaluate();
+ let payload;requestFetch=async(url,init)=>{payload=JSON.parse(init.body);return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify({summary:"Vườn nho",intentSummary:"Chia sẻ một khoảnh khắc",observations:[{start:0,end:15,description:"Chùm nho trên giàn"}],facts:[],unknowns:[],questions:[],suggestedAngles:[{id:"injected",title:"Không dùng"}],recommendedAngleId:"injected"})}}]});};
+ const request=new Request("https://app.example/api/analyze",{method:"POST",headers:{origin:"https://app.example","content-type":"application/json"},body:JSON.stringify({frames:[frame],duration:15,intent:"Chia sẻ một khoảnh khắc",transcript:"",observationsOnly:true,format:"not-a-script-type"})});
+ const response=await route.namespace.POST(request);assert.equal(response.status,200);const analysis=(await response.json()).analysis;
+ assert.equal(analysis.observations[0].description,"Chùm nho trên giàn");assert.equal(analysis.suggestedAngles,undefined);assert.equal(analysis.recommendedAngleId,undefined);
+ const instruction=payload.messages[1].content[0].text;assert.match(instruction,/Không viết kịch bản, không đề xuất dạng kịch bản/);assert.doesNotMatch(instruction,/Ưu tiên review|đề xuất đúng 3 góc/);
+ assert.ok(!payload.messages[0].content.includes("suggestedAngles"));assert.ok(!payload.messages[0].content.includes("recommendedAngleId"));assert.deepEqual(charged,[1]);
+});
 await check("script route loads saved creator intent, honors format and never reuses observation as dialogue",async()=>{
  const route=await load(path.join(root,"app/api/script/route.ts"));await route.link(linker);await route.evaluate();
  const saved=profiles.get(alice);let payload,calls=0;
