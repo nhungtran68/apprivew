@@ -653,6 +653,34 @@ await check("speech submits the entire timeline once, polls at six seconds, and 
   }
 });
 
+await check("standalone narration uses paragraph mode, one voice, and the provider's single resultUrl", async () => {
+  const h = await harness(), maziao = await provider(h), text = "Đây là lời thoại liên tục để kiểm tra một giọng đọc duy nhất.";
+  const mediaUrl = "https://r2-storage.maziao.com/tts-outputs/standalone.wav";
+  const bytes = wavBytes(1.5);
+  h.setHandler(request => {
+    if (request.url.endsWith("/configs")) return config();
+    if (request.url.endsWith("/tts/submit")) {
+      const body = JSON.parse(request.body);
+      assert.equal(body.mode, "paragraph");
+      assert.equal(body.voiceId, "publicVoice");
+      assert.equal(body.modelId, "lingual_speech_v2");
+      assert.deepEqual(body.parts, [{ text }]);
+      assert.deepEqual(body.config, { speed: 1.1, volume: 1.2, pitch: 0.9, export_srt: false });
+      return Response.json({ data: { taskId: "standalone", totalCost: 12.5 } });
+    }
+    if (request.url.endsWith("/tts/status")) return Response.json({ data: [{ id: "standalone", status: "completed", resultUrl: mediaUrl }] });
+    if (request.url === mediaUrl) return new Response(bytes, { headers: { "content-type": "audio/wav" } });
+    throw new Error(`Unexpected request ${request.url}`);
+  });
+  const result = await maziao.generateMaziaoVoiceOver({ key: h.key, userId: alice, voiceId: shortSpeechVoice(), text, speed: 1.1, volume: 1.2, pitch: 0.9 });
+  assert.equal(result.audioMime, "audio/wav");
+  assert.equal(result.duration, 1.5);
+  assert.equal(result.voiceId, shortSpeechVoice());
+  assert.equal(result.usage.credits, 12.5);
+  assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
+  assert.deepEqual(Array.from(h.media.get(result.audioPath)), Array.from(bytes));
+});
+
 await check("vieten rejects totals below 100 characters before network, quota or script changes", async () => {
   const h = await harness(), maziao = await provider(h);
   assert.equal(exactMinimumText.length, 100);

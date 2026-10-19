@@ -410,11 +410,17 @@ function resultUrls(job: SpeechJob, count: number): string[] {
   if (!Array.isArray(result) || result.length !== count || result.some(item => !safeMediaUrl(item))) throw invalidResponse();
   return result as string[];
 }
-async function synthesizeBatch(key: string, userId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[], settings = { speed: 1, pitch: 1, volume: 1 }): Promise<Audio[]> {
+async function synthesizeBatch(key: string, userId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[], settings = { speed: 1, pitch: 1, volume: 1 }, mode: "multiParts" | "paragraph" = "multiParts"): Promise<Audio[]> {
   const parsed = parseMaziaoVoiceId(voiceId);
+  if (mode === "paragraph" && segments.length !== 1) throw invalidResponse();
   await consumeAiUnits(userId, Math.max(1, Math.ceil(segments.reduce((sum, segment) => sum + segment.text.length, 0) / 100)));
   const started = Date.now();
-  const result = await api(key, "/tts/submit", { method: "POST", body: JSON.stringify({ mode: "multiParts", parts: segments.map(segment => ({ text: segment.text, voiceId: parsed.id, speed: settings.speed, pitch: settings.pitch })), config: { volume: settings.volume, pitch: settings.pitch, export_srt: false }, modelId: parsed.model }) }, deadline);
+  // A standalone narration uses Maziao's paragraph mode and one voice for the
+  // whole text. Video segments continue to use multiParts for separate files.
+  const payload = mode === "paragraph"
+    ? { mode, parts: [{ text: segments[0].text }], voiceId: parsed.id, config: { speed: settings.speed, volume: settings.volume, pitch: settings.pitch, export_srt: false }, modelId: parsed.model }
+    : { mode, parts: segments.map(segment => ({ text: segment.text, voiceId: parsed.id, speed: settings.speed, pitch: settings.pitch })), config: { volume: settings.volume, pitch: settings.pitch, export_srt: false }, modelId: parsed.model };
+  const result = await api(key, "/tts/submit", { method: "POST", body: JSON.stringify(payload) }, deadline);
   const data = result.data as { taskId?: unknown; totalCost?: unknown } | undefined;
   if (!data || !rawId(data.taskId)) throw invalidResponse();
   // Actual provider credits, never estimated as 1 character = 1 credit.
@@ -488,7 +494,7 @@ export async function generateMaziaoVoiceOver(input: { key: string; userId: stri
   await assertModel(input.key, parsed.model, deadline);
   const segments: StudioSegment[] = [{ start: 0, end: 180, text: input.text }];
   const costs: (number | null)[] = [];
-  const [audio] = await synthesizeBatch(input.key, input.userId, input.voiceId, segments, deadline, costs, { speed: input.speed, pitch: input.pitch, volume: input.volume });
+  const [audio] = await synthesizeBatch(input.key, input.userId, input.voiceId, segments, deadline, costs, { speed: input.speed, pitch: input.pitch, volume: input.volume }, "paragraph");
   const media = await storeNarration(input.userId, audio.bytes, 0, audio.mime);
   return { ...media, audioMime: audio.mime, duration: audio.duration, voiceId: input.voiceId, provider: "maziao", usage: { credits: costs[0] ?? null, jobs: costs.length } };
 }
