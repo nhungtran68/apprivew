@@ -72,6 +72,14 @@ async function synthesize(key: string, userId: string, voiceId: string, segment:
   if (pcm.length < 480 || pcm.length > 12000000 || pcm.length % 2) throw new StudioError("INVALID_AUDIO", "Âm thanh trả về không hợp lệ.", 502);
   return { pcm, duration: pcm.length / 48000 };
 }
+
+/** A continuous voice-over keeps the approved script intact; video timing is set afterwards. */
+export async function generateElevenVoiceOver(input: { key: string; userId: string; voiceId: string; text: string }) {
+  const audio = await synthesize(input.key, input.userId, input.voiceId, { start: 0, end: 180, text: input.text }, "", "");
+  const media = await storeNarration(input.userId, pcmToWav(audio.pcm), 0);
+  return { ...media, audioMime: "audio/wav" as const, duration: audio.duration, voiceId: input.voiceId, provider: "eleven" as const };
+}
+
 export async function generateSpeech(input: { key: string; userId: string; voiceId: string; segments: StudioSegment[]; duration: number }) {
   const results: (StudioSegment & { audioUrl: string; audioPath: string; audioMime: "audio/wav"; duration: number; revised: boolean })[] = [];
   const stored: string[] = [];

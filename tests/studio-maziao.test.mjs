@@ -79,6 +79,7 @@ async function harness() {
     [path.join(root, "lib/studio-eleven.ts"), {
       authorizeVoice: async () => { throw new Error("Maziao selection must not use ElevenLabs authorization"); },
       generateSpeech: async () => { throw new Error("Maziao selection must not use ElevenLabs generation"); },
+      generateElevenVoiceOver: async () => { throw new Error("Maziao selection must not use ElevenLabs narration"); },
     }],
     [path.join(root, "lib/studio-deepseek.ts"), {
       shortenSegment: async (_key, segment, _duration, charge) => { await charge?.(); shortened.push(segment.text); return segment.text.length > 10 ? segment.text.slice(0, 10) : segment.text; },

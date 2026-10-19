@@ -21,6 +21,24 @@ export interface ExportVideoOptions {
   onProgress?: ExportProgress;
 }
 
+export type StockAspectRatio = "9:16" | "16:9" | "1:1";
+
+export interface StockVideoScene {
+  /** Zero-based index into clips. The same clip can be used by several scenes. */
+  clipIndex: number;
+  /** Relative scene length. The exporter scales all scenes to the measured narration. */
+  duration: number;
+}
+
+export interface ExportStockVideoOptions {
+  clips: Blob[];
+  narration: Blob;
+  aspectRatio?: StockAspectRatio;
+  /** Omit to alternate all selected clips until the narration ends. */
+  scenes?: StockVideoScene[];
+  onProgress?: ExportProgress;
+}
+
 interface MediaStream {
   codec_type?: string;
   codec_name?: string;
@@ -51,6 +69,12 @@ const MAX_DURATION = 90;
 const FPS = 30;
 const FRAME = 1 / FPS;
 const ENCODE_TIMEOUT = 15 * 60 * 1000;
+const MAX_STOCK_CLIPS = 12;
+const MAX_STOCK_SCENES = 24;
+const MAX_STOCK_VIDEO_BYTES = 90 * 1024 * 1024;
+// AAC priming can make the reported audio stream ~40 ms shorter than its PCM input.
+// Three frozen video frames leave room for the complete last spoken samples.
+const STOCK_TAIL_FRAMES = 3;
 let exportInProgress = false;
 
 class ExportError extends Error {
@@ -162,6 +186,72 @@ function outputSize(stream: MediaStream): [number, number] {
   if (Math.abs(Math.round(rotation / 90)) % 2 === 1) [width, height] = [height, width];
   const factor = Math.min(1, 1920 / width, 1920 / height, Math.sqrt(1920 * 1080 / (width * height)));
   return [Math.max(2, Math.round(width * factor / 2) * 2), Math.max(2, Math.round(height * factor / 2) * 2)];
+}
+
+export interface PlannedStockScene {
+  clipIndex: number;
+  frames: number;
+  duration: number;
+}
+
+/** A frame-exact timeline. Explicit scene lengths are weights, not a second audio clock. */
+export function planStockTimeline(sourceDurations: number[], narrationDuration: number, scenes?: StockVideoScene[]): PlannedStockScene[] {
+  if (!sourceDurations.length || sourceDurations.length > MAX_STOCK_CLIPS
+    || sourceDurations.some((duration) => !finitePositive(duration) || duration < FRAME)) {
+    throw new ExportError("Danh sách video nguồn không hợp lệ. Hãy chọn lại video Pixabay.");
+  }
+  if (!finitePositive(narrationDuration) || narrationDuration > MAX_DURATION) {
+    throw new ExportError("Bản thử hỗ trợ lời thoại dài tối đa 90 giây.");
+  }
+  const totalFrames = Math.max(1, Math.ceil(narrationDuration * FPS - 0.000001));
+  if (scenes) {
+    if (!scenes.length || scenes.length > MAX_STOCK_SCENES || scenes.length > totalFrames
+      || scenes.some((scene) => !Number.isInteger(scene.clipIndex) || scene.clipIndex < 0
+        || scene.clipIndex >= sourceDurations.length || !finitePositive(scene.duration))) {
+      throw new ExportError("Danh sách phân cảnh không hợp lệ. Hãy kiểm tra lại video và thời lượng mỗi cảnh.");
+    }
+    const totalWeight = scenes.reduce((sum, scene) => sum + scene.duration, 0);
+    if (!Number.isFinite(totalWeight)) throw new ExportError("Thời lượng phân cảnh không hợp lệ.");
+    let allocated = 0;
+    let cumulative = 0;
+    return scenes.map((scene, index) => {
+      cumulative += scene.duration;
+      const remaining = scenes.length - index - 1;
+      const boundary = index === scenes.length - 1 ? totalFrames
+        : Math.max(allocated + 1, Math.min(totalFrames - remaining, Math.round(cumulative / totalWeight * totalFrames)));
+      const frames = boundary - allocated;
+      allocated = boundary;
+      return { clipIndex: scene.clipIndex, frames, duration: frames / FPS };
+    });
+  }
+
+  if (sourceDurations.length === 1) {
+    return [{ clipIndex: 0, frames: totalFrames, duration: totalFrames / FPS }];
+  }
+  const timeline: PlannedStockScene[] = [];
+  let remainingFrames = totalFrames;
+  const framesPerSelection = Math.max(1, Math.ceil(totalFrames / sourceDurations.length));
+  const framesForSceneLimit = Math.ceil(totalFrames / MAX_STOCK_SCENES);
+  while (remainingFrames > 0) {
+    if (timeline.length >= MAX_STOCK_SCENES) {
+      throw new ExportError("Có quá nhiều đoạn video ngắn. Hãy chọn ít video hơn hoặc lời thoại ngắn hơn.");
+    }
+    const clipIndex = timeline.length % sourceDurations.length;
+    // Give every selected clip a turn when the narration is short, while a
+    // long narration alternates source clips instead of looping one repeatedly.
+    const preferredFrames = Math.min(12 * FPS, framesPerSelection,
+      Math.max(FPS, framesForSceneLimit, Math.ceil(sourceDurations[clipIndex] * FPS)));
+    const frames = Math.min(remainingFrames, preferredFrames);
+    if (frames < Math.min(FPS, preferredFrames / 2) && timeline.length) {
+      const previous = timeline[timeline.length - 1];
+      previous.frames += frames;
+      previous.duration = previous.frames / FPS;
+    } else {
+      timeline.push({ clipIndex, frames, duration: frames / FPS });
+    }
+    remainingFrames -= frames;
+  }
+  return timeline;
 }
 
 function friendlyError(error: unknown, logs: string[]): Error {
@@ -357,6 +447,170 @@ export async function exportVideo(options: ExportVideoOptions): Promise<Blob> {
       ffmpeg.off("progress", progressHandler);
       // Drop the complete worker and its WASM filesystem even after a failed export.
       // Per-file deletes can hang after a worker crash; termination frees them all.
+      ffmpeg.terminate();
+    }
+    if (wasmURL) URL.revokeObjectURL(wasmURL);
+    files.clear();
+    exportInProgress = false;
+  }
+}
+
+/**
+ * Composes selected stock clips locally against the actual length of an audio file.
+ * Every source is written only once, even if the timeline reuses it. Existing
+ * camera/upload exports continue to use exportVideo above.
+ */
+export async function exportStockVideo(options: ExportStockVideoOptions): Promise<Blob> {
+  if (typeof window === "undefined") throw new ExportError("Hãy xuất video trong trình duyệt.");
+  if (exportInProgress) throw new ExportError("Một video đang được xuất. Hãy chờ video đó hoàn tất.");
+  if (!Array.isArray(options.clips) || !options.clips.length || options.clips.length > MAX_STOCK_CLIPS
+    || options.clips.some((clip) => !(clip instanceof Blob) || clip.size === 0)) {
+    throw new ExportError("Hãy chọn từ 1 đến 12 video Pixabay hợp lệ trước khi xuất.");
+  }
+  if (options.clips.reduce((sum, clip) => sum + clip.size, 0) > MAX_STOCK_VIDEO_BYTES) {
+    throw new ExportError("Tổng video nguồn vượt 90 MB. Hãy chọn clip ngắn hoặc chất lượng thấp hơn.");
+  }
+  if (!(options.narration instanceof Blob) || !options.narration.size || options.narration.size > MAX_AUDIO_BYTES) {
+    throw new ExportError("Hãy tải hoặc tạo tệp lời thoại hợp lệ (tối đa 32 MB).");
+  }
+  const ratio = options.aspectRatio ?? "9:16";
+  const size: Record<StockAspectRatio, [number, number]> = {
+    "9:16": [720, 1280],
+    "16:9": [1280, 720],
+    "1:1": [960, 960],
+  };
+  if (!Object.prototype.hasOwnProperty.call(size, ratio)) throw new ExportError("Tỷ lệ khung hình chưa được hỗ trợ.");
+
+  exportInProgress = true;
+  let ffmpeg: FFmpeg | undefined;
+  let wasmURL: string | undefined;
+  const assetFetch = new AbortController();
+  const files = new Set<string>();
+  const logs: string[] = [];
+  let encoding = false;
+  let plannedDuration = 1;
+  let reportedProgress = 0;
+  const report = (progress: number, message: string) => {
+    reportedProgress = Math.max(reportedProgress, Math.min(1, Math.max(0, progress)));
+    options.onProgress?.(reportedProgress, message);
+  };
+  const logHandler = ({ message }: { message: string }) => {
+    logs.push(message);
+    if (logs.length > 40) logs.shift();
+  };
+  const progressHandler = ({ time }: { time: number }) => {
+    if (encoding && Number.isFinite(time)) {
+      report(0.3 + Math.min(1, time / 1_000_000 / plannedDuration) * 0.64, "Đang ghép các cảnh và lời thoại…");
+    }
+  };
+
+  try {
+    report(0.02, "Đang tải bộ xuất MP4 lần đầu…");
+    const moduleURL = new URL("/ffmpeg/ffmpeg/index.js", window.location.origin).href;
+    const { FFmpeg: FFmpegClass } = await withDeadline(
+      import(/* webpackIgnore: true */ /* @vite-ignore */ moduleURL) as Promise<{ FFmpeg: new () => FFmpeg }>,
+      60_000,
+      "Chưa tải được bộ xuất MP4. Kiểm tra kết nối rồi thử lại.",
+    );
+    ffmpeg = new FFmpegClass();
+    ffmpeg.on("log", logHandler);
+    ffmpeg.on("progress", progressHandler);
+    wasmURL = await withDeadline(loadWasmURL(assetFetch.signal), 120_000,
+      "Tải bộ xuất MP4 quá lâu. Kiểm tra kết nối rồi thử lại.");
+    await withDeadline(ffmpeg.load({
+      classWorkerURL: new URL("/ffmpeg/ffmpeg/worker.js", window.location.origin).href,
+      coreURL: new URL("/ffmpeg/core/ffmpeg-core.js", window.location.origin).href,
+      wasmURL,
+    }), 120_000, "Tải bộ xuất MP4 quá lâu. Kiểm tra kết nối rồi thử lại.");
+
+    report(0.1, "Đang kiểm tra file lời thoại và video…");
+    const narrationFile = `stock-narration.${audioExtension(options.narration.type)}`;
+    files.add(narrationFile);
+    await ffmpeg.writeFile(narrationFile, new Uint8Array(await options.narration.arrayBuffer()));
+    const narrationInfo = await probe(ffmpeg, narrationFile, files);
+    const narrationDuration = durationOf(narrationInfo, "audio");
+    if (!narrationInfo.streams?.some((stream) => stream.codec_type === "audio") || !narrationDuration) {
+      throw new ExportError("Không đọc được file lời thoại. Hãy chọn lại hoặc tạo giọng đọc mới.");
+    }
+    if (narrationDuration > MAX_DURATION) throw new ExportError("Bản thử hỗ trợ lời thoại dài tối đa 90 giây.");
+    const sourceDurations: number[] = [];
+    for (let index = 0; index < options.clips.length; index++) {
+      const file = `stock-video-${index}.dat`;
+      files.add(file);
+      await ffmpeg.writeFile(file, new Uint8Array(await options.clips[index].arrayBuffer()));
+      const info = await probe(ffmpeg, file, files);
+      const stream = info.streams?.find((item) => item.codec_type === "video");
+      const duration = durationOf(info, "video");
+      if (!stream || !duration) throw new ExportError(`Video nguồn ${index + 1} không đọc được. Hãy chọn video khác.`);
+      if (/smpte2084|arib-std-b67/i.test(stream.color_transfer ?? "")
+        || /bt2020/i.test(stream.color_primaries ?? "")) {
+        throw new ExportError(`Video nguồn ${index + 1} dùng màu HDR chưa được hỗ trợ. Hãy chọn video SDR khác.`);
+      }
+      sourceDurations.push(duration);
+      report(0.12 + 0.15 * ((index + 1) / options.clips.length), "Đang kiểm tra từng video nguồn…");
+    }
+
+    // Narration is the only clock. No approved text or uploaded audio is shortened.
+    const timeline = planStockTimeline(sourceDurations, narrationDuration, options.scenes);
+    const finalScene = timeline[timeline.length - 1];
+    finalScene.frames += STOCK_TAIL_FRAMES;
+    finalScene.duration = finalScene.frames / FPS;
+    const totalFrames = timeline.reduce((sum, scene) => sum + scene.frames, 0);
+    plannedDuration = totalFrames / FPS;
+    const [width, height] = size[ratio];
+    const args: string[] = ["-hide_banner"];
+    timeline.forEach((scene) => {
+      args.push("-stream_loop", "-1", "-t", numberString(scene.duration + 0.25), "-i", `stock-video-${scene.clipIndex}.dat`);
+    });
+    args.push("-i", narrationFile);
+
+    const graph: string[] = timeline.map((scene, index) =>
+      `[${index}:v:0]setpts=PTS-STARTPTS,fps=${FPS},scale=${width}:${height}:force_original_aspect_ratio=increase:flags=bicubic,crop=${width}:${height},setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=0.5,trim=end_frame=${scene.frames},setpts=PTS-STARTPTS[v${index}]`);
+    graph.push(`${timeline.map((_, index) => `[v${index}]`).join("")}concat=n=${timeline.length}:v=1:a=0[video]`);
+    graph.push(`[${timeline.length}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,apad=whole_dur=${numberString(plannedDuration)},atrim=duration=${numberString(plannedDuration)}[audio]`);
+    args.push(
+      "-filter_complex", graph.join(";"), "-map", "[video]", "-map", "[audio]",
+      "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22", "-pix_fmt", "yuv420p",
+      "-maxrate", "8M", "-bufsize", "16M", "-profile:v", "high", "-level:v", "4.1",
+      "-r", String(FPS), "-frames:v", String(totalFrames),
+      "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+      "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
+      "-map_metadata", "-1", "-metadata:s:v:0", "rotate=0", "-movflags", "+faststart",
+      "-max_muxing_queue_size", "1024", "finished-stock.mp4",
+    );
+    files.add("finished-stock.mp4");
+    report(0.3, "Đang ghép các cảnh và lời thoại…");
+    encoding = true;
+    const result = await withDeadline(ffmpeg.exec(args, ENCODE_TIMEOUT), ENCODE_TIMEOUT + 5_000,
+      "Thiết bị xử lý video quá lâu. Hãy thử clip ngắn hơn hoặc xuất trên máy tính.");
+    encoding = false;
+    if (result !== 0) throw new Error(`FFmpeg failed (${result})`);
+
+    report(0.95, "Đang kiểm tra tệp MP4 hoàn chỉnh…");
+    const finishedInfo = await probe(ffmpeg, "finished-stock.mp4", files);
+    const finishedVideo = finishedInfo.streams?.find((stream) => stream.codec_type === "video");
+    const finishedAudio = finishedInfo.streams?.find((stream) => stream.codec_type === "audio");
+    const videoDuration = durationOf(finishedInfo, "video");
+    const audioDuration = Number(finishedAudio?.duration);
+    if (finishedVideo?.codec_name !== "h264" || finishedAudio?.codec_name !== "aac"
+      || finishedVideo.width !== width || finishedVideo.height !== height
+      || !videoDuration || Math.abs(videoDuration - plannedDuration) > FRAME + 0.002
+      || !Number.isFinite(audioDuration) || audioDuration + FRAME < narrationDuration) {
+      throw new ExportError("Tệp xuất chưa khớp lời thoại hoặc cấu hình MP4. Hãy thử clip ngắn hơn.");
+    }
+    const data = await ffmpeg.readFile("finished-stock.mp4");
+    if (typeof data === "string" || data.byteLength === 0) throw new ExportError("Tệp MP4 xuất ra bị trống. Hãy thử lại.");
+    const blob = new Blob([new Uint8Array(data).buffer], { type: "video/mp4" });
+    report(1, "Video đã sẵn sàng tải về.");
+    return blob;
+  } catch (error) {
+    throw friendlyError(error, logs);
+  } finally {
+    encoding = false;
+    assetFetch.abort();
+    if (ffmpeg) {
+      ffmpeg.off("log", logHandler);
+      ffmpeg.off("progress", progressHandler);
       ffmpeg.terminate();
     }
     if (wasmURL) URL.revokeObjectURL(wasmURL);

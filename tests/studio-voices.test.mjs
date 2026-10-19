@@ -28,6 +28,7 @@ async function harness(){
  const mocks=new Map([
   [path.join(root,"lib/studio-server.ts"),server],
   [path.join(root,"lib/studio-deepseek.ts"),{shortenSegment:async()=>{throw new Error("No hidden AI retry permitted");}}],
+  [path.join(root,"lib/studio-maziao.ts"),{authorizeMaziaoVoice:async()=>{throw new Error("Eleven voice-over must not authorize Maziao");},generateMaziaoVoiceOver:async()=>{throw new Error("Eleven voice-over must not call Maziao");}}],
   [path.join(root,"lib/studio-supabase.ts"),{assertOwnedMediaPath:ownedPath,downloadOwnedMedia:async(userId,name)=>{ownedPath(userId,name);return new File([new Uint8Array([1,2,3,4])],"sample.wav",{type:"audio/wav"});},removeOwnedMedia:async(userId,paths)=>{for(const name of paths){ownedPath(userId,name);deleted.push(name);media.delete(name);}},storeNarration:async(userId,wav,index)=>{const audioPath=`${userId}/narration/${index}.wav`;media.set(audioPath,wav);return{audioPath,audioUrl:`https://audio.example.invalid/${index}`};}}],
  ]);
  async function load(file){
@@ -107,6 +108,21 @@ await check("speech route synthesizes the resolved imported alias rather than th
  });
  const route=await h.entry("app/api/speech/route.ts"),response=await route.POST(new Request("https://app.example/api/speech",{method:"POST",body:JSON.stringify({voiceId:"publicVietnamese",duration:5,segments:[{start:0,end:5,text:"Xin chào bạn."}]})}));
  assert.equal(response.status,200);assert.equal((await response.json()).voiceId,"realImportedAlias");assert.deepEqual(h.charged,[1]);assert.equal(h.media.size,1);
+});
+await check("continuous Eleven voice-over preserves the approved script and measures its complete audio",async()=>{
+ const h=await harness(),script="Đây là kịch bản đã được người dùng duyệt, không tự ý rút gọn.";
+ h.grant(alice,"memberVoice","personal");
+ h.setHandler(request=>{
+  assert.equal(request.url,"https://api.elevenlabs.io/v1/text-to-speech/memberVoice?output_format=pcm_24000");
+  assert.equal(JSON.parse(request.body).text,script);
+  return new Response(new Uint8Array(96000));
+ });
+ const route=await h.entry("app/api/voice-over/route.ts");
+ const response=await route.POST(new Request("https://app.example/api/voice-over",{method:"POST",body:JSON.stringify({voiceId:"memberVoice",text:script,speed:1,volume:1,pitch:1})}));
+ assert.equal(response.status,200);
+ const result=await response.json();
+ assert.equal(result.provider,"eleven");assert.equal(result.duration,2);assert.equal(result.audioMime,"audio/wav");
+ assert.ok(result.audioPath.startsWith(`${alice}/narration/`));assert.deepEqual(h.charged,[1]);assert.equal(h.media.size,1);
 });
 await check("clone entitlement distinguishes free, missing flags and a full paid plan",async()=>{
  const cases=[{plan:{tier:"free",can_use_instant_voice_cloning:false},code:"CLONING_PLAN_REQUIRED"},{plan:{tier:"starter"},code:"CLONING_ENTITLEMENT_UNKNOWN"},{plan:{tier:"starter",can_use_instant_voice_cloning:true,voice_slots_used:10,voice_limit:10},code:"VOICE_SLOTS_FULL"}];

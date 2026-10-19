@@ -28,6 +28,7 @@ const downloadModule = { exports: {} };
 new Function("module", "exports", downloadCompiled)(downloadModule, downloadModule.exports);
 const componentRequire = (specifier) => specifier === "@/lib/video-download" ? downloadModule.exports
   : specifier === "@/components/platform/PixabayVideoPicker" ? { default: () => null }
+  : specifier === "@/components/platform/StockVideoWorkspace" ? { default: () => null }
   : specifier === "./StudioNavigation.module.css" ? { default: { navigation: "studio-navigation", exit: "studio-exit", label: "studio-label" } }
   : baseRequire(specifier);
 new Function("require", "module", "exports", compiled)(componentRequire, evaluated, evaluated.exports);

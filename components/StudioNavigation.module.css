@@ -51,6 +51,49 @@
   min-height: 0;
   padding: 0 0 24px;
 }
+.modeChooser {
+  display: grid;
+  gap: 17px;
+  margin: 0 0 22px;
+  padding: 22px;
+  border: 1px solid #dfe6f4;
+  border-radius: 18px;
+  background: linear-gradient(125deg, #f0f5ff, #fff 65%);
+  box-shadow: 0 10px 30px #13234f09;
+}
+.modeHeading > span { color: #e96800; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+.modeHeading h1 { margin: 5px 0 6px; color: #13234f; font-size: clamp(23px, 4vw, 30px); line-height: 1.2; }
+.modeHeading p { margin: 0; color: #667085; font-size: 13px; line-height: 1.6; }
+.modeGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.modeCard {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+  min-height: 82px;
+  padding: 15px;
+  border: 1px solid #dfe6f4;
+  border-radius: 14px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 3px 10px #13234f06;
+}
+.modeCard:hover:not(:disabled) { border-color: #9bb9ff; background: #f7f9ff; }
+.modeCardActive { border-color: #0b47f5; background: #edf3ff; box-shadow: 0 0 0 1px #0b47f5; }
+.modeIcon { display: inline-grid; place-items: center; flex: 0 0 auto; width: 43px; height: 43px; border-radius: 12px; background: #edf3ff; color: #0b47f5; }
+.modeCardActive .modeIcon { background: #d8e5ff; }
+.modeCardCopy { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.modeCardCopy strong { color: #13234f; font-size: 14px; line-height: 1.3; }
+.modeCardCopy small { color: #667085; font-size: 12px; line-height: 1.45; }
+.modeArrow { flex: 0 0 auto; color: #0b47f5; }
+.modeCard:disabled { opacity: .6; cursor: not-allowed; }
+.changeMode { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; margin: 0 0 8px; padding: 4px 1px; color: #315ac1; font-size: 13px; font-weight: 700; }
+.changeMode svg { transform: rotate(180deg); }
+.changeMode:hover:not(:disabled) { color: #083bd4; text-decoration: underline; }
+.changeMode:disabled { opacity: .55; }
+.resumeProject { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 13px 16px; border: 1px solid #d8e5ff; border-radius: 11px; background: #f7f9ff; color: #315ac1; font-size: 13px; }
+.resumeProject button { display: inline-flex; align-items: center; gap: 7px; color: #0b47f5; font-weight: 700; text-decoration: underline; }
 :global(.studio-app).embeddedApp :global(.project-name),
 :global(.studio-app).embeddedApp :global(.project-name-static),
 :global(.studio-app).embeddedApp :global(.step-heading h1),
@@ -152,6 +195,11 @@
   .navigation { padding-inline: 16px; }
   :global(.studio-app).embeddedApp { padding-bottom: 80px; }
   :global(.workspace).embeddedWorkspace { padding: 0 0 20px; }
+  .modeChooser { gap: 14px; margin-bottom: 13px; padding: 16px; border-radius: 15px; }
+  .modeHeading p { font-size: 12px; }
+  .modeGrid { grid-template-columns: 1fr; gap: 9px; }
+  .modeCard { min-height: 70px; padding: 12px; }
+  .modeIcon { width: 40px; height: 40px; }
   :global(.studio-app).embeddedApp :global(.camera-orbit) { box-shadow: 0 0 0 6px #f1f6ff; }
   .analysisReady { flex-wrap: wrap; font-size: 12px; }
   .analysisReady button { margin-left: 27px; }

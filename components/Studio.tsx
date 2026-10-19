@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { videoDownloadName, supportsVideoSave, saveVideoFile, canShareVideoFile, shareVideoFile } from "@/lib/video-download";
 import PixabayVideoPicker from "@/components/platform/PixabayVideoPicker";
+import StockVideoWorkspace, { type StockMode } from "@/components/platform/StockVideoWorkspace";
 import navigationStyles from "./StudioNavigation.module.css";
 
 type Step = 0 | 1 | 2 | 3 | 4;
 type View = "studio" | "projects" | "voices" | "profile" | "guide";
+type VideoCreationMode = "record" | "upload" | StockMode;
 type Profile = { name: string; channel: string; brand: string; audience: string; topic: string; tone: string; pronoun: string; cta: string; facts: string; customPrompt: string };
 type VideoFormat = "review" | "story" | "tips" | "sales";
 type ScriptType = { id: string; title: string; description?: string; scope: "shared" | "personal" };
@@ -208,6 +210,8 @@ function audioMetadata(file: Blob): Promise<number | undefined> {
 
 export default function Studio({ initialView = "studio", embedded = false }: { initialView?: View; embedded?: boolean } = {}) {
   const [view, setView] = useState<View>(initialView);
+  const [videoMode, setVideoMode] = useState<VideoCreationMode | null>(null);
+  const [stockBusy, setStockBusy] = useState(false);
   const [leavingStudio, setLeavingStudio] = useState(false);
   const [exitPrompt, setExitPrompt] = useState(false);
   const [project, setProject] = useState<Project>(() => freshProject("local"));
@@ -562,7 +566,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
     try { const result = await requestJson("/api/voices"); if (token === voicesToken.current) setVoices(Array.isArray(result.voices) ? result.voices : []); } catch (error) { if (token === voicesToken.current) notify(errorText(error), "error"); } finally { if (token === voicesToken.current) setVoicesLoading(false); }
   }
   useEffect(() => { ++voicesToken.current; setVoices([]); setVoicesLoading(false); setVoiceFilter("vietnamese"); }, [voiceProvider, config.userId]);
-  useEffect(() => { if (voiceReady && (view === "voices" || step === 3)) void loadVoices(); }, [voiceReady, voiceProvider, config.userId, view, step]);
+  useEffect(() => { if (voiceReady && (view === "voices" || step === 3 || (embedded && (videoMode === "library" || videoMode === "text")))) void loadVoices(); }, [voiceReady, voiceProvider, config.userId, view, step, embedded, videoMode]);
   async function receiveSpeech(target: Project) {
     const expected = scriptKey(target);
     const stillCurrent = () => mounted.current && !deletedProjectIds.current.has(target.id)
@@ -748,7 +752,24 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
   }
   function navigateStep(next: number) { if (busy) { notify("Hãy chờ thao tác hiện tại hoàn tất."); return; } if (recording) { notify("Hãy dừng quay để tiếp tục."); return; } if (next > 0 && !hasClip) { notify("Bắt đầu bằng việc quay hoặc tải video lên."); return; } stopCamera(); update({ step: next as Step }); }
 
-  const working = Boolean(busy) || recording || intentRecording || leavingStudio;
+  function chooseVideoMode(next: VideoCreationMode) {
+    if (busy || stockBusy || recording || intentRecording) return;
+    if (videoMode === next) return;
+    stopCamera();
+    setVideoMode(next);
+  }
+
+  useEffect(() => {
+    if (!embedded || view !== "studio" || !videoMode) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(videoMode === "library" || videoMode === "text" ? "stock-mode-title" : "capture-title");
+      if (target) window.scrollTo({ top: Math.max(0, window.scrollY + target.getBoundingClientRect().top - 150), behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [embedded, view, videoMode]);
+
+  const working = Boolean(busy) || stockBusy || recording || intentRecording || leavingStudio;
+  const onStockBusyChange = useCallback((next: boolean) => setStockBusy(next), []);
   const navigationLocked = leavingStudio || exitPrompt;
   const displayName = config.displayName || project.profile.name || "Tài khoản";
   const manualScript = () => update({ step: 2, segments: project.segments.length ? project.segments : [{ start: 0, end: project.duration, text: "" }] });
@@ -781,30 +802,47 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
       {loginRequired ? <div className="status-banner"><Icon name="lock" size={19} /><span>Đăng nhập để dùng AI và hồ sơ của bạn.</span><a href="/dang-nhap">Đăng nhập</a></div> : null}
       {configError ? <div className="status-banner warning" role="alert"><Icon name="info" size={19} /><span>Chưa tải được kết nối tài khoản. Bạn vẫn có thể chỉnh video thủ công.</span><button onClick={() => void refreshConfiguration()} disabled={configRefreshing || working}>{configRefreshing ? "Đang thử…" : "Thử lại"}</button></div> : null}
 
-      {view === "studio" ? <>
+      {embedded && view === "studio" ? <section className={navigationStyles.modeChooser} aria-labelledby="video-mode-title">
+        <div className={navigationStyles.modeHeading}><span>TẠO VIDEO AI</span><h1 id="video-mode-title">Bạn muốn làm video theo cách nào?</h1><p>Chọn một cách bắt đầu. Bạn có thể đổi chế độ ngay tại đây.</p></div>
+        <div className={navigationStyles.modeGrid}>
+          {([
+            { id: "record", icon: "camera", label: "Quay Video", description: "Quay trực tiếp bằng camera điện thoại." },
+            { id: "upload", icon: "upload", label: "Tải Video Lên", description: "Dùng video có sẵn từ thiết bị." },
+            { id: "library", icon: "grid", label: "Tạo Video Thư Viện", description: "Tự chọn nhiều cảnh từ Pixabay." },
+            { id: "text", icon: "file", label: "Tạo Video Văn Bản", description: "AI tìm cảnh theo kịch bản của bạn." },
+          ] as const).map(item => <button type="button" key={item.id} className={`${navigationStyles.modeCard} ${videoMode === item.id ? navigationStyles.modeCardActive : ""}`} aria-pressed={videoMode === item.id} onClick={() => chooseVideoMode(item.id)} disabled={working}><span className={navigationStyles.modeIcon}><Icon name={item.icon} size={24} /></span><span className={navigationStyles.modeCardCopy}><strong>{item.label}</strong><small>{item.description}</small></span><Icon name="arrow" size={18} className={navigationStyles.modeArrow} /></button>)}
+        </div>
+      </section> : null}
+
+      {embedded && view === "studio" && videoMode ? <button type="button" className={navigationStyles.changeMode} onClick={() => { const target = document.getElementById("video-mode-title"); if (target) window.scrollTo({ top: Math.max(0, window.scrollY + target.getBoundingClientRect().top - 145), behavior: "smooth" }); }} disabled={working}><Icon name="chevron" size={16} />Đổi cách tạo video</button> : null}
+
+      {embedded && view === "studio" && (videoMode === "library" || videoMode === "text") ? <StockVideoWorkspace mode={videoMode} deepseekReady={config.deepseek} voiceReady={voiceReady} voices={voices} voicesLoading={voicesLoading} onReloadVoices={() => void loadVoices()} onBusyChange={onStockBusyChange} builtins={builtinScriptTypes} templates={customScriptTypes} /> : null}
+      {embedded && view === "studio" && !videoMode && hasClip ? <div className={navigationStyles.resumeProject}><span>Đã khôi phục video “{project.title}”.</span><button type="button" onClick={() => setVideoMode("upload")}>Tiếp tục dự án này<Icon name="arrow" size={16} /></button></div> : null}
+
+      {view === "studio" && (!embedded || videoMode === "record" || videoMode === "upload") ? <>
         <div className="project-bar">
           <div>{hasClip ? <input className="project-name" aria-label="Tên dự án" value={project.title} onChange={event => update({ title: event.target.value })} /> : <span className="project-name-static">Video mới</span>}<span className="save-label"><Icon name="check" size={13} />{saveState}</span></div>
           <details className="project-menu"><summary aria-label="Tùy chọn dự án">···</summary><div><button onClick={newProject} disabled={working}><Icon name="plus" size={18} />Tạo video mới</button><button onClick={() => void exportProject()} disabled={!hasClip || working}><Icon name="folder" size={18} />Tải bản sao dự án</button><button onClick={() => uploadInput.current?.click()} disabled={working}><Icon name="upload" size={18} />Nhập dự án</button></div></details>
         </div>
 
-        <div className="mobile-progress"><span>Bước {step+1} / 5</span><strong>{STEPS[step]}</strong></div>
+        <div className="mobile-progress"><span>Bước {step+1} / 5</span><strong>{step === 0 && videoMode === "upload" ? "Tải video lên" : STEPS[step]}</strong></div>
         <nav className="workflow" aria-label="Tiến trình tạo video">
-          {STEPS.map((label, index) => <button key={label} className={`workflow-step ${step === index ? "current" : ""} ${step > index ? "complete" : ""}`} aria-label={`Bước ${index+1}: ${label}`} aria-current={step === index ? "step" : undefined} onClick={() => navigateStep(index)} disabled={working || (index>0 && !hasClip)}><span className="step-number">{step > index ? <Icon name="check" size={15} /> : index + 1}</span><span className="step-label">{label}</span></button>)}
+          {STEPS.map((label, index) => <button key={label} className={`workflow-step ${step === index ? "current" : ""} ${step > index ? "complete" : ""}`} aria-label={`Bước ${index+1}: ${index === 0 && videoMode === "upload" ? "Tải video lên" : label}`} aria-current={step === index ? "step" : undefined} onClick={() => navigateStep(index)} disabled={working || (index>0 && !hasClip)}><span className="step-number">{step > index ? <Icon name="check" size={15} /> : index + 1}</span><span className="step-label">{index === 0 && videoMode === "upload" ? "Tải video lên" : label}</span></button>)}
         </nav>
 
         {step === 0 ? <section className="step-card capture-card" aria-labelledby="capture-title">
-          <div className="step-heading"><span className="step-kicker">BƯỚC 1 / 5</span><h1 id="capture-title">Thêm video của bạn</h1><p>Quay một khoảnh khắc hoặc chọn video có sẵn.</p></div>
+          <div className="step-heading"><span className="step-kicker">BƯỚC 1 / 5</span><h1 id="capture-title">{videoMode === "upload" ? "Tải video từ thiết bị" : "Quay video của bạn"}</h1><p>{videoMode === "upload" ? "Chọn video bạn đã quay. Các bước phân tích, kịch bản và ghép giọng vẫn như trước." : "Quay một khoảnh khắc rồi nói điều bạn muốn chia sẻ."}</p></div>
           <div className="capture-actions">
-            {recording ? <button className="button primary large recording-button" onClick={stopRecording}><span className="stop-square" />Dừng quay</button> : hasClip ? <><button className="button primary large" onClick={() => navigateStep(1)}>Dùng video này<Icon name="arrow" /></button><button className="button secondary large" onClick={() => void startRecording()} disabled={Boolean(busy) || !ready}><Icon name="camera" />Quay lại</button></> : <><button className="button primary large" onClick={() => void startRecording()} disabled={Boolean(busy) || !ready}><span className="record-circle" />Quay video</button><button className="button secondary large" onClick={() => uploadInput.current?.click()}><Icon name="upload" />Tải video lên</button></>}
+            {recording ? <button className="button primary large recording-button" onClick={stopRecording}><span className="stop-square" />Dừng quay</button> : hasClip ? <><button className="button primary large" onClick={() => navigateStep(1)}>Dùng video này<Icon name="arrow" /></button><button className="button secondary large" onClick={() => videoMode === "upload" ? uploadInput.current?.click() : void startRecording()} disabled={Boolean(busy) || !ready}><Icon name={videoMode === "upload" ? "upload" : "camera"} />{videoMode === "upload" ? "Chọn video khác" : "Quay lại"}</button></> : videoMode === "upload" ? <button className="button primary large" onClick={() => uploadInput.current?.click()}><Icon name="upload" />Chọn video từ thiết bị</button> : <><button className="button primary large" onClick={() => void startRecording()} disabled={Boolean(busy) || !ready}><span className="record-circle" />Quay video</button>{!embedded ? <button className="button secondary large" onClick={() => uploadInput.current?.click()}><Icon name="upload" />Tải video lên</button> : null}</>}
           </div>
           <div className={`camera-stage ${stream ? "camera-live" : ""} ${dragging ? "dragging" : ""}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); void ingestFile(event.dataTransfer.files[0]); }}>
-            {stream ? <video ref={cameraVideo} className={`live-camera ${facing === "user" ? "mirrored" : ""}`} autoPlay muted playsInline /> : hasClip ? <video className="source-preview" src={sourceUrl || undefined} controls playsInline preload="metadata" /> : <div className="camera-empty"><div className="camera-orbit"><Icon name="camera" size={44} /><span>✦</span></div><strong>Sẵn sàng khi bạn muốn quay.</strong><p>Giữ máy vững và quay thật tự nhiên.</p></div>}
+            {stream ? <video ref={cameraVideo} className={`live-camera ${facing === "user" ? "mirrored" : ""}`} autoPlay muted playsInline /> : hasClip ? <video className="source-preview" src={sourceUrl || undefined} controls playsInline preload="metadata" /> : <div className="camera-empty"><div className="camera-orbit"><Icon name={videoMode === "upload" ? "upload" : "camera"} size={44} /><span>✦</span></div><strong>{videoMode === "upload" ? "Chọn video để bắt đầu." : "Sẵn sàng khi bạn muốn quay."}</strong><p>{videoMode === "upload" ? "MP4, MOV hoặc WebM từ điện thoại hay máy tính." : "Giữ máy vững và quay thật tự nhiên."}</p></div>}
             {recording ? <div className="recording-timer"><span />{time(recordSeconds)}</div> : null}
             <span className="canvas-note">{recording ? "Đang thu hình và tiếng" : hasClip ? `${time(project.duration)} · ${project.sourceName || "Video của bạn"}` : "2–90 giây · tối đa 60 MB"}</span>
           </div>
-          {hasClip && !recording ? <button className="text-button centered" onClick={() => uploadInput.current?.click()}>Chọn video khác</button> : null}
-          {!recording ? <PixabayVideoPicker onSelect={ingestFile} disabled={working} /> : null}
-          <details className="quiet-details camera-options"><summary>Tùy chọn camera<Icon name="chevron" size={16} /></summary><div className="camera-option-fields"><label>Tỷ lệ quay<select value={ratio} onChange={event => setRatio(event.target.value)} disabled={recording}><option value="9:16">Dọc · 9:16</option><option value="16:9">Ngang · 16:9</option></select></label><button className="button secondary" onClick={() => void switchCamera()} disabled={recording}><Icon name="refresh" size={18} />{facing === "environment" ? "Đổi sang camera trước" : "Đổi sang camera sau"}</button></div></details>
+          {hasClip && !recording && (videoMode === "upload" || !embedded) ? <button className="text-button centered" onClick={() => uploadInput.current?.click()}>Chọn video khác</button> : null}
+          {!embedded && !recording ? <PixabayVideoPicker onSelect={ingestFile} disabled={working} /> : null}
+          {videoMode !== "upload" ? <details className="quiet-details camera-options"><summary>Tùy chọn camera<Icon name="chevron" size={16} /></summary><div className="camera-option-fields"><label>Tỷ lệ quay<select value={ratio} onChange={event => setRatio(event.target.value)} disabled={recording}><option value="9:16">Dọc · 9:16</option><option value="16:9">Ngang · 16:9</option></select></label><button className="button secondary" onClick={() => void switchCamera()} disabled={recording}><Icon name="refresh" size={18} />{facing === "environment" ? "Đổi sang camera trước" : "Đổi sang camera sau"}</button></div></details> : null}
         </section> : null}
 
         {step === 1 ? <section className="step-card" aria-labelledby="intent-title">
