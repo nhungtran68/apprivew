@@ -35,6 +35,15 @@ function orderLabel(order: Order) {
   return "Đang chờ thanh toán";
 }
 
+function orderMessage(order: Order) {
+  if (order.credited) return `${number.format(order.credits)} credit đã được cộng vào ví. Bạn có thể tiếp tục dùng các công cụ AI.`;
+  const status = order.status.toUpperCase();
+  if (status === "CANCELLED" || status === "CANCELED") return "Đơn này đã hủy. Nếu bạn đã chuyển khoản, hãy bấm Kiểm tra lại; nếu chưa, chọn gói bên dưới để tạo đơn mới.";
+  if (status === "EXPIRED") return "Liên kết thanh toán đã hết hạn. Chọn một gói bên dưới để tạo đơn mới.";
+  if (status === "FAILED") return "Thanh toán chưa thành công. Bạn có thể chọn lại gói bên dưới.";
+  return "Hệ thống sẽ tự kiểm tra và cập nhật số dư khi khoản thanh toán được xác nhận.";
+}
+
 function isTerminal(order: Order) {
   return order.credited || ["CANCELLED", "CANCELED", "EXPIRED", "FAILED"].includes(order.status.toUpperCase());
 }
@@ -177,7 +186,7 @@ export default function TopUpPage() {
 
         {orderCode ? <section className={`${shared.panel} ${styles.orderPanel}`} aria-live="polite" aria-labelledby="payment-status-title">
           <div className={styles.orderHeading}><span className={`${styles.orderIcon} ${order?.credited ? styles.successIcon : ""}`}><PlatformIcon name={order?.credited ? "check" : "clock"} size={23} /></span><div><span className={styles.kicker}>ĐƠN THANH TOÁN {orderCode}</span><h2 id="payment-status-title">{order ? orderLabel(order) : "Đang kiểm tra thanh toán"}</h2></div></div>
-          {order ? <p>{order.credited ? `${number.format(order.credits)} credit đã được cộng vào ví. Bạn có thể tiếp tục dùng các công cụ AI.` : "Hệ thống sẽ tự kiểm tra và cập nhật số dư khi khoản thanh toán được xác nhận."}</p> : <p>Vui lòng giữ trang này mở trong lúc hệ thống kiểm tra đơn.</p>}
+          {order ? <p>{orderMessage(order)}</p> : <p>Vui lòng giữ trang này mở trong lúc hệ thống kiểm tra đơn.</p>}
           {orderError ? <p className={styles.errorText} role="alert">{orderError}</p> : null}
           <div className={styles.orderActions}><button type="button" className={shared.secondaryButton} disabled={checkingOrder} onClick={() => setCheckAgain(value => value + 1)}><PlatformIcon name="refresh" size={17} />{checkingOrder ? "Đang kiểm tra…" : "Kiểm tra lại"}</button><Link href="/ca-nhan" className={shared.textLink}>Xem ví credit<PlatformIcon name="arrow" size={17} /></Link></div>
           {pollingStopped && !order?.credited ? <p className={styles.quietNote}>Hệ thống đã tạm dừng kiểm tra tự động. Bấm “Kiểm tra lại” để cập nhật.</p> : null}

@@ -10,6 +10,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const LINK_ID = /^[a-zA-Z0-9_-]{16,200}$/;
 const PAYOS_CHECKOUT_ORIGIN = "https://pay.payos.vn";
 const PAYOS_PRODUCTION_ORIGIN = "https://apprivew.vercel.app";
+const PAYOS_CHECKOUT_LIFETIME_SECONDS = 15 * 60;
 export const PAYOS_PRODUCTION_WEBHOOK = `${PAYOS_PRODUCTION_ORIGIN}/api/payments/payos/webhook`;
 
 export type PaymentPack = {
@@ -31,6 +32,7 @@ export type PaymentOrder = {
   checkoutUrl: string | null;
   paymentLinkId: string | null;
   credited: boolean;
+  updatedAt?: string;
 };
 
 let privilegedClient: SupabaseClient | undefined;
@@ -163,6 +165,7 @@ function parseOrder(row: Record<string, unknown>): PaymentOrder {
     checkoutUrl: typeof (row.checkoutUrl ?? row.checkout_url) === "string" ? String(row.checkoutUrl ?? row.checkout_url) : null,
     paymentLinkId: typeof (row.paymentLinkId ?? row.provider_payment_link_id) === "string" ? String(row.paymentLinkId ?? row.provider_payment_link_id) : null,
     credited: status === "paid",
+    updatedAt: typeof (row.updatedAt ?? row.updated_at) === "string" ? String(row.updatedAt ?? row.updated_at) : undefined,
   };
 }
 
@@ -186,7 +189,7 @@ export async function getPaymentOrderForWebhook(code: number): Promise<PaymentOr
 
 async function getPaymentOrderByRequest(userId: string, requestId: string): Promise<PaymentOrder | null> {
   const { data, error } = await paymentDb().from("studio_payment_orders")
-    .select("request_id,user_id,order_code,pack_id,credits,price_vnd,status,checkout_url,provider_payment_link_id")
+    .select("request_id,user_id,order_code,pack_id,credits,price_vnd,status,checkout_url,provider_payment_link_id,updated_at")
     .eq("request_id", requestId).maybeSingle();
   if (error) return databaseError(error);
   if (!data) return null;
@@ -231,12 +234,55 @@ export async function markPaymentClosed(code: number, status: "cancelled" | "exp
   return parseOrder(data as Record<string, unknown>);
 }
 
+async function resolveExistingCheckout(order: PaymentOrder, gateway: PayOS): Promise<PaymentOrder> {
+  const code = parseOrderCode(order.orderCode);
+  let provider: Awaited<ReturnType<typeof gateway.paymentRequests.get>>;
+  try { provider = await gateway.paymentRequests.get(code); } catch { return providerUnavailable(); }
+  if (provider.orderCode !== code || provider.amount !== order.priceVnd ||
+      !order.paymentLinkId || provider.id !== order.paymentLinkId)
+    throw new StudioError("PAYMENT_MISMATCH", "Thông tin thanh toán cần được đối soát. Vui lòng giữ mã đơn và liên hệ quản trị viên.", 409);
+  if (!Number.isSafeInteger(provider.amountPaid) || provider.amountPaid < 0 || provider.amountPaid > order.priceVnd)
+    throw new StudioError("PAYMENT_MISMATCH", "Số tiền payOS báo về chưa khớp đơn. Vui lòng giữ mã đơn và liên hệ quản trị viên.", 409);
+
+  if (provider.status === "PAID") {
+    if (provider.amountPaid !== order.priceVnd) throw new StudioError("PAYMENT_MISMATCH", "Số tiền payOS xác nhận chưa khớp đơn. Vui lòng liên hệ quản trị viên.", 409);
+    return markPaymentPaid(code, order.priceVnd, provider.id);
+  }
+  if ((provider.status === "CANCELLED" || provider.status === "EXPIRED" || provider.status === "FAILED") && provider.amountPaid > 0)
+    throw new StudioError("PAYMENT_UNDERPAID", `Đơn ${order.orderCode} có khoản chuyển tiền chưa đủ. Vui lòng giữ mã đơn và liên hệ quản trị viên để đối soát.`, 409);
+  if (provider.status === "CANCELLED" || provider.status === "EXPIRED" || provider.status === "FAILED")
+    return markPaymentClosed(code, provider.status === "EXPIRED" ? "expired" : "cancelled");
+
+  const recordedAt = order.updatedAt ? Date.parse(order.updatedAt) : NaN;
+  // The link is stored after payOS creates it, so at this age its 15-minute
+  // checkout period has definitely ended. Close it at payOS before allowing a
+  // different request ID to create another payable order.
+  if (!Number.isFinite(recordedAt) || Date.now() - recordedAt >= PAYOS_CHECKOUT_LIFETIME_SECONDS * 1000) {
+    if (provider.status === "PENDING" && provider.amountPaid === 0) {
+      let cancelled: typeof provider;
+      try { cancelled = await gateway.paymentRequests.cancel(provider.id); } catch { return providerUnavailable(); }
+      if (cancelled.orderCode !== code || cancelled.amount !== order.priceVnd || cancelled.id !== provider.id)
+        throw new StudioError("PAYMENT_MISMATCH", "Thông tin thanh toán cần được đối soát. Vui lòng giữ mã đơn và liên hệ quản trị viên.", 409);
+      if (cancelled.status === "CANCELLED" || cancelled.status === "EXPIRED")
+        return markPaymentClosed(code, cancelled.status === "EXPIRED" ? "expired" : "cancelled");
+      if (cancelled.status === "PAID" && cancelled.amountPaid === order.priceVnd)
+        return markPaymentPaid(code, order.priceVnd, cancelled.id);
+    }
+    throw new StudioError("PAYMENT_IN_PROGRESS", `Đơn ${order.orderCode} đang được payOS xử lý. Hãy kiểm tra trạng thái đơn trước khi tạo đơn mới.`, 409);
+  }
+  if (provider.status !== "PENDING" && provider.status !== "UNDERPAID" && provider.status !== "PROCESSING")
+    throw new StudioError("PAYMENT_MISMATCH", "Trạng thái thanh toán chưa xác định. Vui lòng giữ mã đơn và liên hệ quản trị viên.", 409);
+  return order;
+}
+
 export async function createPaymentOrder(userId: string, packId: string, requestId: string): Promise<PaymentOrder> {
   if (!(await paymentReady())) throw new StudioError("PAYMENT_NOT_READY", "Thanh toán payOS chưa hoàn tất kích hoạt. Vui lòng quay lại sau.", 503, "contact_admin");
   const gateway = payos(); // Fail before inserting an order if credentials are absent.
   if (!UUID.test(requestId)) throw new StudioError("INVALID_PAYMENT_REQUEST", "Mã yêu cầu thanh toán không hợp lệ.", 400);
   const previous = await getPaymentOrderByRequest(userId, requestId);
   if (previous && previous.packId !== packId) throw new StudioError("PAYMENT_ORDER_CONFLICT", "Mã yêu cầu đã được dùng cho gói khác.", 409);
+  if (previous && previous.status !== "pending") return previous;
+  if (previous?.checkoutUrl) return resolveExistingCheckout(previous, gateway);
   const pack = previous ? { id: previous.packId, credits: previous.credits, priceVnd: previous.priceVnd } : await getPaymentPack(packId);
   const code = paymentOrderCode(requestId);
   const { data, error } = await paymentDb().rpc("studio_payment_create", {
@@ -254,7 +300,7 @@ export async function createPaymentOrder(userId: string, packId: string, request
     orderCode: code, amount: order.priceVnd, description,
     items: [{ name: order.credits + " credit Apprivew", quantity: 1, price: order.priceVnd }],
     returnUrl, cancelUrl,
-    expiredAt: Math.floor(Date.now() / 1000) + 15 * 60,
+    expiredAt: Math.floor(Date.now() / 1000) + PAYOS_CHECKOUT_LIFETIME_SECONDS,
   };
 
   let link: { orderCode: number; amount: number; paymentLinkId: string; checkoutUrl: string; currency?: string };
@@ -289,11 +335,15 @@ export async function reconcilePaymentOrder(userId: string, code: number): Promi
   if (provider.orderCode !== code || provider.amount !== order.priceVnd ||
       (order.paymentLinkId && provider.id !== order.paymentLinkId))
     throw new StudioError("PAYMENT_MISMATCH", "Thông tin thanh toán cần được đối soát. Vui lòng giữ mã đơn và liên hệ quản trị viên.", 409);
+  if (!Number.isSafeInteger(provider.amountPaid) || provider.amountPaid < 0 || provider.amountPaid > order.priceVnd)
+    throw new StudioError("PAYMENT_MISMATCH", "Số tiền payOS báo về chưa khớp đơn. Vui lòng giữ mã đơn và liên hệ quản trị viên.", 409);
   if (provider.status === "PAID") {
     if (provider.amountPaid !== order.priceVnd || !LINK_ID.test(provider.id))
       throw new StudioError("PAYMENT_MISMATCH", "Số tiền payOS xác nhận chưa khớp đơn. Vui lòng liên hệ quản trị viên.", 409);
     return markPaymentPaid(code, order.priceVnd, provider.id);
   }
+  if ((provider.status === "CANCELLED" || provider.status === "EXPIRED") && provider.amountPaid > 0)
+    throw new StudioError("PAYMENT_UNDERPAID", `Đơn ${order.orderCode} có khoản chuyển tiền chưa đủ. Vui lòng giữ mã đơn và liên hệ quản trị viên để đối soát.`, 409);
   if (provider.status === "CANCELLED" || provider.status === "EXPIRED")
     return markPaymentClosed(code, provider.status === "CANCELLED" ? "cancelled" : "expired");
   return getPaymentOrderForUser(userId, code);
