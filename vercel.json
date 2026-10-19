@@ -9,6 +9,10 @@
     {
       "path": "/api/voices/scheduled",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/payments/payos/scheduled",
+      "schedule": "30 3 * * *"
     }
   ]
 }
