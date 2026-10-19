@@ -20,8 +20,10 @@ const validHit = {
 
 async function fixture() {
   let authorized = true;
+  let balance = 10;
   let fetchMock = async () => { throw new Error("Unexpected fetch"); };
   const calls = [];
+  const creditOperations = new Map();
   class StudioError extends Error {
     constructor(code, message, status = 400, action) { super(message); this.code = code; this.status = status; this.action = action; }
   }
@@ -46,6 +48,28 @@ async function fixture() {
     ["server-only", {}],
     [path.join(root, "lib/studio-contract.ts"), { StudioError }],
     [path.join(root, "lib/studio-server.ts"), server],
+    [path.join(root, "lib/studio-credits.ts"), {
+      creditsForStockBytes: bytes => Math.ceil(bytes / (2 * 1024 * 1024)),
+      reserveCredits: async (_user, requestId, kind, amount) => {
+        calls.push(["reserve", requestId, kind, amount]);
+        if (creditOperations.has(requestId)) return { created: false };
+        if (balance < amount) throw new StudioError("INSUFFICIENT_CREDITS", "Hết credit", 402);
+        balance -= amount;
+        creditOperations.set(requestId, { amount, status: "reserved" });
+        return { created: true };
+      },
+      settleCredits: async (_user, requestId, actual) => {
+        calls.push(["settle", requestId, actual]);
+        const operation = creditOperations.get(requestId);
+        balance += operation.amount - actual;
+        operation.status = "settled";
+      },
+      refundCredits: async (_user, requestId) => {
+        calls.push(["refund", requestId]);
+        const operation = creditOperations.get(requestId);
+        if (operation?.status === "reserved") { balance += operation.amount; operation.status = "refunded"; }
+      },
+    }],
   ]);
   const entryPath = name => path.join(root, name);
   async function load(file) {
@@ -77,13 +101,14 @@ async function fixture() {
     return module.namespace;
   }
   return {
-    entry, calls,
+    entry, calls, creditOperations, balance: () => balance,
+    setBalance(value) { balance = value; },
     setFetch(fn) { fetchMock = fn; },
     setAuthorized(value) { authorized = value; },
     request(route, method = "GET", body) {
       return new Request(`https://app.example${route}`, {
         method,
-        ...(method === "POST" ? { headers: { Origin: "https://app.example", "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+        ...(method === "POST" ? { headers: { Origin: "https://app.example", "Content-Type": "application/json", "Idempotency-Key": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, body: JSON.stringify(body) } : {}),
       });
     },
   };
@@ -137,6 +162,19 @@ test("stock-video proxy re-reads the Pixabay ID, streams MP4, and rejects unsafe
   assert.equal(response.headers.get("content-type"), "video/mp4");
   assert.deepEqual(new Uint8Array(await response.arrayBuffer()), body);
   assert.equal(h.calls.filter(call => call[0] === "fetch").length, 2);
+  assert.equal(h.balance(), 9);
+  const repeated = await route.POST(h.request("/api/pixabay/video", "POST", { id: 125, quality: "small" }));
+  assert.equal(repeated.status, 409);
+  assert.equal((await repeated.json()).code, "CREDIT_REQUEST_REUSED");
+  assert.equal(h.calls.filter(call => call[0] === "fetch" && String(call[1]).includes("_small.mp4")).length, 1);
+  assert.equal(h.balance(), 9);
+  h.setBalance(0);
+  const emptyWalletRequest = new Request("https://app.example/api/pixabay/video", { method: "POST", headers: { Origin: "https://app.example", "Content-Type": "application/json", "Idempotency-Key": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }, body: JSON.stringify({ id: 125, quality: "small" }) });
+  const emptyWallet = await route.POST(emptyWalletRequest);
+  assert.equal(emptyWallet.status, 402);
+  assert.equal((await emptyWallet.json()).code, "INSUFFICIENT_CREDITS");
+  assert.equal(h.calls.filter(call => call[0] === "fetch" && String(call[1]).includes("_small.mp4")).length, 1);
+  h.setBalance(9);
 
   const crossOriginRequest = new Request("https://app.example/api/pixabay/video", {
     method: "POST", headers: { Origin: "https://attacker.example", "Content-Type": "application/json" },

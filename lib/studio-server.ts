@@ -1,6 +1,7 @@
 import "server-only";
 import { StudioError, bytesToBase64, base64ToBytes, sanitizeProfile, type StudioProfile } from "./studio-contract";
 import { createStudioSupabaseServer, supabaseConfigured } from "./studio-supabase";
+import { adjustCredits, creditRates, getCreditBalance, getCreditBalances } from "./studio-credits";
 
 // Model names are returned to members and sent in provider bodies. Never echo an
 // arbitrary environment value: an administrator may accidentally paste a key here.
@@ -58,9 +59,9 @@ export async function readSettings(userId: string) {
   return { profile };
 }
 export async function getConfig(userId: string) {
-  const [{ profile }, member] = await Promise.all([readSettings(userId), getMember(userId)]);
+  const [{ profile }, member, credits] = await Promise.all([readSettings(userId), getMember(userId), getCreditBalance(userId)]);
   const provider = voiceProvider();
-  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: profile.name || member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), maziaoConfigured: Boolean(process.env.MAZIAO_API_KEY), voiceProvider: provider, voiceConfigured: Boolean(provider === "maziao" ? process.env.MAZIAO_API_KEY : process.env.ELEVENLABS_API_KEY), ...modelNames(), maziaoModel: maziaoModel(), profile, quota: { limit: member.ai_units_limit, used: member.ai_units_used, reserved: 0, remaining: Math.max(0, member.ai_units_limit - member.ai_units_used) }, voiceCloning: { used: member.voice_clone_used, limit: member.voice_clone_limit, remaining: member.role === "admin" ? null : Math.max(0, member.voice_clone_limit - member.voice_clone_used), unlimited: member.role === "admin" } };
+  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: profile.name || member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), maziaoConfigured: Boolean(process.env.MAZIAO_API_KEY), voiceProvider: provider, voiceConfigured: provider === "maziao" && Boolean(process.env.MAZIAO_API_KEY), ...modelNames(), maziaoModel: maziaoModel(), profile, credits, creditRates };
 }
 export async function providerKey(_userId: string, provider: "deepseek" | "eleven" | "maziao"): Promise<{ key: string; personal: boolean }> {
   const key = provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : provider === "maziao" ? process.env.MAZIAO_API_KEY : process.env.ELEVENLABS_API_KEY;
@@ -185,17 +186,31 @@ export async function listMembers(userId: string) {
   const client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_members").select("user_id,email,display_name,role,enabled,ai_units_limit,ai_units_used,voice_clone_limit,voice_clone_used,created_at").order("created_at", { ascending: false }).limit(250);
   if (error) return storageError();
-  return data || [];
+  const rows = data || [];
+  const balances = await getCreditBalances(rows.map(row => row.user_id));
+  return rows.map(row => ({ ...row,
+    credit_balance: balances[row.user_id]?.balance ?? 0,
+    credit_reserved: balances[row.user_id]?.reserved ?? 0,
+    credit_available: balances[row.user_id]?.available ?? 0,
+  }));
 }
-export async function updateMember(userId: string, body: Record<string, unknown>) {
+export async function updateMember(userId: string, body: Record<string, unknown>, requestId?: string) {
   await requireAdmin(userId);
   if (typeof body.userId !== "string" || !/^[0-9a-f-]{36}$/i.test(body.userId)) throw new StudioError("INVALID_MEMBER", "Chọn thành viên hợp lệ.");
+  if ("creditDelta" in body) {
+    if (Object.keys(body).some(key => key !== "userId" && key !== "creditDelta"))
+      throw new StudioError("INVALID_MEMBER", "Cấp credit phải là một thao tác riêng.");
+    if (!requestId) throw new StudioError("CREDIT_REQUEST_ID_REQUIRED", "Vui lòng tải lại trang rồi thử cấp credit.", 400);
+    if (!Number.isSafeInteger(body.creditDelta) || Number(body.creditDelta) < 1 || Number(body.creditDelta) > 1_000_000)
+      throw new StudioError("INVALID_CREDIT_REQUEST", "Số credit cấp cần từ 1 đến 1.000.000.");
+    const balance = await adjustCredits(userId, body.userId, Number(body.creditDelta), "admin_grant", requestId);
+    const member = await getMember(body.userId);
+    return { ...member, credit_balance: balance.balance, credit_reserved: balance.reserved, credit_available: balance.available };
+  }
+  if (["aiUnitsLimit", "voiceCloneLimit", "resetUsage", "resetVoiceClones"].some(key => key in body))
+    throw new StudioError("LEGACY_QUOTA_DISABLED", "Hạn mức cũ đã chuyển sang ví credit.", 400);
   const changes: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if ("enabled" in body) { if (typeof body.enabled !== "boolean") throw new StudioError("INVALID_MEMBER", "Trạng thái không hợp lệ."); changes.enabled = body.enabled; }
-  if ("aiUnitsLimit" in body) { const limit = body.aiUnitsLimit; if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 0 || limit > 100000) throw new StudioError("INVALID_QUOTA", "Hạn mức cần là số nguyên từ 0 đến 100.000."); changes.ai_units_limit = limit; }
-  if ("voiceCloneLimit" in body) { const limit = body.voiceCloneLimit; if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 0 || limit > 100) throw new StudioError("INVALID_CLONE_LIMIT", "Hạn mức nhân bản giọng cần là số nguyên từ 0 đến 100."); changes.voice_clone_limit = limit; }
-  if (body.resetUsage === true) changes.ai_units_used = 0;
-  if (body.resetVoiceClones === true) changes.voice_clone_used = 0;
   if (body.userId === userId && changes.enabled === false) throw new StudioError("ADMIN_SELF_DISABLE", "Không thể tự khóa quản trị viên đang đăng nhập.");
   const client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_members").update(changes).eq("user_id", body.userId).select("user_id,email,display_name,role,enabled,ai_units_limit,ai_units_used,voice_clone_limit,voice_clone_used").maybeSingle();

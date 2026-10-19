@@ -54,6 +54,8 @@ export default function ScriptAiPage() {
 function ScriptAiWorkspace() {
   const account = useAccount();
   const isAdmin = account.account?.isAdmin === true;
+  const scriptCost = account.account?.creditRates?.script ?? 10;
+  const availableCredits = account.account?.credits?.available;
   const [selection, setSelection] = useState<Selection>({ kind: "builtIn", format: "review" });
   const [builtins, setBuiltins] = useState<BuiltInType[]>(builtInTypes.map(item => ({
     format: item.id, title: item.label, description: item.note,
@@ -160,7 +162,7 @@ function ScriptAiWorkspace() {
     try {
       const response = await fetch(`/api/script-builtins/${builtInEditor.format}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
         body: JSON.stringify({ title: cleanTitle, description: builtInEditor.description.trim(), prompt: cleanPrompt }),
       });
       const data = await jsonResult(response);
@@ -214,19 +216,21 @@ function ScriptAiWorkspace() {
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
+    if (availableCredits !== undefined && availableCredits < scriptCost) { setError(`Cần ${scriptCost} credit để tạo kịch bản. Hiện bạn còn ${availableCredits} credit khả dụng.`); return; }
     if (!title.trim() || brief.trim().length < 5) { setError("Hãy nhập chủ đề video và thông tin bạn muốn chia sẻ."); return; }
     setBusy("generate"); setError(""); setNotice(""); setScript("");
     try {
       const selectedType = selection.kind === "custom" ? { templateId: selection.id } : { format: selection.format };
       const response = await fetch("/api/script-generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
         body: JSON.stringify({ ...selectedType, title: title.trim(), brief: brief.trim(), durationSeconds }),
       });
       const data = await jsonResult(response);
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Chưa tạo được kịch bản.");
       if (typeof data.script !== "string" || !data.script.trim()) throw new Error("AI chưa trả về kịch bản. Hãy thử lại.");
       setScript(data.script.trim());
+      window.dispatchEvent(new Event("studio-credits-changed"));
     } catch (cause) { setError(friendlyError(cause, "Chưa tạo được kịch bản.")); }
     finally { setBusy(""); }
   }
@@ -292,7 +296,7 @@ function ScriptAiWorkspace() {
           <label className={styles.field} htmlFor="script-title">Tiêu đề hoặc chủ đề video<input id="script-title" maxLength={120} value={title} onChange={event => { setTitle(event.target.value); setScript(""); }} placeholder="Ví dụ: Vì sao khách hàng thích sản phẩm này?" /></label>
           {selectedCustom && <p className={styles.selectedNote}><PlatformIcon name="check" size={16} />Đang dùng dạng “{selectedCustom.title}”</p>}
         </section>
-        <form className={styles.card} onSubmit={generate}><div className={styles.sectionHeading}><span className={styles.step}>3</span><div><h2>Cho AI biết điều cần chia sẻ</h2><p>Thông tin của bạn giúp kịch bản đúng ý và đúng sự thật.</p></div></div><label className={styles.field}>Sản phẩm, đối tượng và thông điệp chính<textarea required rows={5} maxLength={5000} value={brief} onChange={event => setBrief(event.target.value)} placeholder="Sản phẩm là gì? Dành cho ai? Điểm nổi bật nào bạn đã kiểm chứng? Bạn muốn người xem làm gì sau khi xem?" /></label><div className={styles.formFoot}><label className={styles.field}>Thời lượng dự kiến<select value={durationSeconds} onChange={event => setDurationSeconds(Number(event.target.value))}><option value={15}>15 giây</option><option value={30}>30 giây</option><option value={45}>45 giây</option><option value={60}>60 giây</option><option value={90}>90 giây</option></select></label><button type="submit" className={styles.primaryButton} disabled={!!busy || !title.trim() || brief.trim().length < 5}><PlatformIcon name="spark" size={19} />{busy === "generate" ? "Đang viết kịch bản…" : "Tạo kịch bản"}</button></div></form>
+        <form className={styles.card} onSubmit={generate}><div className={styles.sectionHeading}><span className={styles.step}>3</span><div><h2>Cho AI biết điều cần chia sẻ</h2><p>Thông tin của bạn giúp kịch bản đúng ý và đúng sự thật.</p></div></div><label className={styles.field}>Sản phẩm, đối tượng và thông điệp chính<textarea required rows={5} maxLength={5000} value={brief} onChange={event => setBrief(event.target.value)} placeholder="Sản phẩm là gì? Dành cho ai? Điểm nổi bật nào bạn đã kiểm chứng? Bạn muốn người xem làm gì sau khi xem?" /></label><div className={styles.formFoot}><label className={styles.field}>Thời lượng dự kiến<select value={durationSeconds} onChange={event => setDurationSeconds(Number(event.target.value))}><option value={15}>15 giây</option><option value={30}>30 giây</option><option value={45}>45 giây</option><option value={60}>60 giây</option><option value={90}>90 giây</option></select></label><button type="submit" className={styles.primaryButton} disabled={!!busy || !title.trim() || brief.trim().length < 5 || (availableCredits !== undefined && availableCredits < scriptCost)}><PlatformIcon name="spark" size={19} />{busy === "generate" ? "Đang viết kịch bản…" : "Tạo kịch bản"}</button></div><p className={styles.creditHint}>{scriptCost} credit mỗi lần tạo{availableCredits !== undefined ? ` · Còn ${availableCredits} credit khả dụng` : ""}{availableCredits !== undefined && availableCredits < scriptCost ? <> · <Link href="/ca-nhan">Xem số dư</Link></> : null}</p></form>
       </div>
 
       <aside className={styles.resultColumn} aria-labelledby="result-title"><div className={styles.resultCard}><div className={styles.resultTop}><span className={styles.resultIcon}><PlatformIcon name="script" size={19} /></span><div><p className={styles.eyebrow}>KẾT QUẢ CỦA BẠN</p><h2 id="result-title">Kịch bản đã tạo</h2></div></div>{script ? <><div className={styles.scriptText}>{script}</div><button type="button" className={styles.copyButton} onClick={() => void copyScript()}><PlatformIcon name="check" size={18} />Sao chép kịch bản</button></> : <div className={styles.resultEmpty}><PlatformIcon name="spark" size={30} /><p>Kịch bản sẽ xuất hiện ở đây sau khi bạn nhấn “Tạo kịch bản”.</p></div>}</div></aside>

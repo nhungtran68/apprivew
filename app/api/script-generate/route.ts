@@ -2,7 +2,9 @@ import { generateStandaloneScript } from "@/lib/script-generation";
 import { builtinScriptTypeInstruction, scriptTemplateInstruction } from "@/lib/script-templates";
 import { StudioError, cleanText, validDuration, validFormat, type StudioFormat } from "@/lib/studio-contract";
 import { projectProfile } from "@/lib/studio-profile";
-import { apiError, consumeAiUnits, json, limitedJson, providerKey, requestUser } from "@/lib/studio-server";
+import { apiError, json, limitedJson, providerKey, requestUser } from "@/lib/studio-server";
+import { runWithCredits } from "@/lib/studio-credit-operation";
+import { creditRates } from "@/lib/studio-credits";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -27,9 +29,9 @@ export async function POST(request: Request) {
       style = { kind: "builtin", format, name: builtIn.name, prompt: builtIn.prompt };
     }
     const [{ key }, profile] = await Promise.all([providerKey(userId, "deepseek"), projectProfile(userId, undefined)]);
-    const script = await generateStandaloneScript(key, {
+    const script = await runWithCredits(request, userId, "script", creditRates.script, () => generateStandaloneScript(key, {
       style, title, brief, durationSeconds, profile,
-    }, () => consumeAiUnits(userId, 1));
+    }, async () => {}));
     return json({ script });
   } catch (error) { return apiError(error); }
 }

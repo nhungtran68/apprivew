@@ -2,7 +2,9 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
-type Account = { userId: string; name: string; isAdmin: boolean; quota?: { used: number; limit: number }; voiceCloning?: { used: number; limit: number; remaining: number | null; unlimited: boolean } };
+export type CreditRates = { script: number; analyze: number; scenePlan: number; ttsPer100Chars: number; clone: number; stockPer2MiB: number };
+type Credits = { balance: number; reserved: number; available: number };
+type Account = { userId: string; name: string; isAdmin: boolean; credits?: Credits; creditRates?: CreditRates; voiceCloning?: { used: number; limit: number; remaining: number | null; unlimited: boolean } };
 type AccountState = { status: "loading" | "ready" | "anonymous" | "restricted" | "unavailable" | "error"; account?: Account; message?: string };
 type AccountContextValue = AccountState & { refresh: () => void };
 const AccountContext = createContext<AccountContextValue>({ status: "loading", refresh: () => {} });
@@ -16,7 +18,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     currentRequest.current?.abort();
     const controller = new AbortController();
     currentRequest.current = controller;
-    setState({ status: "loading" });
+    // Keep the active workspace mounted while its credit balance refreshes.
+    // Resetting to loading here discarded a script just after generation.
+    setState(previous => previous.status === "ready" ? previous : { status: "loading" });
     void (async () => {
       try {
         const response = await fetch("/api/config", { signal: controller.signal, cache: "no-store", credentials: "same-origin" });
@@ -30,12 +34,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           setState({ status: "unavailable", message: "Kết nối tài khoản đang được chuẩn bị. Bạn vẫn có thể khám phá các công cụ." }); return;
         }
         if (!response.ok || typeof data.userId !== "string" || !data.userId) throw new Error("account-unavailable");
-        const validQuota = Number.isFinite(data.quota?.used) && data.quota.used >= 0 && Number.isFinite(data.quota?.limit) && data.quota.limit >= 0;
+        const validCredits = Number.isSafeInteger(data.credits?.balance) && data.credits.balance >= 0 && Number.isSafeInteger(data.credits?.reserved) && data.credits.reserved >= 0 && Number.isSafeInteger(data.credits?.available) && data.credits.available >= 0;
+        const rateKeys: (keyof CreditRates)[] = ["script", "analyze", "scenePlan", "ttsPer100Chars", "clone", "stockPer2MiB"];
+        const validRates = data.creditRates && rateKeys.every(key => Number.isSafeInteger(data.creditRates[key]) && data.creditRates[key] >= 0);
         setState({ status: "ready", account: {
           userId: data.userId,
           name: typeof data.memberName === "string" && data.memberName.trim() ? data.memberName.trim() : "Thành viên",
           isAdmin: data.isAdmin === true,
-          ...(validQuota ? { quota: { used: data.quota.used, limit: data.quota.limit } } : {}),
+          ...(validCredits ? { credits: { balance: data.credits.balance, reserved: data.credits.reserved, available: data.credits.available } } : {}),
+          ...(validRates ? { creditRates: data.creditRates as CreditRates } : {}),
           ...(data.voiceCloning && Number.isFinite(data.voiceCloning.used) && Number.isFinite(data.voiceCloning.limit) ? { voiceCloning: { used: data.voiceCloning.used, limit: data.voiceCloning.limit, remaining: data.voiceCloning.remaining, unlimited: data.voiceCloning.unlimited === true } } : {}),
         } });
       } catch {
@@ -44,7 +51,14 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     })();
   }, []);
 
-  useEffect(() => { refresh(); return () => currentRequest.current?.abort(); }, [refresh]);
+  useEffect(() => {
+    refresh();
+    window.addEventListener("studio-credits-changed", refresh);
+    return () => {
+      window.removeEventListener("studio-credits-changed", refresh);
+      currentRequest.current?.abort();
+    };
+  }, [refresh]);
   return <AccountContext.Provider value={{ ...state, refresh }}>{children}</AccountContext.Provider>;
 }
 

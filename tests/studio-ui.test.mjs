@@ -209,14 +209,14 @@ test("saving new account defaults preserves explicit per-video preferences and s
   assert.equal(current.channel,"Kênh cũ");assert.equal(applySavedProfile({...current,apiKey:"discard"},previous,saved).apiKey,undefined);
 });
 
-test("configuration preserves the member identity, shared AI state, and quota without granting admin by default", () => {
-  const config = configurationFrom({ userId: "current-user", memberName: "Thành viên", deepseekConfigured: true, elevenConfigured: true, quota: { used: 2, limit: 10 }, isAdmin: false }, "local");
+test("configuration preserves the member identity, shared AI state, and credits without granting admin by default", () => {
+  const config = configurationFrom({ userId: "current-user", memberName: "Thành viên", deepseekConfigured: true, elevenConfigured: true, credits: { balance: 10, reserved: 2, available: 8 }, isAdmin: false }, "local");
   assert.equal(config.displayName, "Thành viên");
   assert.equal(config.authenticated, true);
   assert.equal(config.deepseek, true);
   assert.equal(config.eleven, true);
   assert.equal(config.isAdmin, false);
-  assert.deepEqual(config.quota, { used: 2, limit: 10 });
+  assert.deepEqual(config.credits, { balance: 10, reserved: 2, available: 8 });
   assert.equal(configurationFrom({}, "local").isAdmin, false);
   assert.equal(configurationFrom({ userId: "admin", isAdmin: true }, "local").isAdmin, true);
   assert.deepEqual(Object.keys(safeProfile({ name: "Tên", apiKey: "must-not-copy" })).sort(), ["audience", "brand", "channel", "cta", "customPrompt", "facts", "name", "pronoun", "tone", "topic"]);

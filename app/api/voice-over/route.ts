@@ -1,12 +1,13 @@
 import { apiError, json, limitedJson, providerKey, requestUser } from "@/lib/studio-server";
 import { StudioError, cleanText } from "@/lib/studio-contract";
 import { authorizeMaziaoVoice, generateMaziaoVoiceOver } from "@/lib/studio-maziao";
-import { authorizeVoice, generateElevenVoiceOver } from "@/lib/studio-eleven";
+import { creditRequestId } from "@/lib/studio-credit-operation";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     const userId = await requestUser(request, true);
+    const requestId = creditRequestId(request);
     const body = await limitedJson(request, 30000);
     // The narration must match the script the user approved. Validate its
     // length instead of silently slicing or normalizing the supplied text.
@@ -19,10 +20,8 @@ export async function POST(request: Request) {
     if (voiceId.startsWith("maziao:")) {
       await authorizeMaziaoVoice(userId, voiceId);
       const { key } = await providerKey(userId, "maziao");
-      return json(await generateMaziaoVoiceOver({ key, userId, voiceId, text, ...controls }));
+      return json(await generateMaziaoVoiceOver({ key, userId, requestId, voiceId, text, ...controls }));
     }
-    const resolvedVoiceId = await authorizeVoice(userId, voiceId);
-    const { key } = await providerKey(userId, "eleven");
-    return json(await generateElevenVoiceOver({ key, userId, voiceId: resolvedVoiceId, text }));
+    throw new StudioError("VOICE_PRICING_UNAVAILABLE", "Tạm thời chỉ hỗ trợ tạo lời đọc bằng giọng đã kết nối. Quản trị viên cần cấu hình bảng giá trước khi bật nhà cung cấp khác.", 503, "contact_admin");
   } catch (error) { return apiError(error); }
 }

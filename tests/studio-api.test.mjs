@@ -6,28 +6,59 @@ import ts from "typescript";
 
 // Offline integration tests. All Supabase and AI network requests are replaced with explicit fakes.
 const root=process.cwd(), alice="11111111-1111-4111-8111-111111111111", bob="22222222-2222-4222-8222-222222222222";
-const environment={NEXT_PUBLIC_SUPABASE_URL:"https://offline.supabase.invalid",NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"offline-public",DEEPSEEK_API_KEY:"offline-deepseek",ELEVENLABS_API_KEY:"offline-eleven",STUDIO_ENCRYPTION_KEY:"offline-signing-secret-do-not-use-in-production"};
-const members=new Map([[alice,{user_id:alice,email:"alice@example.invalid",display_name:"Alice",role:"member",enabled:true,ai_units_limit:1000,ai_units_used:0}],[bob,{user_id:bob,email:"bob@example.invalid",display_name:"Bob",role:"member",enabled:true,ai_units_limit:1000,ai_units_used:0}]]),profiles=new Map(),voices=new Map(),media=new Map();
+const environment={NEXT_PUBLIC_SUPABASE_URL:"https://offline.supabase.invalid",NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"offline-public",SUPABASE_SERVICE_ROLE_KEY:"offline-service",DEEPSEEK_API_KEY:"offline-deepseek",ELEVENLABS_API_KEY:"offline-eleven",STUDIO_ENCRYPTION_KEY:"offline-signing-secret-do-not-use-in-production"};
+const members=new Map([[alice,{user_id:alice,email:"alice@example.invalid",display_name:"Alice",role:"member",enabled:true,ai_units_limit:1000,ai_units_used:0}],[bob,{user_id:bob,email:"bob@example.invalid",display_name:"Bob",role:"member",enabled:true,ai_units_limit:1000,ai_units_used:0}]]),profiles=new Map(),voices=new Map(),media=new Map(),wallets=new Map([[alice,{user_id:alice,balance:1000,reserved:0}],[bob,{user_id:bob,balance:1000,reserved:0}]]),creditOps=new Map(),creditAdjustments=new Map();
 let identity=alice, requestFetch=async()=>{throw new Error("Unexpected outbound request");}, charged=[], usageLogs=[];
 function query(table){let filters=[],action="select",values;const builder={select(){return this;},eq(key,value){filters.push([key,value]);return this;},order(){return this;},limit(){return this;},update(data){action="update";values=data;return this;},upsert(data){action="upsert";values=data;return this;},maybeSingle(){return run(true);},then(resolve,reject){return run(false).then(resolve,reject);}};
-async function run(single){const map=table==="studio_members"?members:table==="studio_settings"?profiles:table==="studio_voice_catalog"?new Map():voices;
+async function run(single){const map=table==="studio_members"?members:table==="studio_settings"?profiles:table==="studio_credit_accounts"?wallets:table==="studio_voice_catalog"?new Map():voices;
 if(action==="upsert"){for(const row of Array.isArray(values)?values:[values]){if(row.user_id!==identity)return{data:null,error:{message:"RLS"}};map.set(table==="studio_voices"?`${row.user_id}:${row.voice_id}`:row.user_id,row);}return{data:null,error:null};}
 let rows=[...map.values()].filter(row=>(row.user_id===identity||(table==="studio_members"&&members.get(identity)?.role==="admin"))&&filters.every(([k,v])=>row[k]===v));
 if(action==="update"){if(members.get(identity)?.role!=="admin")return{data:null,error:{message:"RLS"}};rows=rows.map(row=>{Object.assign(row,values);return row;});}
 return{data:single?rows[0]||null:rows,error:null};}return builder;}
-const fakeClient={auth:{async getUser(){return{data:{user:identity?{id:identity,email:members.get(identity)?.email}:null},error:null};}},from:query,async rpc(name,args){assert.ok(["consume_studio_ai_units","consume_studio_voice_clone"].includes(name));const member=members.get(identity);if(!member?.enabled)return{error:{message:"MEMBER_DISABLED"}};if(member.ai_units_used+args.p_units>member.ai_units_limit)return{error:{message:"QUOTA_EXCEEDED"}};if(name==="consume_studio_voice_clone"){member.voice_clone_used??=0;member.voice_clone_limit??=3;if(member.role!=="admin"&&member.voice_clone_used>=member.voice_clone_limit)return{error:{message:"VOICE_CLONE_LIMIT"}};if(member.role!=="admin")member.voice_clone_used++;}member.ai_units_used+=args.p_units;charged.push(args.p_units);return{data:member.ai_units_limit-member.ai_units_used,error:null};},storage:{from(bucket){assert.equal(bucket,"studio-media");return{async upload(name,data){media.set(name,data);return{error:null};},async createSignedUrl(name){return{data:{signedUrl:`https://offline.supabase.invalid/private/${name}?token=offline`},error:null};},async remove(paths){paths.forEach(p=>media.delete(p));return{error:null};},async download(name){return{data:media.get(name)||null,error:media.has(name)?null:{message:"missing"}};}};}}};
+function fakeCreditRpc(name,args){
+ const wallet=wallets.get(args.p_user_id);
+ if(!wallet)return{data:null,error:{message:"CREDIT_ACCOUNT_MISSING"}};
+ if(name==="studio_credit_adjust"){
+  if(members.get(args.p_actor_id)?.role!=="admin"||!members.get(args.p_actor_id)?.enabled)return{data:null,error:{message:"ADMIN_REQUIRED"}};
+  const previous=creditAdjustments.get(args.p_request_id);
+  if(previous){if(previous.userId!==args.p_user_id||previous.actorId!==args.p_actor_id||previous.delta!==args.p_delta||previous.reason!==args.p_reason)return{data:null,error:{message:"CREDIT_REQUEST_CONFLICT"}};return{data:{created:false,balance:wallet.balance,reserved:wallet.reserved,available:wallet.balance-wallet.reserved},error:null};}
+  if(wallet.balance+args.p_delta<wallet.reserved)return{data:null,error:{message:"INVALID_CREDIT_BALANCE"}};
+  wallet.balance+=args.p_delta;creditAdjustments.set(args.p_request_id,{userId:args.p_user_id,actorId:args.p_actor_id,delta:args.p_delta,reason:args.p_reason});
+  return{data:{created:true,balance:wallet.balance,reserved:wallet.reserved,available:wallet.balance-wallet.reserved},error:null};
+ }
+ const snapshot=(created,status,chargedCredits=0)=>({created,status,balance:wallet.balance,reserved:wallet.reserved,available:wallet.balance-wallet.reserved,chargedCredits});
+ const existing=creditOps.get(args.p_request_id);
+ if(name==="studio_credit_reserve"){
+  if(existing)return{data:snapshot(false,existing.status,existing.charge||0),error:null};
+  if(wallet.balance-wallet.reserved<args.p_credits)return{data:null,error:{message:"INSUFFICIENT_CREDITS"}};
+  wallet.reserved+=args.p_credits;creditOps.set(args.p_request_id,{status:"reserved",amount:args.p_credits});
+  return{data:snapshot(true,"reserved"),error:null};
+ }
+ if(!existing)return{data:null,error:{message:"CREDIT_REQUEST_MISSING"}};
+ if(name==="studio_credit_settle"){
+  if(existing.status==="reserved") {existing.charge=args.p_charge_credits??existing.amount;wallet.balance-=existing.charge;wallet.reserved-=existing.amount;existing.status="settled";}
+  return{data:snapshot(true,"settled",existing.charge),error:null};
+ }
+ if(name==="studio_credit_refund"){
+  if(existing.status==="reserved"){wallet.reserved-=existing.amount;existing.status="refunded";}
+  return{data:snapshot(true,"refunded"),error:null};
+ }
+ return{data:null,error:{message:"INVALID_CREDIT_REQUEST"}};
+}
+const fakeClient={auth:{async getUser(){return{data:{user:identity?{id:identity,email:members.get(identity)?.email}:null},error:null};}},from:query,async rpc(name,args){if(name.startsWith("studio_credit_"))return fakeCreditRpc(name,args);assert.ok(["consume_studio_ai_units","consume_studio_voice_clone"].includes(name));const member=members.get(identity);if(!member?.enabled)return{error:{message:"MEMBER_DISABLED"}};if(member.ai_units_used+args.p_units>member.ai_units_limit)return{error:{message:"QUOTA_EXCEEDED"}};if(name==="consume_studio_voice_clone"){member.voice_clone_used??=0;member.voice_clone_limit??=3;if(member.role!=="admin"&&member.voice_clone_used>=member.voice_clone_limit)return{error:{message:"VOICE_CLONE_LIMIT"}};if(member.role!=="admin")member.voice_clone_used++;}member.ai_units_used+=args.p_units;charged.push(args.p_units);return{data:member.ai_units_limit-member.ai_units_used,error:null};},storage:{from(bucket){assert.equal(bucket,"studio-media");return{async upload(name,data){media.set(name,data);return{error:null};},async createSignedUrl(name){return{data:{signedUrl:`https://offline.supabase.invalid/private/${name}?token=offline`},error:null};},async remove(paths){paths.forEach(p=>media.delete(p));return{error:null};},async download(name){return{data:media.get(name)||null,error:media.has(name)?null:{message:"missing"}};}};}}};
 const context=vm.createContext({console:{...console,info:(...values)=>usageLogs.push(values)},crypto,process:{env:environment},TextEncoder,TextDecoder,Uint8Array,DataView,ArrayBuffer,FormData,File,Request,Response,Headers,URL,AbortSignal,TransformStream,setTimeout,clearTimeout,btoa,atob,fetch:(...args)=>requestFetch(...args)}),modules=new Map();
 async function load(file){if(modules.has(file))return modules.get(file);const code=ts.transpileModule(await fs.readFile(file,"utf8"),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;const mod=new vm.SourceTextModule(code,{context,identifier:file});modules.set(file,mod);return mod;}
 const synthetic=new Map();
 async function linker(specifier,parent){
- if(["server-only","@supabase/ssr","next/headers"].includes(specifier)){
+ if(["server-only","@supabase/ssr","@supabase/supabase-js","next/headers"].includes(specifier)){
   if(synthetic.has(specifier))return synthetic.get(specifier);
-  const exports=specifier==="server-only"?[]:specifier==="@supabase/ssr"?["createServerClient"]:["cookies"];
-  const mod=new vm.SyntheticModule(exports,function(){if(specifier==="@supabase/ssr")this.setExport("createServerClient",()=>fakeClient);if(specifier==="next/headers")this.setExport("cookies",async()=>({getAll:()=>[],set:()=>{}}));},{context});synthetic.set(specifier,mod);return mod;
+  const exports=specifier==="server-only"?[]:specifier==="@supabase/ssr"||specifier==="@supabase/supabase-js"?[specifier==="@supabase/ssr"?"createServerClient":"createClient"]:["cookies"];
+  const mod=new vm.SyntheticModule(exports,function(){if(specifier==="@supabase/ssr")this.setExport("createServerClient",()=>fakeClient);if(specifier==="@supabase/supabase-js")this.setExport("createClient",()=>fakeClient);if(specifier==="next/headers")this.setExport("cookies",async()=>({getAll:()=>[],set:()=>{}}));},{context});synthetic.set(specifier,mod);return mod;
  }
  return load(specifier.startsWith("@/")?path.join(root,specifier.slice(2))+".ts":path.resolve(path.dirname(parent.identifier),specifier)+".ts");
 }
 const top=await load(path.join(root,"lib/studio-eleven.ts"));await top.link(linker);await top.evaluate();
+const deepseekModule=await load(path.join(root,"lib/studio-deepseek.ts"));await deepseekModule.link(linker);await deepseekModule.evaluate();
 const contract=modules.get(path.join(root,"lib/studio-contract.ts")).namespace,server=modules.get(path.join(root,"lib/studio-server.ts")).namespace,deepseek=modules.get(path.join(root,"lib/studio-deepseek.ts")).namespace,eleven=top.namespace,supabase=modules.get(path.join(root,"lib/studio-supabase.ts")).namespace;
 let passed=0;async function check(name,run){if(process.env.STUDIO_TEST_FILTER&&!name.includes(process.env.STUDIO_TEST_FILTER))return;identity=alice;charged=[];usageLogs=[];await run();console.log(`PASS ${name}`);passed++;}
 const frame={time:0,image:"data:image/jpeg;base64,/9j/AA=="};
@@ -104,7 +135,7 @@ await check("voice configuration follows the active provider and exposes readine
   assert.equal((await server.providerKey(alice,"maziao")).key,maziaoSecret);
   assert.ok(!JSON.stringify(config).includes(maziaoSecret));assert.ok(!JSON.stringify(config).includes(environment.ELEVENLABS_API_KEY));
   environment.STUDIO_VOICE_PROVIDER="eleven";config=await server.getConfig(alice);
-  assert.equal(config.voiceProvider,"eleven");assert.equal(config.voiceConfigured,true);assert.equal(config.maziaoConfigured,true);
+  assert.equal(config.voiceProvider,"eleven");assert.equal(config.voiceConfigured,false,"unpriced ElevenLabs actions must not appear ready");assert.equal(config.maziaoConfigured,true);
   environment.STUDIO_VOICE_PROVIDER="maziao";delete environment.MAZIAO_API_KEY;config=await server.getConfig(alice);
   assert.equal(config.voiceProvider,"maziao");assert.equal(config.voiceConfigured,false);assert.equal(config.elevenConfigured,true);assert.equal(config.maziaoConfigured,false);
   await assert.rejects(server.providerKey(alice,"maziao"),{code:"API_KEY_REQUIRED"});
@@ -137,21 +168,18 @@ await check("only approved vision and Vietnamese speech model IDs are accepted",
 await check("provider requests use safe default model IDs after model-field secret misconfiguration",async()=>{
  const previousDeepseek=environment.DEEPSEEK_MODEL,previousEleven=environment.ELEVENLABS_MODEL;
  const misplacedDeepseek="sk-offline-model-payload-secret-do-not-use",misplacedEleven="b".repeat(64),requests=[];
- let speech;
  try{
   environment.DEEPSEEK_MODEL=misplacedDeepseek;environment.ELEVENLABS_MODEL=misplacedEleven;
   requestFetch=async(url,init)=>{
    const body=JSON.parse(init.body);requests.push({url:String(url),body});
    if(String(url)==="https://api.deepseek.com/chat/completions")return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify({text:"offline response"})}}]});
-   assert.ok(String(url).startsWith("https://api.elevenlabs.io/v1/text-to-speech/"));
-   return new Response(new Uint8Array(48000));
+   throw new Error("Paid ElevenLabs requests must remain disabled until priced");
   };
   await deepseek.deepseekJson("offline","json",{text:"offline"},()=>server.consumeAiUnits(alice,1));
-  speech=await eleven.generateSpeech({key:"offline",userId:alice,voiceId:"offlineVoice123",duration:5,segments:[{start:0,end:2,text:"Offline speech"}]});
-  assert.equal(requests.length,2);assert.equal(requests[0].body.model,"deepseek-flash");assert.equal(requests[1].body.model_id,"eleven_flash_v2_5");
-  const serialized=JSON.stringify(requests);assert.ok(!serialized.includes(misplacedDeepseek));assert.ok(!serialized.includes(misplacedEleven));assert.deepEqual(charged,[1,1]);
+  await assert.rejects(eleven.generateSpeech({key:"offline",userId:alice,voiceId:"offlineVoice123",duration:5,segments:[{start:0,end:2,text:"Offline speech"}]}),{code:"VOICE_PRICING_UNAVAILABLE"});
+  assert.equal(requests.length,1);assert.equal(requests[0].body.model,"deepseek-flash");
+  const serialized=JSON.stringify(requests);assert.ok(!serialized.includes(misplacedDeepseek));assert.ok(!serialized.includes(misplacedEleven));assert.deepEqual(charged,[1]);
  }finally{
-  if(speech)await supabase.removeOwnedMedia(alice,speech.segments.map(segment=>segment.audioPath));
   if(previousDeepseek===undefined)delete environment.DEEPSEEK_MODEL;else environment.DEEPSEEK_MODEL=previousDeepseek;
   if(previousEleven===undefined)delete environment.ELEVENLABS_MODEL;else environment.ELEVENLABS_MODEL=previousEleven;
  }
@@ -233,44 +261,27 @@ await check("all scenery, talking and face modes preserve supplied intent and de
  assert.equal(charged.length,9,"three offline provider requests per mode must each consume one unit");
 });
 await check("shared voice list hides other members clones and forged ownership",async()=>{await server.saveAuthorizedVoice(alice,"voiceAlice123","Alice","personal");const own=voices.get(`${alice}:voiceAlice123`);identity=bob;voices.set(`${bob}:voiceAlice123`,{...own,user_id:bob});await assert.rejects(eleven.authorizeVoice(bob,"voiceAlice123"),{code:"VOICE_NOT_AUTHORIZED"});identity=alice;requestFetch=async()=>Response.json({voices:[{voice_id:"voiceAlice123",name:"Alice",category:"cloned"},{voice_id:"victimVoice123",name:"Victim",category:"cloned"},{voice_id:"premadeVoice123",name:"Sample",category:"premade"}]});const list=await eleven.listVoices("offline",alice);assert.equal(list.length,2);assert.ok(!list.some(v=>v.voiceId==="victimVoice123"));});
-await check("voice list, authorization and speech permission errors identify their actual operation",async()=>{
+await check("ElevenLabs read permissions remain actionable while paid actions are disabled",async()=>{
  const requests=[];
  requestFetch=async(url,init)=>{requests.push({url,method:init?.method||"GET"});return Response.json({detail:{status:"missing_permissions"}},{status:403});};
- const assertPermission=(hint,excluded)=>error=>{assert.equal(error.code,"PROVIDER_PERMISSION");assert.equal(error.status,422);assert.equal(error.action,"contact_admin");assert.match(error.message,hint);assert.doesNotMatch(error.message,excluded);return true;};
- await assert.rejects(eleven.listVoices("offline",alice),assertPermission(/Voices: Read/,/Voices: Write|Text to Speech/));
- await server.saveAuthorizedVoice(alice,"permissionShared123","Shared permission fixture","shared");
- await assert.rejects(eleven.authorizeVoice(alice,"permissionShared123"),assertPermission(/Voices: Read/,/Voices: Write|Text to Speech/));
- await assert.rejects(eleven.generateSpeech({key:"offline",userId:alice,voiceId:"permissionShared123",duration:5,segments:[{start:0,end:5,text:"Câu thử."}]}),assertPermission(/Text to Speech/,/Voices: Read|Voices: Write/));
- assert.deepEqual(requests,[
-  {url:"https://api.elevenlabs.io/v1/voices",method:"GET"},
-  {url:"https://api.elevenlabs.io/v1/voices/permissionShared123",method:"GET"},
-  {url:"https://api.elevenlabs.io/v1/text-to-speech/permissionShared123?output_format=pcm_24000",method:"POST"},
- ]);
- assert.deepEqual(charged,[1]);
-});
-await check("rejected voice cloning requests Voices Write without saving a voice or exposing provider data",async()=>{
- const fakeSecret="sk-offline-clone-provider-secret",beforeVoices=[...voices.entries()],beforeMedia=[...media.entries()],beforeUnits=members.get(alice).ai_units_used;
+ await assert.rejects(eleven.listVoices("offline",alice),{code:"PROVIDER_PERMISSION"});
  const sample=new File([new Uint8Array([1,2,3,4])],"sample.wav",{type:"audio/wav"});
- let requests=0;
- requestFetch=async(url,init)=>{
-  requests++;
-  assert.equal(url,"https://api.elevenlabs.io/v1/voices/add");assert.equal(init.method,"POST");
-  assert.equal(init.headers["xi-api-key"],"offline");assert.equal(init.body.get("name"),"Giọng thử");
-  const files=init.body.getAll("files");assert.equal(files.length,1);assert.equal(files[0].name,"sample.wav");assert.equal(files[0].type,"audio/wav");
-  assert.deepEqual(new Uint8Array(await files[0].arrayBuffer()),new Uint8Array([1,2,3,4]));
-  return Response.json({detail:{status:"missing_permissions",message:fakeSecret,required_permissions:[fakeSecret]}},{status:403});
- };
- let failure;
- await assert.rejects(eleven.cloneVoice("offline",alice,"Giọng thử",[sample]),error=>{failure=error;assert.equal(error.code,"PROVIDER_PERMISSION");assert.match(error.message,/tạo giọng cá nhân.*Voices: Write/);assert.doesNotMatch(error.message,/Voices: Read|Text to Speech/);return true;});
- const response=server.apiError(failure),body=await response.json();
- assert.equal(response.status,422);assert.equal(body.action,"contact_admin");assert.equal(body.code,"PROVIDER_PERMISSION");
- assert.ok(!JSON.stringify(body).includes(fakeSecret));assert.equal(requests,1);assert.deepEqual(charged,[10]);
- assert.equal(members.get(alice).ai_units_used,beforeUnits+10);
- assert.deepEqual([...voices.entries()],beforeVoices);assert.deepEqual([...media.entries()],beforeMedia);
+ await assert.rejects(eleven.cloneVoice("offline",alice,"Giọng thử",[sample]),{code:"VOICE_PRICING_UNAVAILABLE"});
+ await assert.rejects(eleven.generateSpeech({key:"offline",userId:alice,voiceId:"voiceAlice123",duration:5,segments:[{start:0,end:5,text:"Câu thử."}]}),{code:"VOICE_PRICING_UNAVAILABLE"});
+ assert.deepEqual(requests,[{url:"https://api.elevenlabs.io/v1/voices",method:"GET"}]);
+ assert.deepEqual(charged,[]);
 });
-await check("speech retries consume units and return signed WAV references",async()=>{let synths=0;requestFetch=async(url)=>{if(String(url).includes("elevenlabs")){synths++;return new Response(new Uint8Array(synths===1?144000:86400));}return Response.json({choices:[{message:{content:JSON.stringify({text:"Câu ngắn hơn."})},finish_reason:"stop"}]});};const result=await eleven.generateSpeech({key:"offline",userId:alice,voiceId:"voiceAlice123",duration:5,segments:[{start:1,end:3,text:"Đây là câu hiện quá dài."}]});assert.equal(synths,2);assert.equal(charged.length,3);assert.equal(result.segments[0].duration,1.8);assert.equal(result.segments[0].audioBase64,undefined);assert.ok(result.segments[0].audioUrl.startsWith("https://offline.supabase.invalid/"));assert.equal(media.get(result.segments[0].audioPath).length,86444);});
-await check("failed timing preserves speech and blocks final export",async()=>{let synths=0;requestFetch=async(url)=>String(url).includes("elevenlabs")?(synths++,new Response(new Uint8Array(144000))):Response.json({choices:[{message:{content:JSON.stringify({text:"Vẫn quá dài"})}}]});await assert.rejects(eleven.generateSpeech({key:"offline",userId:alice,voiceId:"voiceAlice123",duration:5,segments:[{start:0,end:2,text:"Câu đầu"}]}),{code:"TIMING_NEEDS_EDIT"});assert.equal(synths,3);});
-await check("admin member changes require role and validate quota",async()=>{await assert.rejects(server.listMembers(alice),{code:"ADMIN_REQUIRED"});members.get(alice).role="admin";const changed=await server.updateMember(alice,{userId:bob,enabled:true,aiUnitsLimit:50,resetUsage:true});assert.equal(changed.ai_units_limit,50);assert.equal(changed.ai_units_used,0);await assert.rejects(server.updateMember(alice,{userId:bob,aiUnitsLimit:-1}),{code:"INVALID_QUOTA"});members.get(alice).role="member";});
+await check("admin member changes preserve roles and disable legacy quota writes",async()=>{await assert.rejects(server.listMembers(alice),{code:"ADMIN_REQUIRED"});members.get(alice).role="admin";const changed=await server.updateMember(alice,{userId:bob,enabled:true});assert.equal(changed.enabled,true);await assert.rejects(server.updateMember(alice,{userId:bob,aiUnitsLimit:50}),{code:"LEGACY_QUOTA_DISABLED"});members.get(alice).role="member";});
+await check("admin credit grants are idempotent and members cannot grant themselves",async()=>{
+ const wallet=wallets.get(bob),before=wallet.balance,id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+ await assert.rejects(server.updateMember(alice,{userId:bob,creditDelta:75},id),{code:"ADMIN_REQUIRED"});
+ members.get(alice).role="admin";
+ try{
+  const first=await server.updateMember(alice,{userId:bob,creditDelta:75},id);assert.equal(first.credit_balance,before+75);assert.equal(wallet.balance,before+75);
+  const replay=await server.updateMember(alice,{userId:bob,creditDelta:75},id);assert.equal(replay.credit_balance,before+75);assert.equal(wallet.balance,before+75);
+  await assert.rejects(server.updateMember(alice,{userId:bob,creditDelta:76},id),{code:"CREDIT_REQUEST_CONFLICT"});assert.equal(wallet.balance,before+75);
+ }finally{wallet.balance=before;members.get(alice).role="member";}
+});
 await check("media paths cannot access another member or traverse directories",()=>{assert.equal(supabase.assertOwnedMediaPath(alice,`${alice}/samples/voice.wav`),`${alice}/samples/voice.wav`);assert.throws(()=>supabase.assertOwnedMediaPath(alice,`${bob}/samples/voice.wav`));assert.throws(()=>supabase.assertOwnedMediaPath(alice,`${alice}/../victim.wav`));});
 await check("JSON streaming enforces Vercel-safe body bound",async()=>{const request=new Request("https://app.example/api/analyze",{method:"POST",body:JSON.stringify({value:"x".repeat(500)})});await assert.rejects(server.limitedJson(request,100),{code:"PAYLOAD_TOO_LARGE"});});
 await check("SQL setup limits member writes, owns storage and exposes no refund",async()=>{const sql=await fs.readFile(path.join(root,"supabase/setup.sql"),"utf8");assert.match(sql,/where user_id=auth\.uid\(\) and enabled and ai_units_used\+p_units<=ai_units_limit/);assert.match(sql,/grant update \(enabled,ai_units_limit,ai_units_used,voice_clone_limit,voice_clone_used,updated_at\)/);assert.ok(!/grant update \([^)]*role/.test(sql));assert.match(sql,/authorization_tag text not null/);assert.match(sql,/alter table public\.studio_members enable row level security/);assert.match(sql,/language sql security invoker/);assert.ok(!/create[^;]*function[^;]*(refund|settle)/i.test(sql));});
@@ -301,25 +312,37 @@ await check("analysis offers three distinct actionable angles and strips untrust
  const prompt=payload.messages[1].content[0].text;assert.ok(prompt.includes("Vườn nhà"));assert.match(prompt,/TƯ LIỆU MINH HỌA/);assert.match(prompt,/không tự gán ý định/);
 });
 await check("video analysis collects observations without spending tokens on unused script angles",async()=>{
- const route=await load(path.join(root,"app/api/analyze/route.ts"));await route.link(linker);await route.evaluate();
+ const route=await load(path.join(root,"app/api/analyze/route.ts"));if(route.status==="unlinked")await route.link(linker);if(route.status!=="evaluated")await route.evaluate();
+ const balanceBefore=wallets.get(alice).balance;
  let payload;requestFetch=async(url,init)=>{payload=JSON.parse(init.body);return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify({summary:"Vườn nho",intentSummary:"Chia sẻ một khoảnh khắc",observations:[{start:0,end:15,description:"Chùm nho trên giàn"}],facts:[],unknowns:[],questions:[],suggestedAngles:[{id:"injected",title:"Không dùng"}],recommendedAngleId:"injected"})}}]});};
- const request=new Request("https://app.example/api/analyze",{method:"POST",headers:{origin:"https://app.example","content-type":"application/json"},body:JSON.stringify({frames:[frame],duration:15,intent:"Chia sẻ một khoảnh khắc",transcript:"",observationsOnly:true,format:"not-a-script-type"})});
+ const request=new Request("https://app.example/api/analyze",{method:"POST",headers:{origin:"https://app.example","content-type":"application/json","Idempotency-Key":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},body:JSON.stringify({frames:[frame],duration:15,intent:"Chia sẻ một khoảnh khắc",transcript:"",observationsOnly:true,format:"not-a-script-type"})});
  const response=await route.namespace.POST(request);assert.equal(response.status,200);const analysis=(await response.json()).analysis;
  assert.equal(analysis.observations[0].description,"Chùm nho trên giàn");assert.equal(analysis.suggestedAngles,undefined);assert.equal(analysis.recommendedAngleId,undefined);
  const instruction=payload.messages[1].content[0].text;assert.match(instruction,/Không viết kịch bản, không đề xuất dạng kịch bản/);assert.doesNotMatch(instruction,/Ưu tiên review|đề xuất đúng 3 góc/);
- assert.ok(!payload.messages[0].content.includes("suggestedAngles"));assert.ok(!payload.messages[0].content.includes("recommendedAngleId"));assert.deepEqual(charged,[1]);
+ assert.ok(!payload.messages[0].content.includes("suggestedAngles"));assert.ok(!payload.messages[0].content.includes("recommendedAngleId"));assert.equal(wallets.get(alice).balance,balanceBefore-15);assert.deepEqual(charged,[]);
 });
 await check("script route loads saved creator intent, honors format and never reuses observation as dialogue",async()=>{
  const route=await load(path.join(root,"app/api/script/route.ts"));await route.link(linker);await route.evaluate();
+ const balanceBefore=wallets.get(alice).balance;
  const saved=profiles.get(alice);let payload,calls=0;
  try{
   await server.saveSettings(alice,{profile:{channel:"Vườn nho của mình",audience:"Người mới trồng",tone:"Bình dị",pronoun:"Mình — bạn",customPrompt:"Không dùng lời quảng cáo",facts:"Đây là vườn nhà tôi",mode:"talking"}});
   requestFetch=async(url,init)=>{calls++;payload=JSON.parse(init.body);return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify({title:"Một niềm vui nhỏ",intentSummary:"Chia sẻ niềm vui",segments:[{start:0,end:15,text:"Bạn có từng vui chỉ vì một điều nhỏ? Với mình, được dành thời gian trong vườn là một niềm vui như vậy. Còn bạn, điều gì khiến hôm nay nhẹ nhàng hơn?"}]})}}]});};
   const analysis={summary:"Một chùm nho xanh",observations:[{start:0,end:15,description:"Máy quay cận chùm nho"}],facts:[],unknowns:["Chưa biết độ ngọt"],questions:[],generatedTranscript:"Lời bịa phải bị loại",suggestedAngles:[{id:"angle-1",title:"Niềm vui nhỏ",format:"story",purpose:"Tạo đồng cảm",hook:"Bạn có từng vui vì một điều nhỏ?",reason:"Hợp ý chia sẻ của người quay"}]};
-  const make=(extra={})=>new Request("https://app.example/api/script",{method:"POST",headers:{origin:"https://app.example","content-type":"application/json"},body:JSON.stringify({analysis,intent:"Chia sẻ niềm vui với khu vườn",duration:15,format:"story",angleId:"angle-1",profile:{tone:"Gần gũi"},...extra})});
+  const make=(extra={},id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")=>new Request("https://app.example/api/script",{method:"POST",headers:{origin:"https://app.example","content-type":"application/json","Idempotency-Key":id},body:JSON.stringify({analysis,intent:"Chia sẻ niềm vui với khu vườn",duration:15,format:"story",angleId:"angle-1",profile:{tone:"Gần gũi"},...extra})});
   const response=await route.namespace.POST(make());assert.equal(response.status,200);const result=await response.json();assert.equal(result.format,"story");assert.equal(result.angleId,"angle-1");assert.equal(result.segments[0].end,15);assert.ok(!result.segments[0].text.includes(analysis.observations[0].description));
-  const prompt=payload.messages[1].content[0].text;assert.ok(prompt.includes("Vườn nho của mình"));assert.ok(prompt.includes("Người mới trồng"));assert.ok(prompt.includes("Gần gũi"));assert.ok(prompt.includes("Không dùng lời quảng cáo"));assert.ok(!prompt.includes("Lời bịa phải bị loại"));assert.match(prompt,/không biến bản phân tích hình ảnh thành lời đọc/);assert.match(prompt,/Dạng đã chọn: story/);assert.match(prompt,/không bịa câu chuyện đời/);assert.match(prompt,/KHÔNG nhận âm thanh gốc/);assert.deepEqual(charged,[1]);
-  const rejected=await route.namespace.POST(make({angleId:"foreign-angle"}));assert.equal(rejected.status,400);assert.equal((await rejected.json()).code,"ANGLE_NOT_FOUND");assert.equal(calls,1,"invalid selection must not spend provider credits");
+  const prompt=payload.messages[1].content[0].text;assert.ok(prompt.includes("Vườn nho của mình"));assert.ok(prompt.includes("Người mới trồng"));assert.ok(prompt.includes("Gần gũi"));assert.ok(prompt.includes("Không dùng lời quảng cáo"));assert.ok(!prompt.includes("Lời bịa phải bị loại"));assert.match(prompt,/không biến bản phân tích hình ảnh thành lời đọc/);assert.match(prompt,/Dạng đã chọn: story/);assert.match(prompt,/không bịa câu chuyện đời/);assert.match(prompt,/KHÔNG nhận âm thanh gốc/);assert.equal(wallets.get(alice).balance,balanceBefore-10);assert.deepEqual(charged,[]);
+  const rejected=await route.namespace.POST(make({angleId:"foreign-angle"},"cccccccc-cccc-4ccc-8ccc-cccccccccccc"));assert.equal(rejected.status,400);assert.equal((await rejected.json()).code,"ANGLE_NOT_FOUND");assert.equal(calls,1,"invalid selection must not spend provider credits");assert.equal(wallets.get(alice).balance,balanceBefore-10);
+  const replay=await route.namespace.POST(make());assert.equal(replay.status,409);assert.equal((await replay.json()).code,"CREDIT_REQUEST_REUSED");assert.equal(calls,1,"a repeated request must not call DeepSeek twice");assert.equal(wallets.get(alice).balance,balanceBefore-10);
  }finally{if(saved)profiles.set(alice,saved);else profiles.delete(alice);}
+});
+await check("empty credit wallet rejects video analysis before the provider call",async()=>{
+ const route=await load(path.join(root,"app/api/analyze/route.ts"));if(route.status==="unlinked")await route.link(linker);if(route.status!=="evaluated")await route.evaluate();
+ const wallet=wallets.get(alice),before=wallet.balance;wallet.balance=0;
+ let calls=0;requestFetch=async()=>{calls++;throw new Error("DeepSeek must not be called when credit is empty");};
+ try{
+  const request=new Request("https://app.example/api/analyze",{method:"POST",headers:{origin:"https://app.example","content-type":"application/json","Idempotency-Key":"dddddddd-dddd-4ddd-8ddd-dddddddddddd"},body:JSON.stringify({frames:[frame],duration:15,intent:"Chia sẻ khu vườn",observationsOnly:true})});
+  const response=await route.namespace.POST(request);assert.equal(response.status,402);assert.equal((await response.json()).code,"INSUFFICIENT_CREDITS");assert.equal(calls,0);assert.equal(wallet.reserved,0);
+ }finally{wallet.balance=before;}
 });
 console.log(`${passed} offline backend behavior tests passed.`);

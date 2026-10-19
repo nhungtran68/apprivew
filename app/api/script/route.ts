@@ -1,4 +1,6 @@
-import { apiError, consumeAiUnits, json, limitedJson, providerKey, requestUser } from "@/lib/studio-server";
+import { apiError, json, limitedJson, providerKey, requestUser } from "@/lib/studio-server";
+import { runWithCredits } from "@/lib/studio-credit-operation";
+import { creditRates } from "@/lib/studio-credits";
 import { StudioError, cleanText, validDuration, validFormat } from "@/lib/studio-contract";
 import { createScript } from "@/lib/studio-deepseek";
 import { projectProfile } from "@/lib/studio-profile";
@@ -22,11 +24,11 @@ export async function POST(request: Request) {
       style = { kind: "builtin", format, name: builtin.name, prompt: builtin.prompt };
     }
     const [{ key }, profile] = await Promise.all([providerKey(userId, "deepseek"), projectProfile(userId, body.profile)]);
-    return json(await createScript(key, {
+    return json(await runWithCredits(request, userId, "script", creditRates.script, () => createScript(key, {
       analysis: body.analysis, intent, duration, profile, style,
       format: style.kind === "builtin" ? style.format : undefined,
       angleId: style.kind === "builtin" ? cleanText(body.angleId, 60) : "",
       instruction: cleanText(body.instruction, 3000),
-    }, () => consumeAiUnits(userId, 1)));
+    }, async () => {})));
   } catch (error) { return apiError(error); }
 }

@@ -142,6 +142,8 @@ async function fixture() {
   };
   const mocks = new Map([
     [studioServer, serverMock],
+    [modulePath("lib/studio-credits.ts"), { creditRates: { script: 10 } }],
+    [modulePath("lib/studio-credit-operation.ts"), { runWithCredits: async (_request, userId, _kind, amount, run) => { const result = await run(); charges.push({ userId, amount }); return result; } }],
     [studioSupabase, { createStudioSupabaseServer: async () => ({ from: table => {
       if (table === "studio_script_templates") return new Query();
       if (table === "studio_script_builtin_styles") return new BuiltinQuery();
@@ -306,7 +308,7 @@ test("script generation uses a custom type privately, charges once, and keeps le
   const first = await generate.POST(h.request("/api/script-generate", "POST", input));
   assert.equal(first.status, 200);
   assert.match((await first.json()).script, /lời thoại/);
-  assert.deepEqual(h.charges, [{ userId: alice, amount: 1 }]);
+  assert.deepEqual(h.charges, [{ userId: alice, amount: 10 }]);
   const payload = JSON.parse(h.providerCalls[0].init.body);
   assert.equal(h.providerCalls[0].url, "https://api.deepseek.com/chat/completions");
   assert.ok(payload.messages[0].content.includes(privatePrompt));
@@ -338,7 +340,7 @@ test("generation rejects foreign personal types but ignores an old format when a
   assert.equal(h.providerCalls.length, 1);
 });
 
-test("provider output copying a private template is withheld after one charged attempt", async () => {
+test("provider output copying a private template is withheld and its credit charge is refunded", async () => {
   const h = await fixture();
   const listRoute = await h.entry("app/api/script-templates/route.ts");
   const generate = await h.entry("app/api/script-generate/route.ts");
@@ -352,7 +354,7 @@ test("provider output copying a private template is withheld after one charged a
   const body = await response.json();
   assert.equal(body.code, "TEMPLATE_PROMPT_DISCLOSED");
   assert.ok(!JSON.stringify(body).includes(privatePrompt));
-  assert.deepEqual(h.charges, [{ userId: alice, amount: 1 }]);
+  assert.deepEqual(h.charges, []);
 });
 
 test("video script uses the admin's built-in prompt privately and keeps the original video timing", async () => {
@@ -379,7 +381,7 @@ test("video script uses the admin's built-in prompt privately and keeps the orig
   assert.ok(payload.messages[1].content[0].text.includes("Cảnh chùm nho"));
   assert.ok(!payload.messages[1].content[0].text.includes(privatePrompt));
   assert.ok(h.logs.every(line => !line.includes(privatePrompt)));
-  assert.deepEqual(h.charges, [{ userId: alice, amount: 1 }]);
+  assert.deepEqual(h.charges, [{ userId: alice, amount: 10 }]);
 });
 
 test("video script can use a shared custom type but cannot use someone else's personal type", async () => {
@@ -423,5 +425,5 @@ test("video script withholds a provider response that copies the hidden admin pr
   const body = await response.json();
   assert.equal(body.code, "TEMPLATE_PROMPT_DISCLOSED");
   assert.ok(!JSON.stringify(body).includes(privatePrompt));
-  assert.equal(h.charges.length, 1);
+  assert.equal(h.charges.length, 0);
 });

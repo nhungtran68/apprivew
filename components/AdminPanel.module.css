@@ -1,0 +1,32 @@
+.page { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; color: #13234f; }
+.back { display: inline-flex; align-items: center; min-height: 44px; color: #0b47f5; font-size: 13px; font-weight: 600; }
+.heading { margin: 20px 0 28px; }
+.heading > span { color: #5269a1; font-size: 11px; font-weight: 600; letter-spacing: 1.2px; }
+.heading h1 { margin-top: 7px; font-size: clamp(25px, 4vw, 33px); line-height: 1.35; }
+.heading p { max-width: 680px; margin-top: 8px; color: #667085; font-size: 14px; line-height: 1.8; }
+.message { margin-bottom: 16px; padding: 12px 15px; border: 1px solid #b9d7c1; border-radius: 10px; background: #f0f9f1; color: #285335; font-size: 13px; }
+.message.error { border-color: #f0c2ac; background: #fff5ef; color: #914224; }
+.list { display: grid; gap: 14px; }
+.card { padding: 20px; border: 1px solid #dfe6f4; border-radius: 16px; background: #fff; box-shadow: 0 3px 14px #14357a08; }
+.member { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.member > div { display: grid; min-width: 0; }
+.member strong { overflow-wrap: anywhere; font-size: 16px; line-height: 1.5; }
+.member > div > span { overflow-wrap: anywhere; color: #667085; font-size: 12px; }
+.status { flex-shrink: 0; padding: 5px 8px; border-radius: 8px; font-size: 11px; line-height: 1.5; }
+.active { background: #edf8ef; color: #285b39; }
+.locked { background: #fff1e8; color: #934521; }
+.wallet { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 18px 0; }
+.wallet > div { display: grid; gap: 2px; min-width: 0; padding: 11px 12px; border-radius: 10px; background: #f5f7ff; }
+.wallet small { color: #667085; font-size: 11px; }
+.wallet strong { overflow-wrap: anywhere; color: #0b47f5; font-size: 20px; line-height: 1.35; }
+.actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.actions label { display: grid; gap: 6px; flex: 1 1 150px; max-width: 250px; font-size: 12px; font-weight: 600; color: #405071; }
+.actions input { min-height: 46px; }
+.actions button { min-height: 46px; padding: 9px 16px; border-radius: 9px; font-size: 13px; font-weight: 600; }
+.grant { background: #0b47f5; color: white; }
+.grant:hover:not(:disabled) { background: #0738c7; }
+.toggle { border: 1px solid #d9e2f7; color: #33466e; background: white; }
+.toggle:hover:not(:disabled) { background: #f3f6ff; }
+.empty { padding: 24px; text-align: center; color: #667085; font-size: 14px; }
+@media (min-width: 640px) { .page { padding: 32px 24px 72px; } .card { padding: 24px; } }
+@media (max-width: 480px) { .wallet { grid-template-columns: repeat(2, minmax(0, 1fr)); } .wallet > div:first-child { grid-column: 1 / -1; } .actions label { flex-basis: 100%; max-width: none; } .actions button { flex: 1; } }

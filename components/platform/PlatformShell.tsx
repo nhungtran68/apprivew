@@ -59,11 +59,12 @@ function ShellContent({ children }: { children: ReactNode }) {
         <div className={styles.mobileBrand}><button ref={menuButton} className={styles.iconButton} type="button" aria-label="Mở menu điều hướng" aria-haspopup="dialog" onClick={() => drawer.current?.showModal()}><PlatformIcon name="menu" /></button><Brand /></div>
         <div className={styles.breadcrumb}><span>Không gian làm việc</span><PlatformIcon name="chevron" size={14} /><strong>{title}</strong></div>
         <ToolSearch />
+        {account?.credits ? <Link href="/ca-nhan" className={`${styles.creditBadge} ${account.credits.available === 0 ? styles.creditEmpty : ""}`} aria-label={`Credit khả dụng: ${new Intl.NumberFormat("vi-VN").format(account.credits.available)}. Xem mức trừ credit`}><PlatformIcon name="spark" size={15} /><span>{new Intl.NumberFormat("vi-VN").format(account.credits.available)} credit</span></Link> : null}
         <Link href={status === "anonymous" ? "/dang-nhap" : "/ca-nhan"} className={styles.accountButton} aria-label={status === "anonymous" ? "Đăng nhập tài khoản" : "Mở tài khoản cá nhân"}>
           <span className={styles.avatar}>{accountInitials(account?.name)}</span><span className={styles.accountName}>{account?.name || (status === "anonymous" ? "Đăng nhập" : "Tài khoản")}</span><PlatformIcon name="chevron" size={15} />
         </Link>
       </header>
-      <main className={styles.main} id="noi-dung-chinh" tabIndex={-1}>{children}</main>
+      <main className={styles.main} id="noi-dung-chinh" tabIndex={-1}>{account?.credits?.available === 0 ? <div className={styles.creditNotice} role="status"><strong>Đã hết credit khả dụng.</strong> Tác vụ AI mới đang tạm dừng. <Link href={account.isAdmin ? "/quan-tri" : "/ca-nhan"}>{account.isAdmin ? "Cấp thêm credit" : "Xem số dư và mức trừ"}</Link></div> : null}{children}</main>
       <footer className={styles.footer}><span><strong>Lời Kể AI</strong> · Từ ý tưởng đến nội dung của bạn.</span><Link href="/huong-dan">Hướng dẫn sử dụng<PlatformIcon name="arrow" size={15} /></Link></footer>
     </div>
     <nav className={styles.bottomNav} aria-label="Điều hướng trên điện thoại">

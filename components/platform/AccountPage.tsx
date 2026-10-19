@@ -2,19 +2,28 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { accountInitials, useAccount } from "./AccountProvider";
+import { accountInitials, useAccount, type CreditRates } from "./AccountProvider";
 import { PlatformIcon } from "./PlatformIcon";
 import shared from "./Platform.module.css";
 import styles from "./AccountPage.module.css";
 
 const formatNumber = (value: number) => new Intl.NumberFormat("vi-VN").format(value);
+const creditItems: { key: keyof CreditRates; title: string; unit: string }[] = [
+  { key: "script", title: "Viết hoặc tạo lại kịch bản", unit: "mỗi lần tạo" },
+  { key: "analyze", title: "Phân tích video", unit: "mỗi lần phân tích" },
+  { key: "scenePlan", title: "AI chọn phân cảnh", unit: "mỗi lần tìm cảnh theo kịch bản" },
+  { key: "ttsPer100Chars", title: "Tạo giọng nói", unit: "mỗi 100 ký tự, làm tròn lên" },
+  { key: "clone", title: "Nhân bản giọng", unit: "mỗi giọng tạo thành công" },
+  { key: "stockPer2MiB", title: "Lấy video thư viện", unit: "mỗi 2 MiB dữ liệu, làm tròn lên" },
+];
 
 export default function AccountPage() {
   const { status, account, message, refresh } = useAccount();
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState("");
   const signOutInFlight = useRef(false);
-  const quota = account?.quota;
+  const credits = account?.credits;
+  const rates = account?.creditRates;
 
   async function signOut() {
     if (signOutInFlight.current) return;
@@ -42,7 +51,7 @@ export default function AccountPage() {
     <header className={shared.pageHeading}>
       <span className={shared.eyebrow}><PlatformIcon name="user" size={14} />Không gian của bạn</span>
       <h1>Cá nhân</h1>
-      <p>Quản lý hồ sơ, theo dõi hạn mức sử dụng và thiết lập giọng nói của bạn.</p>
+      <p>Quản lý hồ sơ, xem số dư credit và mức trừ của từng công cụ.</p>
     </header>
 
     {status === "ready" && account ? <div className={styles.summaryGrid}>
@@ -57,15 +66,15 @@ export default function AccountPage() {
         <Link href="/studio?view=profile" prefetch={false} className={`${shared.secondaryButton} ${styles.profileButton}`}>Chỉnh sửa hồ sơ sáng tạo<PlatformIcon name="arrow" size={18} /></Link>
       </section>
 
-      <section className={`${shared.panel} ${styles.quotaCard}`} aria-labelledby="quota-heading">
-        <div className={styles.cardTop}><span className={shared.panelIcon}><PlatformIcon name="spark" /></span><span className={styles.smallLabel}>Hạn mức hiện tại</span></div>
-        <h2 id="quota-heading">Lượt sử dụng AI</h2>
-        {quota ? <>
-          <p className={styles.quotaValue}><strong>{formatNumber(quota.used)}</strong><span>/ {formatNumber(quota.limit)} lượt</span></p>
-          {quota.limit > 0 ? <meter className={styles.usageMeter} min={0} max={quota.limit} value={Math.min(quota.used, quota.limit)} aria-label={`Đã dùng ${formatNumber(quota.used)} trên ${formatNumber(quota.limit)} lượt AI`} /> : null}
-          <p className={styles.quotaDescription}>Đã dùng {formatNumber(quota.used)} lượt. Còn {formatNumber(Math.max(0, quota.limit - quota.used))} lượt trong hạn mức được cấp.</p>
-        </> : <p className={styles.missingQuota}>Chưa có dữ liệu hạn mức cho tài khoản này.</p>}
-        <div className={styles.quotaFooter}><span>Hạn mức do quản trị viên cấp.</span><button type="button" className={shared.textLink} onClick={refresh} disabled={signingOut}><PlatformIcon name="refresh" size={15} />Cập nhật</button></div>
+      <section className={`${shared.panel} ${styles.quotaCard}`} aria-labelledby="credits-heading">
+        <div className={styles.cardTop}><span className={shared.panelIcon}><PlatformIcon name="spark" /></span><span className={styles.smallLabel}>Ví sử dụng</span></div>
+        <h2 id="credits-heading">Credit khả dụng</h2>
+        {credits ? <>
+          <p className={styles.quotaValue}><strong>{formatNumber(credits.available)}</strong><span>credit</span></p>
+          <div className={styles.creditDetails}><span>Số dư: <strong>{formatNumber(credits.balance)}</strong></span><span>Đang giữ cho tác vụ: <strong>{formatNumber(credits.reserved)}</strong></span></div>
+          {credits.available === 0 ? <p className={styles.exhausted} role="status">Bạn đã hết credit khả dụng. Các tác vụ AI sẽ tạm dừng; liên hệ quản trị viên để được cấp thêm.</p> : <p className={styles.quotaDescription}>Mỗi tác vụ trừ credit theo bảng bên dưới khi thực hiện thành công.</p>}
+        </> : <p className={styles.missingQuota}>Chưa tải được số dư credit. Hãy cập nhật lại trước khi tạo nội dung.</p>}
+        <div className={styles.quotaFooter}><span>Credit do quản trị viên cấp.</span><button type="button" className={shared.textLink} onClick={refresh} disabled={signingOut}><PlatformIcon name="refresh" size={15} />Cập nhật số dư</button></div>
       </section>
     </div> : status === "loading" ? <section className={`${shared.panel} ${styles.loadingPanel}`} role="status" aria-live="polite" aria-busy="true">
       <span className={styles.loadingAvatar} aria-hidden="true" />
@@ -82,13 +91,16 @@ export default function AccountPage() {
       <div className={styles.toolGrid}>
         <Link href="/studio?view=profile" prefetch={false} className={styles.toolCard}><span className={styles.toolIcon}><PlatformIcon name="user" /></span><span><strong>Hồ sơ & phong cách</strong><span>Cập nhật thông tin, sản phẩm và cách bạn muốn kể chuyện.</span></span><PlatformIcon name="arrow" size={19} /></Link>
         <Link href="/studio?view=voices" prefetch={false} className={styles.toolCard}><span className={`${styles.toolIcon} ${styles.voiceIcon}`}><PlatformIcon name="voice" /></span><span><strong>Giọng nói của tôi</strong><span>Mở thư viện giọng nói và quản lý giọng đọc trong Studio.</span></span><PlatformIcon name="arrow" size={19} /></Link>
-        {status === "ready" && account?.isAdmin ? <Link href="/quan-tri" className={`${styles.toolCard} ${styles.adminCard}`}><span className={styles.toolIcon}><PlatformIcon name="shield" /></span><span><strong>Trang quản trị</strong><span>Quản lý thành viên, quyền truy cập và hạn mức AI.</span></span><PlatformIcon name="arrow" size={19} /></Link> : null}
+        {status === "ready" && account?.isAdmin ? <Link href="/quan-tri" className={`${styles.toolCard} ${styles.adminCard}`}><span className={styles.toolIcon}><PlatformIcon name="shield" /></span><span><strong>Trang quản trị</strong><span>Quản lý thành viên, quyền truy cập và cấp credit.</span></span><PlatformIcon name="arrow" size={19} /></Link> : null}
       </div>
     </section>
 
     <section className={`${shared.panel} ${styles.subscriptionCard}`} aria-labelledby="subscription-heading">
       <span className={styles.subscriptionIcon}><PlatformIcon name="layers" size={26} /></span>
-      <div><span className={shared.statusPill}>Đang chuẩn bị</span><h2 id="subscription-heading">Gói dịch vụ & lượt sử dụng</h2><p>Khu vực gói dịch vụ và số dư sử dụng sẽ được bổ sung sau. Hiện tại, bạn sử dụng hạn mức AI được cấp cho tài khoản.</p></div>
+      <div className={styles.rateContent}><h2 id="subscription-heading">Mức trừ credit</h2><p>Các bước AI trong cùng một video được cộng theo từng mục. Xem trước nội dung đã tạo không trừ thêm credit.</p>
+        {rates ? <ul className={styles.rateList}>{creditItems.map(item => <li key={item.key}><span><strong>{item.title}</strong><small>{item.unit}</small></span><b>{formatNumber(rates[item.key])} credit</b></li>)}</ul> : <p className={styles.missingRates}>Chưa tải được bảng mức trừ. Vui lòng cập nhật số dư để xem giá hiện hành.</p>}
+        <p className={styles.rateFootnote}>Tạo giọng và lấy video thư viện có mức trừ tăng theo độ dài hoặc dung lượng thực tế. Đoạn giọng phải tạo lại được tính thêm. Tác vụ xác nhận thất bại được hoàn credit; tác vụ mất kết nối cần đối soát trước.</p>
+      </div>
     </section>
 
     {(status === "ready" && account || status === "restricted") ? <section className={styles.sessionSection} aria-label="Phiên đăng nhập">
