@@ -30,6 +30,7 @@ async function harness(){
   [path.join(root,"lib/studio-deepseek.ts"),{shortenSegment:async()=>{throw new Error("No hidden AI retry permitted");}}],
   [path.join(root,"lib/studio-maziao.ts"),{authorizeMaziaoVoice:async()=>{throw new Error("Eleven voice-over must not authorize Maziao");},generateMaziaoVoiceOver:async()=>{throw new Error("Eleven voice-over must not call Maziao");}}],
   [path.join(root,"lib/studio-supabase.ts"),{assertOwnedMediaPath:ownedPath,downloadOwnedMedia:async(userId,name)=>{ownedPath(userId,name);return new File([new Uint8Array([1,2,3,4])],"sample.wav",{type:"audio/wav"});},removeOwnedMedia:async(userId,paths)=>{for(const name of paths){ownedPath(userId,name);deleted.push(name);media.delete(name);}},storeNarration:async(userId,wav,index)=>{const audioPath=`${userId}/narration/${index}.wav`;media.set(audioPath,wav);return{audioPath,audioUrl:`https://audio.example.invalid/${index}`};}}],
+  [path.join(root,"lib/studio-credit-operation.ts"),{creditRequestId:()=>crypto.randomUUID()}],
  ]);
  async function load(file){
   if(modules.has(file))return modules.get(file);
@@ -97,52 +98,35 @@ await check("matching public aliases are reused and stale aliases with a mismatc
  });
  assert.equal(await h.eleven.authorizeVoice(alice,"publicVietnamese"),"existingAlias");await assert.rejects(h.eleven.authorizeVoice(alice,"staleSharedAlias"),{code:"VOICE_NOT_AUTHORIZED"});assert.ok(h.requests.every(request=>request.method==="GET"));assert.equal(h.charged.length,0);
 });
-await check("speech route synthesizes the resolved imported alias rather than the public library id",async()=>{
+await check("speech route blocks unpriced ElevenLabs synthesis before any provider call",async()=>{
  const h=await harness();h.grant(alice,"publicVietnamese");
- h.setHandler(request=>{
-  if(isCatalog(request))return Response.json({voices:isVi(request)?[raw("publicVietnamese")]:[]});
-  if(request.url.endsWith("/user/subscription"))return Response.json({tier:"starter"});
-  if(request.url.endsWith("/voices"))return Response.json({voices:[]});
-  if(request.url.includes("/voices/add/"))return Response.json({voice_id:"realImportedAlias"});
-  assert.equal(request.url,"https://api.elevenlabs.io/v1/text-to-speech/realImportedAlias?output_format=pcm_24000");assert.equal(JSON.parse(request.body).language_code,"vi");return new Response(new Uint8Array(48000));
- });
+ h.setHandler(()=>{throw new Error("Paid provider request must stay disabled");});
  const route=await h.entry("app/api/speech/route.ts"),response=await route.POST(new Request("https://app.example/api/speech",{method:"POST",body:JSON.stringify({voiceId:"publicVietnamese",duration:5,segments:[{start:0,end:5,text:"Xin chào bạn."}]})}));
- assert.equal(response.status,200);assert.equal((await response.json()).voiceId,"realImportedAlias");assert.deepEqual(h.charged,[1]);assert.equal(h.media.size,1);
+ assert.equal(response.status,503);assert.equal((await response.json()).code,"VOICE_PRICING_UNAVAILABLE");assert.deepEqual(h.charged,[]);assert.equal(h.media.size,0);assert.equal(h.requests.length,0);
 });
-await check("continuous Eleven voice-over preserves the approved script and measures its complete audio",async()=>{
+await check("continuous Eleven voice-over blocks unpriced provider requests",async()=>{
  const h=await harness(),script="Đây là kịch bản đã được người dùng duyệt, không tự ý rút gọn.";
  h.grant(alice,"memberVoice","personal");
- h.setHandler(request=>{
-  assert.equal(request.url,"https://api.elevenlabs.io/v1/text-to-speech/memberVoice?output_format=pcm_24000");
-  assert.equal(JSON.parse(request.body).text,script);
-  return new Response(new Uint8Array(96000));
- });
+ h.setHandler(()=>{throw new Error("Paid provider request must stay disabled");});
  const route=await h.entry("app/api/voice-over/route.ts");
  const response=await route.POST(new Request("https://app.example/api/voice-over",{method:"POST",body:JSON.stringify({voiceId:"memberVoice",text:script,speed:1,volume:1,pitch:1})}));
- assert.equal(response.status,200);
- const result=await response.json();
- assert.equal(result.provider,"eleven");assert.equal(result.duration,2);assert.equal(result.audioMime,"audio/wav");
- assert.ok(result.audioPath.startsWith(`${alice}/narration/`));assert.deepEqual(h.charged,[1]);assert.equal(h.media.size,1);
+ assert.equal(response.status,503);assert.equal((await response.json()).code,"VOICE_PRICING_UNAVAILABLE");assert.deepEqual(h.charged,[]);assert.equal(h.media.size,0);assert.equal(h.requests.length,0);
 });
 await check("clone entitlement distinguishes free, missing flags and a full paid plan",async()=>{
  const cases=[{plan:{tier:"free",can_use_instant_voice_cloning:false},code:"CLONING_PLAN_REQUIRED"},{plan:{tier:"starter"},code:"CLONING_ENTITLEMENT_UNKNOWN"},{plan:{tier:"starter",can_use_instant_voice_cloning:true,voice_slots_used:10,voice_limit:10},code:"VOICE_SLOTS_FULL"}];
  for(const item of cases){const h=await harness();h.setHandler(request=>{assert.ok(request.url.endsWith("/user/subscription"));return Response.json(item.plan);});await assert.rejects(h.catalog.assertCloningEntitlement(h.key),{code:item.code});assert.equal(h.charged.length,0);}
  const h=await harness();h.setHandler(()=>Response.json({tier:"starter",can_use_instant_voice_cloning:true,voice_slots_used:1,voice_limit:10}));await h.catalog.assertCloningEntitlement(h.key);
 });
-await check("free plan clone rejection cleans the uploaded sample without charging or calling cloning",async()=>{
- const h=await harness(),samplePath=`${alice}/voice-samples/sample.wav`;h.setHandler(request=>{assert.ok(request.url.endsWith("/user/subscription"));return Response.json({tier:"free",can_use_instant_voice_cloning:false});});
+await check("unpriced ElevenLabs cloning cleans the uploaded sample without charging",async()=>{
+ const h=await harness(),samplePath=`${alice}/voice-samples/sample.wav`;h.setHandler(()=>{throw new Error("Paid provider request must stay disabled");});
  const route=await h.entry("app/api/voices/route.ts"),response=await route.POST(new Request("https://app.example/api/voices",{method:"POST",body:JSON.stringify({name:"My voice",consent:true,samplePaths:[samplePath]})}));
- assert.equal(response.status,422);assert.equal((await response.json()).code,"CLONING_PLAN_REQUIRED");assert.deepEqual(h.deleted,[samplePath]);assert.equal(h.charged.length,0);assert.equal(h.requests.length,1);assert.ok(!h.requests[0].url.includes("/voices/add"));
+ assert.equal(response.status,503);assert.equal((await response.json()).code,"VOICE_PRICING_UNAVAILABLE");assert.deepEqual(h.deleted,[samplePath]);assert.equal(h.charged.length,0);assert.equal(h.requests.length,0);
 });
-await check("free plan cannot use a public library voice even when free_users_allowed is true",async()=>{
+await check("public library voice cannot bypass unpriced ElevenLabs gate",async()=>{
  const h=await harness();h.grant(alice,"publicVietnamese");
- h.setHandler(request=>{
-  if(isCatalog(request))return Response.json({voices:isVi(request)?[raw("publicVietnamese",{free_users_allowed:true})]:[]});
-  if(request.url.endsWith("/user/subscription"))return Response.json({tier:"free"});
-  throw new Error("Free plan must not import or synthesize library voices");
- });
+ h.setHandler(()=>{throw new Error("Paid provider request must stay disabled");});
  const route=await h.entry("app/api/speech/route.ts"),response=await route.POST(new Request("https://app.example/api/speech",{method:"POST",body:JSON.stringify({voiceId:"publicVietnamese",duration:5,segments:[{start:0,end:5,text:"Xin chào bạn."}]})}));
- assert.equal(response.status,422);assert.equal((await response.json()).code,"LIBRARY_PLAN_REQUIRED");assert.equal(h.charged.length,0);assert.equal(h.media.size,0);assert.ok(h.requests.every(request=>isCatalog(request)||request.url.endsWith("/user/subscription")));
+ assert.equal(response.status,503);assert.equal((await response.json()).code,"VOICE_PRICING_UNAVAILABLE");assert.equal(h.charged.length,0);assert.equal(h.media.size,0);assert.equal(h.requests.length,0);
 });
 await check("premade voices remain usable without fetching subscription information",async()=>{
  const h=await harness();h.grant(alice,"premadeVoice");

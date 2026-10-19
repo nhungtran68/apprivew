@@ -37,6 +37,10 @@
 .avatar { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%; background: #fff0d6; border: 3px solid #fff; box-shadow: 0 0 0 1px #ffd39a; color: #9a4c00; font-size: 12px; font-weight: 600; }
 .accountName { display: none; }
 .accountButton > svg { display: none; }
+.creditBadge { order: 2; display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 38px; padding: 6px 12px; border: 1px solid #c8d8ff; border-radius: 9px; background: #f2f6ff; color: #0b47f5; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.creditBadge:hover { background: #e8efff; }
+.creditEmpty { border-color: #f2c8b8; background: #fff5ef; color: #a34628; }
+.creditEmpty:hover { background: #ffece1; }
 .search { position: relative; min-width: 0; width: 100%; order: 3; }
 .search form { position: relative; display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 0 14px; background: #f5f7ff; border: 1px solid #e1e8fb; border-radius: 10px; color: #6d7897; }
 .search form:focus-within { border-color: #7da2ff; box-shadow: 0 0 0 3px #eaf0ff; }
@@ -52,6 +56,9 @@
 .searchResults li > a > svg:last-child { color: #7584aa; }
 .searchEmpty { padding: 12px 10px 16px; color: var(--p-muted); font-size: 14px; }
 .main { max-width: 1400px; margin: 0 auto; padding: 26px 18px 32px; outline: none; }
+.creditNotice { margin-bottom: 20px; padding: 12px 15px; border: 1px solid #f2c8b8; border-radius: 11px; background: #fff5ef; color: #843d22; font-size: 13px; line-height: 1.7; }
+.creditNotice strong { font-weight: 650; }
+.creditNotice a { color: #0b47f5; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .footer { max-width: 1400px; margin: 0 auto; padding: 0 18px 110px; display: flex; flex-direction: column; gap: 8px; color: #6f7892; font-size: 11px; }
 .footer strong { font-weight: 500; }
 .footer a { display: inline-flex; align-items: center; gap: 8px; color: #3f568f; min-height: 44px; }
@@ -106,6 +113,7 @@
 .muted { color: var(--p-muted); }
 
 @media (min-width: 640px) {
+  .creditBadge { order: 0; width: auto; }
   .topbar { padding: 18px 28px; gap: 20px; flex-wrap: nowrap; }
   .search { order: unset; width: auto; margin-left: auto; max-width: 380px; flex: 1; }
   .search input { font-size: 13px; }

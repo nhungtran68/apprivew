@@ -1,8 +1,8 @@
 import { apiError, json, limitedJson, providerKey, requestUser, voiceProvider } from "@/lib/studio-server";
 import { StudioError, cleanText } from "@/lib/studio-contract";
-import { cloneVoice, listVoices } from "@/lib/studio-eleven";
+import { listVoices } from "@/lib/studio-eleven";
 import { assertOwnedMediaPath, downloadOwnedMedia, removeOwnedMedia } from "@/lib/studio-supabase";
-import { assertCloningEntitlement } from "@/lib/studio-voice-catalog";
+import { creditRequestId } from "@/lib/studio-credit-operation";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -24,6 +24,7 @@ export async function POST(request: Request) {
   let userId = "", paths: string[] = [];
   try {
     userId = await requestUser(request, true);
+    const requestId = creditRequestId(request);
     const body = await limitedJson(request, 10000), name = cleanText(body.name, 100);
     if (body.consent !== true) throw new StudioError("CONSENT_REQUIRED", "Xác nhận đây là giọng của bạn và đồng ý tạo bản sao.");
     if (!name || !Array.isArray(body.samplePaths) || !body.samplePaths.length || body.samplePaths.length > 8) throw new StudioError("VOICE_SAMPLE_REQUIRED", "Đặt tên và thêm 1–8 mẫu giọng sạch.");
@@ -35,10 +36,9 @@ export async function POST(request: Request) {
     const provider = voiceProvider(), { key } = await providerKey(userId, provider);
     if (provider === "maziao") {
       if (body.gender !== "male" && body.gender !== "female") throw new StudioError("INVALID_GENDER", "Chọn giọng nam hoặc nữ để nhân bản.");
-      return json(await (await import("@/lib/studio-maziao")).cloneMaziaoVoice(key, userId, name, files, body.gender), 201);
+      return json(await (await import("@/lib/studio-maziao")).cloneMaziaoVoice(key, userId, name, files, body.gender, requestId), 201);
     }
-    await assertCloningEntitlement(key);
-    return json(await cloneVoice(key, userId, name, files), 201);
+    throw new StudioError("VOICE_PRICING_UNAVAILABLE", "Tạm thời chỉ hỗ trợ nhân bản giọng bằng dịch vụ đã kết nối. Quản trị viên cần cấu hình bảng giá trước khi bật nhà cung cấp khác.", 503, "contact_admin");
   } catch (error) { return apiError(error); }
   finally { if (userId && paths.length) await removeOwnedMedia(userId, paths).catch(() => {}); }
 }

@@ -30,8 +30,11 @@ function seconds(value: number) {
 function message(error: unknown) { return error instanceof Error ? error.message : "Chưa hoàn tất. Vui lòng thử lại."; }
 
 async function api(path: string, init?: RequestInit): Promise<Record<string, any>> {
-  const response = await fetch(path, init);
+  const headers = new Headers(init?.headers);
+  if (init?.method?.toUpperCase() === "POST" && !headers.has("Idempotency-Key")) headers.set("Idempotency-Key", crypto.randomUUID());
+  const response = await fetch(path, { ...init, headers });
   const result = await response.json().catch(() => ({})) as Record<string, any>;
+  if (response.ok && init?.method?.toUpperCase() === "POST") window.dispatchEvent(new Event("studio-credits-changed"));
   if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : result.error?.message || result.message || `Yêu cầu chưa hoàn tất (${response.status}).`);
   return result;
 }
@@ -289,13 +292,14 @@ export default function StockVideoWorkspace({ mode, deepseekReady, voiceReady, v
   async function fetchClip(video: StockVideo): Promise<Blob> {
     const cached = downloadedClips.current.get(video.id);
     if (cached) return cached;
-    const response = await fetch("/api/pixabay/video", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: video.id, quality: video.size > 45 * 1024 * 1024 ? "small" : "medium" }) });
+    const response = await fetch("/api/pixabay/video", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ id: video.id, quality: video.size > 45 * 1024 * 1024 ? "small" : "medium" }) });
     if (!response.ok) {
       const data = await response.json().catch(() => ({})) as { error?: string };
       throw new Error(data.error || `Chưa tải được cảnh #${video.id}. Hãy chọn cảnh khác.`);
     }
     const blob = await response.blob();
     if (!blob.size || blob.size > 60 * 1024 * 1024) throw new Error(`Cảnh #${video.id} quá lớn hoặc không hợp lệ. Hãy chọn cảnh khác.`);
+    window.dispatchEvent(new Event("studio-credits-changed"));
     downloadedClips.current.set(video.id, blob);
     return blob;
   }

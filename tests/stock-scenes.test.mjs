@@ -23,6 +23,8 @@ async function fixture() {
   const values = new Map([
     ["server-only", {}],
     [path.join(root, "lib/studio-contract.ts"), { StudioError }],
+    [path.join(root, "lib/studio-credits.ts"), { creditRates: { scenePlan: 10 } }],
+    [path.join(root, "lib/studio-credit-operation.ts"), { runWithCredits: async (_request, _user, _kind, amount, run) => { const result = await run(); calls.push(["charge", amount]); return result; } }],
     [path.join(root, "lib/studio-deepseek.ts"), { deepseekJson: async (_key, prompt, _example, charge, frames) => {
       calls.push(["deepseek", prompt, frames]); await charge(); return plan;
     } }],
@@ -106,7 +108,7 @@ test("approved narration stays unchanged while scenes search English Pixabay ter
   assert.equal(data.scenes[0].startFraction, 0);
   assert.equal(data.scenes.at(-1).endFraction, 1);
   assert.equal(data.needsReview, true);
-  assert.deepEqual(h.calls.filter(call => call[0] === "charge"), [["charge", 1]]);
+  assert.deepEqual(h.calls.filter(call => call[0] === "charge"), [["charge", 10]]);
   assert.deepEqual(h.calls.filter(call => call[0] === "pixabay").map(call => call.slice(1)), [
     ["stressed office worker", 1, "en"], ["sunrise after rain", 1, "en"], ["walking forward road", 1, "en"],
   ]);

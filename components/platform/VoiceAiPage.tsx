@@ -68,7 +68,6 @@ export default function VoiceAiPage() {
     for (const candidate of adminCloneCandidates) byId.set(candidate.voice_id, { voiceId: candidate.voice_id, name: candidate.name, category: "cloned", previewUrl: candidate.previewUrl });
     return [...byId.values()].sort((a,b) => Number(b.category === "cloned") - Number(a.category === "cloned") || a.name.localeCompare(b.name,"vi"));
   })();
-  const cloning = account.status === "ready" ? (account.account as typeof account.account & { voiceCloning?: { used: number; limit: number; remaining: number | null; unlimited: boolean } })?.voiceCloning : undefined;
 
   async function readScript(file: File) {
     setError(""); setNotice("");
@@ -84,12 +83,12 @@ export default function VoiceAiPage() {
     if (busy || !selected || !text.trim()) return;
     setBusy("speech"); setError(""); setNotice("");
     try {
-      const response = await fetch("/api/voice-over", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voiceId: selected, text: text.trim(), speed, volume, pitch }) });
+      const response = await fetch("/api/voice-over", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ voiceId: selected, text: text.trim(), speed, volume, pitch }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Không tạo được giọng đọc.");
       if (activeSrc.current) URL.revokeObjectURL(activeSrc.current);
       activeSrc.current = ""; setAudioSrc(""); setAudio(result); setNotice("Đã tạo lời đọc. Bấm Nghe hoặc Tải MP3/WAV để nhận tệp.");
-      account.refresh();
+      window.dispatchEvent(new Event("studio-credits-changed"));
     } catch (err) { setError(friendlyError(err)); }
     finally { setBusy(""); }
   }
@@ -122,11 +121,12 @@ export default function VoiceAiPage() {
     try {
       const sample = await prepareMaziaoVoiceSample(cloneFile);
       const uploaded = await uploadVoiceSamples([sample]); paths = uploaded.samplePaths;
-      const response = await fetch("/api/voices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: cloneName.trim(), consent: true, samplePaths: paths, gender: cloneGender }) });
+      const response = await fetch("/api/voices", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ name: cloneName.trim(), consent: true, samplePaths: paths, gender: cloneGender }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Không nhân bản được giọng.");
       setCloneName(""); setCloneFile(null); setConsent(false);
-      await load(); account.refresh();
+      window.dispatchEvent(new Event("studio-credits-changed"));
+      await load();
       setSelected(data.voiceId || ""); setNotice("Đã tạo giọng cá nhân thành công.");
     } catch (err) { setError(friendlyError(err)); }
     finally { if (paths.length) await cleanupAnalysisMedia(paths).catch(() => {}); setBusy(""); }
@@ -230,13 +230,13 @@ export default function VoiceAiPage() {
           </section>
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>05</span><h2>Nhân bản giọng</h2></div></div>
-            <p className={styles.muted}>{isAdmin ? "Tài khoản quản trị không giới hạn số lần clone, vẫn áp dụng hạn mức AI." : "Mỗi tài khoản thành viên có thể lưu tối đa 3 giọng cá nhân. Nếu còn chỗ, bạn nên tạo và nghe thử giọng mới trước khi xóa giọng cũ."}</p>
-            <div className={styles.quota}>{isAdmin ? "Không giới hạn giọng cá nhân" : cloning ? "Đã lưu " + cloning.used + " / " + cloning.limit + " giọng cá nhân" : "Kiểm tra hạn mức tại trang cá nhân"}</div>
+            <p className={styles.muted}>Tạo một giọng cá nhân từ mẫu của bạn. Hãy nghe thử giọng mới trước khi xóa giọng cũ.</p>
+            <div className={styles.quota}>50 credit cho mỗi lần nhân bản thành công</div>
             <label className={styles.field}>Tên giọng<input value={cloneName} onChange={e => setCloneName(e.target.value)} placeholder="Ví dụ: Giọng của tôi"/></label>
             <label className={styles.field}>Loại giọng<select value={cloneGender} onChange={e => setCloneGender(e.target.value as "female"|"male")}><option value="female">Giọng nữ</option><option value="male">Giọng nam</option></select></label>
             <label className={styles.uploadBlock}>Chọn mẫu giọng MP3, WAV, M4A (3–8 giây)<input type="file" accept="audio/*" onChange={e => setCloneFile(e.target.files?.[0] || null)}/></label>
             <label className={styles.consent}><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/> Tôi sở hữu giọng nói này hoặc được chủ giọng đồng ý nhân bản.</label>
-            <button className={styles.cloneButton} disabled={Boolean(busy) || !consent || !cloneName.trim() || !cloneFile || (!isAdmin && cloning?.remaining === 0)} onClick={() => void clone()}>{busy === "clone" ? "Đang nhân bản…" : "Nhân bản giọng nói"}</button>
+            <button className={styles.cloneButton} disabled={Boolean(busy) || !consent || !cloneName.trim() || !cloneFile} onClick={() => void clone()}>{busy === "clone" ? "Đang nhân bản…" : "Nhân bản giọng nói"}</button>
           </section>
         </aside>
       </div>

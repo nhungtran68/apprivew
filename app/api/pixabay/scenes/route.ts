@@ -1,6 +1,8 @@
 import { StudioError } from "@/lib/studio-contract";
 import { planStockScenes, validStockAspectRatio, validStockScript } from "@/lib/stock-scenes";
-import { apiError, consumeAiUnits, json, limitedJson, providerKey, requestUser } from "@/lib/studio-server";
+import { apiError, json, limitedJson, providerKey, requestUser } from "@/lib/studio-server";
+import { runWithCredits } from "@/lib/studio-credit-operation";
+import { creditRates } from "@/lib/studio-credits";
 
 export const runtime = "nodejs";
 export const maxDuration = 240;
@@ -15,6 +17,7 @@ export async function POST(request: Request) {
     const { key } = await providerKey(userId, "deepseek");
     if (!process.env.PIXABAY_API_KEY?.trim())
       throw new StudioError("PIXABAY_NOT_CONFIGURED", "Kho video chưa được cấu hình. Vui lòng liên hệ quản trị viên.", 503, "contact_admin");
-    return json(await planStockScenes(key, { script, aspectRatio }, () => consumeAiUnits(userId, 1)));
+    return json(await runWithCredits(request, userId, "scenePlan", creditRates.scenePlan,
+      () => planStockScenes(key, { script, aspectRatio }, async () => {})));
   } catch (error) { return apiError(error); }
 }

@@ -67,7 +67,7 @@ export default function PixabayVideoPicker({ onSelect, disabled = false }: { onS
     try {
       const response = await fetch("/api/pixabay/video", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
         body: JSON.stringify({ id: video.id, quality: video.size > 60 * 1024 * 1024 ? "small" : "medium" }),
       });
       if (!response.ok) throw new Error(await errorFrom(response, "Chưa tải được cảnh đã chọn."));
@@ -75,6 +75,7 @@ export default function PixabayVideoPicker({ onSelect, disabled = false }: { onS
       if (Number.isFinite(length) && length > 60 * 1024 * 1024) throw new Error("Cảnh này lớn hơn 60 MB. Hãy chọn cảnh khác.");
       const blob = await response.blob();
       if (!blob.size || blob.size > 60 * 1024 * 1024) throw new Error("Cảnh này chưa phù hợp để xuất video. Hãy chọn cảnh khác.");
+      window.dispatchEvent(new Event("studio-credits-changed"));
       await onSelect(new File([blob], `thu-vien-${video.id}.mp4`, { type: "video/mp4" }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Chưa dùng được cảnh này. Hãy thử cảnh khác.");

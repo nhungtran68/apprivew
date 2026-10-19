@@ -1,10 +1,9 @@
 import "server-only";
-import { StudioError, cleanText, pcmToWav, type StudioSegment } from "./studio-contract";
-import { authorizedVoiceRows, consumeAiUnits, consumeVoiceClone, modelNames, providerKey, providerResponse, saveAuthorizedVoice, saveSharedVoiceList } from "./studio-server";
-import { shortenSegment } from "./studio-deepseek";
-import { removeOwnedMedia, storeNarration } from "./studio-supabase";
+import { StudioError, cleanText, type StudioSegment } from "./studio-contract";
+import { authorizedVoiceRows, providerKey, providerResponse, saveAuthorizedVoice, saveSharedVoiceList } from "./studio-server";
 import { assertLibraryEntitlement, libraryCatalog, type LibraryVoice } from "./studio-voice-catalog";
 const BASE = "https://api.elevenlabs.io/v1";
+const paidElevenUnavailable = () => new StudioError("VOICE_PRICING_UNAVAILABLE", "Tạm thời chưa mở tính phí giọng ElevenLabs. Quản trị viên cần cấu hình bảng giá trước khi bật dịch vụ này.", 503, "contact_admin");
 export type StudioVoice = { voiceId: string; name: string; category: string; previewUrl?: string; group?: "vietnamese" | "popular" | "personal" | "default"; language?: string; accent?: string; gender?: string; description?: string; users?: number; freeAllowed?: boolean };
 type ProviderVoice = { voice_id?: string; name?: string; category?: string; preview_url?: string; sharing?: { original_voice_id?: string; public_owner_id?: string; status?: string } };
 const sharedVoiceIds = () => new Set((process.env.STUDIO_SHARED_VOICE_IDS || "").split(",").map((s) => s.trim()).filter(Boolean));
@@ -25,14 +24,8 @@ export async function listVoices(key: string, userId: string): Promise<StudioVoi
   return voices;
 }
 export async function cloneVoice(key: string, userId: string, name: string, files: File[]) {
-  const form = new FormData(); form.set("name", name); form.set("description", "Giọng cá nhân do chủ tài khoản thành viên xác nhận quyền sử dụng.");
-  for (const file of files) form.append("files", file, file.name || "voice-sample.webm");
-  await consumeVoiceClone(userId, 10);
-  const response = await providerResponse(await fetch(`${BASE}/voices/add`, { method: "POST", headers: { "xi-api-key": key }, body: form, signal: AbortSignal.timeout(90000) }), "ElevenLabs", "voices_write");
-  const result = await response.json() as { voice_id?: string; requires_verification?: boolean };
-  if (!result.voice_id) throw new StudioError("CLONE_FAILED", "ElevenLabs chưa trả mã giọng. Kiểm tra trước khi thử lại.", 502);
-  await saveAuthorizedVoice(userId, result.voice_id, name, result.requires_verification ? "needs_verification" : "personal");
-  return { voiceId: result.voice_id, name, requiresVerification: Boolean(result.requires_verification) };
+  // Paid ElevenLabs calls must not fall through to the old, non-credit quota.
+  throw paidElevenUnavailable();
 }
 export async function authorizeVoice(userId: string, voiceId: string) {
   if (!/^[a-zA-Z0-9_-]{5,100}$/.test(voiceId)) throw new StudioError("INVALID_VOICE", "Chọn một giọng trong danh sách của bạn.");
@@ -65,38 +58,11 @@ export async function authorizeVoice(userId: string, voiceId: string) {
   // The provider remains the authority for voice verification before generation.
   return voiceId;
 }
-async function synthesize(key: string, userId: string, voiceId: string, segment: StudioSegment, previousText: string, nextText: string) {
-  await consumeAiUnits(userId, Math.max(1, Math.ceil(segment.text.length / 100)));
-  const response = await providerResponse(await fetch(`${BASE}/text-to-speech/${encodeURIComponent(voiceId)}?output_format=pcm_24000`, { method: "POST", headers: { "xi-api-key": key, "Content-Type": "application/json", Accept: "audio/pcm" }, body: JSON.stringify({ text: segment.text, model_id: modelNames().voiceModel, language_code: "vi", previous_text: previousText || undefined, next_text: nextText || undefined, voice_settings: { stability: 0.5, similarity_boost: 0.75 } }), signal: AbortSignal.timeout(90000) }), "ElevenLabs", "text_to_speech");
-  const pcm = new Uint8Array(await response.arrayBuffer());
-  if (pcm.length < 480 || pcm.length > 12000000 || pcm.length % 2) throw new StudioError("INVALID_AUDIO", "Âm thanh trả về không hợp lệ.", 502);
-  return { pcm, duration: pcm.length / 48000 };
-}
-
 /** A continuous voice-over keeps the approved script intact; video timing is set afterwards. */
 export async function generateElevenVoiceOver(input: { key: string; userId: string; voiceId: string; text: string }) {
-  const audio = await synthesize(input.key, input.userId, input.voiceId, { start: 0, end: 180, text: input.text }, "", "");
-  const media = await storeNarration(input.userId, pcmToWav(audio.pcm), 0);
-  return { ...media, audioMime: "audio/wav" as const, duration: audio.duration, voiceId: input.voiceId, provider: "eleven" as const };
+  throw paidElevenUnavailable();
 }
 
 export async function generateSpeech(input: { key: string; userId: string; voiceId: string; segments: StudioSegment[]; duration: number }) {
-  const results: (StudioSegment & { audioUrl: string; audioPath: string; audioMime: "audio/wav"; duration: number; revised: boolean })[] = [];
-  const stored: string[] = [];
-  try {
-    for (let index = 0; index < input.segments.length; index++) {
-      let segment = { ...input.segments[index] }, audio: Awaited<ReturnType<typeof synthesize>> | undefined;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        audio = await synthesize(input.key, input.userId, input.voiceId, segment, results.at(-1)?.text || "", input.segments[index + 1]?.text || "");
-        if (audio.duration <= segment.end - segment.start) break;
-        if (attempt === 2) throw new StudioError("TIMING_NEEDS_EDIT", `Lời đoạn ${index + 1} vẫn dài hơn cảnh. Rút gọn rồi tạo lại; app không cắt mất lời.`, 422, "script");
-        const { key } = await providerKey(input.userId, "deepseek");
-        segment = { ...segment, text: await shortenSegment(key, segment, audio.duration, () => consumeAiUnits(input.userId, 1)) };
-      }
-      if (!audio) throw new StudioError("EMPTY_AUDIO", "Chưa tạo được âm thanh.", 502);
-      const media = await storeNarration(input.userId, pcmToWav(audio.pcm), index); stored.push(media.audioPath);
-      results.push({ ...segment, ...media, audioMime: "audio/wav", duration: audio.duration, revised: segment.text !== input.segments[index].text });
-    }
-    return { segments: results, duration: input.duration, voiceId: input.voiceId, sampleRate: 24000, channels: 1 };
-  } catch (error) { await removeOwnedMedia(input.userId, stored).catch(() => {}); throw error; }
+  throw paidElevenUnavailable();
 }

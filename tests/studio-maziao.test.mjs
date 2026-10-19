@@ -76,6 +76,14 @@ async function harness() {
   };
   const mocks = new Map([
     [path.join(root, "lib/studio-server.ts"), server],
+    [path.join(root, "lib/studio-credit-operation.ts"), { creditRequestId: () => crypto.randomUUID() }],
+    [path.join(root, "lib/studio-credits.ts"), {
+      creditsForSpeech: characters => Math.ceil(characters / 100),
+      deriveCreditRequestId: async () => crypto.randomUUID(),
+      markCreditProviderTask: async () => {},
+      reserveCredits: async (_user, _requestId, _kind, credits) => { charged.push(credits); return { created: true, status: "reserved" }; },
+      settleCredits: async () => {}, refundCredits: async () => {},
+    }],
     [path.join(root, "lib/studio-eleven.ts"), {
       authorizeVoice: async () => { throw new Error("Maziao selection must not use ElevenLabs authorization"); },
       generateSpeech: async () => { throw new Error("Maziao selection must not use ElevenLabs generation"); },
@@ -180,7 +188,14 @@ const sampleSegments = () => [{ start: 0, end: 3, text: "Xin chào." }, { start:
 const shortSpeechVoice = () => scoped("publicVoice", "lingual_speech_v2");
 const exactMinimumText = "Xin chào, đây là lời đọc tiếng Việt thử nghiệm của ứng dụng Lời Kể. Chúc bạn có một ngày vui vẻ nhé!";
 const isApi = request => request.url.startsWith("https://app.maziao.com/api/");
-async function provider(h) { return h.entry("lib/studio-maziao.ts"); }
+async function provider(h) {
+  const api = await h.entry("lib/studio-maziao.ts");
+  return new Proxy(api, { get(target, property) {
+    if (property === "generateMaziaoSpeech" || property === "generateMaziaoVoiceOver") return input => target[property]({ ...input, requestId: input.requestId || crypto.randomUUID() });
+    if (property === "cloneMaziaoVoice") return (...args) => target.cloneMaziaoVoice(...args, crypto.randomUUID());
+    return target[property];
+  } });
+}
 
 function speechHandler(h, { durations = [1, 2], urls, status = "completed", onSubmit, totalCost = 34.5, omitCost = false } = {}) {
   let polls = 0, submits = 0;
@@ -733,8 +748,8 @@ await check("vieten never pads a shortened retry below its minimum or submits a 
   h.setHandler(speechHandler(h, { durations: [6] }));
   await assert.rejects(maziao.generateMaziaoSpeech({ key: h.key, userId: alice, voiceId: scoped("publicVoice"), segments, duration: 3 }), { code: "TIMING_NEEDS_EDIT", action: "script" });
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
-  // One accepted Maziao job and one attempted rewrite; no replacement quota.
-  assert.deepEqual(h.charged, [1, 1]); assert.deepEqual(h.shortened, [exactMinimumText]);
+  // One accepted Maziao job and one separate ten-credit rewrite; no replacement TTS job.
+  assert.deepEqual(h.charged, [1, 10]); assert.deepEqual(h.shortened, [exactMinimumText]);
   assert.equal(h.usage.length, 1); assert.equal(h.media.size, 0); assert.equal(segments[0].text, exactMinimumText);
 });
 
@@ -934,12 +949,12 @@ await check("clone requests enforce the short WAV sample and save only a scoped 
   const result = await maziao.cloneMaziaoVoice(h.key, alice, "Alice", [file], "female");
   assert.equal(result.voiceId, scoped("createdClone"));
   assert.equal(result.previewUrl, "https://r2-storage.maziao.com/samples/createdClone.wav");
-  assert.equal(h.grants.get(`${alice}:${scoped("createdClone")}`).source, "personal"); assert.deepEqual(h.charged, [10]);
+  assert.equal(h.grants.get(`${alice}:${scoped("createdClone")}`).source, "personal"); assert.deepEqual(h.charged, [50]);
   assert.equal(h.grants.get(`${alice}:${scoped("createdClone")}`).preview_url, result.previewUrl);
   const requestCount = h.requests.length;
   for (const duration of [1, 9]) await assert.rejects(maziao.cloneMaziaoVoice(h.key, alice, "Alice", [new File([wavBytes(duration)], "sample.wav")], "female"), { code: "MAZIAO_SAMPLE_DURATION" });
   await assert.rejects(maziao.cloneMaziaoVoice(h.key, alice, "Alice", [file, file], "female"), { code: "MAZIAO_SAMPLE_REQUIRED" });
-  assert.equal(h.requests.length, requestCount); assert.deepEqual(h.charged, [10]);
+  assert.equal(h.requests.length, requestCount); assert.deepEqual(h.charged, [50]);
 });
 
 await check("old member clones gain owner-only sample links without a new clone charge", async () => {

@@ -16,10 +16,9 @@
 .quotaCard .quotaValue { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 10px 0 18px; line-height: 1.3; color: #718075; }
 .quotaValue strong { color: #2f4b3a; font-size: 44px; font-weight: 500; letter-spacing: -1.8px; overflow-wrap: anywhere; }
 .quotaValue span { font-size: 14px; }
-.usageMeter { display: block; width: 100%; height: 8px; border: 0; border-radius: 20px; overflow: hidden; background: #eaf0eb; appearance: none; }
-.usageMeter::-webkit-meter-bar { height: 8px; border: 0; background: #eaf0eb; }
-.usageMeter::-webkit-meter-optimum-value { border-radius: 20px; background: #57765c; }
-.usageMeter::-moz-meter-bar { border-radius: 20px; background: #57765c; }
+.creditDetails { display: flex; flex-wrap: wrap; gap: 5px 18px; width: 100%; padding: 14px 0; border-top: 1px solid #e8edf7; border-bottom: 1px solid #e8edf7; color: #667085; font-size: 13px; }
+.creditDetails strong { color: #243b71; font-weight: 600; }
+.exhausted { margin-top: 16px; padding: 12px 14px; border: 1px solid #f1c4ad; border-radius: 10px; background: #fff5ef; color: #8c3f22; font-size: 13px; line-height: 1.7; }
 .quotaCard .quotaDescription { font-size: 13px; line-height: 1.75; margin-top: 14px; }
 .quotaCard .missingQuota { font-size: 15px; line-height: 1.8; margin: 16px 0 20px; }
 .quotaFooter { margin-top: auto; padding-top: 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 3px 12px; width: 100%; }
@@ -44,10 +43,19 @@
 .toolCard strong { display: block; font-size: 15px; font-weight: 500; }
 .toolCard > span > span { display: block; font-size: 13px; line-height: 1.8; color: #6c7a70; margin-top: 5px; }
 .toolCard > svg { flex-shrink: 0; color: #8b9b8e; }
-.subscriptionCard { display: flex; align-items: flex-start; gap: 22px; margin-top: 24px; background: #f8f5ed; border-color: #e9e3d7; }
-.subscriptionIcon { display: grid; place-items: center; flex-shrink: 0; width: 54px; height: 54px; color: #92805b; background: #eeeadf; border-radius: 16px; }
-.subscriptionCard h2 { margin-top: 14px; font-size: 20px; }
-.subscriptionCard p { max-width: 650px; margin-top: 8px; color: #7a7567; font-size: 14px; line-height: 1.85; }
+.subscriptionCard { display: flex; align-items: flex-start; gap: 22px; margin-top: 24px; background: #f8faff; border-color: #dfe6f4; }
+.subscriptionIcon { display: grid; place-items: center; flex-shrink: 0; width: 54px; height: 54px; color: #0b47f5; background: #eaf0ff; border-radius: 16px; }
+.subscriptionCard h2 { font-size: 20px; }
+.subscriptionCard p { max-width: 700px; margin-top: 8px; color: #667085; font-size: 14px; line-height: 1.85; }
+.rateContent { flex: 1; min-width: 0; }
+.rateList { display: grid; gap: 0; margin: 18px 0 0; padding: 0; list-style: none; }
+.rateList li { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 0; border-top: 1px solid #dfe6f4; }
+.rateList li > span { display: grid; gap: 2px; min-width: 0; }
+.rateList strong { color: #243b71; font-size: 14px; font-weight: 600; }
+.rateList small { color: #667085; font-size: 12px; line-height: 1.5; }
+.rateList b { flex-shrink: 0; color: #0b47f5; font-size: 14px; font-weight: 650; white-space: nowrap; }
+.subscriptionCard .rateFootnote { padding-top: 12px; border-top: 1px solid #dfe6f4; font-size: 12px; }
+.subscriptionCard .missingRates { margin-top: 20px; }
 .sessionSection { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 18px; margin-top: 30px; padding: 24px 2px 0; border-top: 1px solid #e0e6e0; }
 .sessionSection h2 { font-size: 15px; font-weight: 500; letter-spacing: 0; }
 .sessionSection p { color: #6c7a70; font-size: 13px; margin-top: 4px; }
@@ -70,6 +78,9 @@
   .toolIcon { width: 40px; height: 40px; border-radius: 11px; }
   .subscriptionCard { flex-direction: column; gap: 20px; }
   .subscriptionCard p { font-size: 15px; }
+  .rateContent { width: 100%; }
+  .rateList strong, .rateList b { font-size: 13px; }
+  .rateList small { font-size: 11px; }
   .loadingPanel { align-items: flex-start; gap: 14px; }
   .loadingAvatar { width: 42px; height: 42px; border-radius: 13px; }
   .loadingPanel h2 { font-size: 18px; }
