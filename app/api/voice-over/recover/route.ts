@@ -6,7 +6,7 @@ export const maxDuration = 300;
 
 export async function GET(request: Request) {
   try {
-    const userId = await requestUser(request, true);
+    const userId = await requestUser(request);
     return json({ tasks: await listPendingMaziaoVoiceOvers(userId) });
   } catch (error) { return apiError(error); }
 }
