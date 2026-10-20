@@ -64,7 +64,7 @@
 .footer a { display: inline-flex; align-items: center; gap: 8px; color: #3f568f; min-height: 44px; }
 .bottomNav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); position: fixed; z-index: 35; bottom: 0; left: 0; right: 0; padding: 7px 10px calc(7px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid #dfe6f4; background: #fffffffa; box-shadow: 0 -4px 24px #0b47f50d; }
 .bottomNav > a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px 2px; min-height: 52px; min-width: 0; font-size: 10px; font-weight: 500; color: #667085; border-radius: 10px; }
-.bottomNav > .bottomActive { color: #0b47f5; background: #edf3ff; }
+.bottomNav > .bottomActive { color: #0b47f5; background: #edf3ff; font-weight: 700; }
 .drawer { color: #f3f6ff; background: #08247f; padding: 0; margin: 0; border: 0; width: min(350px, calc(100vw - 24px)); height: 100dvh; max-height: 100dvh; max-width: 100vw; box-shadow: 8px 0 50px #10211835; }
 .drawer::backdrop { background: #07184699; backdrop-filter: blur(3px); }
 .drawerContent { padding: 16px 18px 28px; }
@@ -84,6 +84,10 @@
 .moduleNav.navActive .navIcon { color: var(--module-nav); }
 .moduleNav .activeDot { background: var(--module-nav); }
 .activeDot { width: 5px; height: 5px; margin-left: auto; flex-shrink: 0; border-radius: 50%; background: #ffa300; }
+.personalNavGroup { display: grid; gap: 2px; }
+.personalNavChild { margin-left: 24px; padding-left: 9px; border-left: 1px solid #6988d0; }
+.personalNavChild .navLink { min-height: 43px; padding: 6px 9px; font-size: 12px; }
+.personalNavChild .navIcon { width: 25px; height: 27px; }
 .helpLink { display: flex; align-items: center; min-height: 44px; gap: 12px; font-size: 12px; color: #d7e2ff; padding: 8px 12px; }
 .helpLink > svg:last-child { margin-left: auto; }
 .drawerContent > .helpLink { margin-top: 24px; }
@@ -154,8 +158,16 @@
   .footer { padding-inline: 44px; }
 }
 @media (max-width: 639px) {
+  .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; min-height: 0; padding: 10px 16px 12px; }
+  .mobileBrand { grid-column: 1; grid-row: 1; }
+  .mobileBrand .brand { font-size: 21px; }
+  .accountButton { grid-column: 2; grid-row: 1; margin-left: 0; }
+  .search { grid-column: 1; grid-row: 2; order: unset; }
+  .topbar:not(:has(.creditBadge)) .search { grid-column: 1 / -1; }
+  .creditBadge { grid-column: 2; grid-row: 2; order: unset; width: auto; min-height: 46px; padding: 6px 9px; font-size: 11px; }
   .search input { font-size: 16px; }
-  .main { scroll-margin-top: 12px; }
+  .main { padding-top: 18px; scroll-margin-top: 12px; }
+  .bottomNav > a { font-size: 11px; }
   .pageHeading > p, .panel > p { font-size: 15px; line-height: 1.8; }
   .pageHeading { margin-bottom: 22px; }
   .primaryButton, .secondaryButton { font-size: 15px; }

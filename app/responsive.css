@@ -17,6 +17,8 @@ html { min-width: 0; width: 100%; scroll-padding-top: 84px; }
 .button.primary:hover { background: var(--accent-dark); }
 .button.secondary { color: #485c42; border-color: #bdc9b5; background: #fff; }
 .capture-card .button.secondary { color: #485c42; }
+.capture-file-help { margin: -6px 0 16px; padding: 10px 13px; border: 1px solid #dbe6d4; border-radius: 10px; background: #f4f8f0; color: #3e5635; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.capture-file-help strong { color: #2d4329; }
 .main-nav>button { color: #55614c; }
 .main-nav>button.active { color: #a53c21; }
 .account-menu>summary, .avatar { color: #485c3b; }
@@ -121,6 +123,7 @@ input::placeholder, textarea::placeholder, .creator-fields input::placeholder, .
   .capture-actions, .capture-card>.capture-actions { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 0 0 18px; }
   .capture-actions>.button { width: 100%; }
   .capture-actions>.button.primary { min-height: 54px; font-size: 16px; }
+  .capture-file-help { margin: -4px 0 14px; font-size: 13px; }
   .capture-card>.camera-stage, .camera-stage { height: 180px; border-radius: 12px; }
   .camera-stage:has(video) { height: auto; min-height: 210px; max-height: 340px; }
   .camera-stage video { max-height: 340px; width: 100%; object-fit: contain; }

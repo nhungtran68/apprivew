@@ -1,9 +1,18 @@
-/* Brand color identities: royal blue + warm orange.
-   Existing tone class names stay stable so routes/data contracts do not change. */
+/* Each tool has a recognizable color while keeping the platform's soft surfaces. */
+.violet {
+  --module-accent: #6246d5;
+  --module-accent-end: #8064e8;
+  --module-ink: #302467;
+  --module-muted: #5e5583;
+  --module-surface: #f3f0ff;
+  --module-surface-end: #ebe6ff;
+  --module-soft: #fbfaff;
+  --module-border: #d8ccff;
+  --module-halo: #6246d526;
+  --module-nav: #b6a4ff;
+}
 
-.violet,
-.amber,
-.green {
+.blue {
   --module-accent: #0b47f5;
   --module-accent-end: #2768ff;
   --module-ink: #102a68;
@@ -16,17 +25,54 @@
   --module-nav: #7da2ff;
 }
 
-.blue,
-.rose,
+.amber {
+  --module-accent: #cb6900;
+  --module-accent-end: #ef9413;
+  --module-ink: #653100;
+  --module-muted: #76552e;
+  --module-surface: #fff5e6;
+  --module-surface-end: #ffebc9;
+  --module-soft: #fffbf4;
+  --module-border: #f6d69f;
+  --module-halo: #cb690026;
+  --module-nav: #ffbd69;
+}
+
+.green {
+  --module-accent: #087b75;
+  --module-accent-end: #159f97;
+  --module-ink: #125653;
+  --module-muted: #4c716e;
+  --module-surface: #e8f8f5;
+  --module-surface-end: #daf0eb;
+  --module-soft: #f6fcfa;
+  --module-border: #bee5de;
+  --module-halo: #087b7526;
+  --module-nav: #82d8cf;
+}
+
+.rose {
+  --module-accent: #ba4168;
+  --module-accent-end: #d95e85;
+  --module-ink: #6d2545;
+  --module-muted: #80556b;
+  --module-surface: #fff0f5;
+  --module-surface-end: #ffe3ee;
+  --module-soft: #fff8fa;
+  --module-border: #f2c7d7;
+  --module-halo: #ba416828;
+  --module-nav: #f08aac;
+}
+
 .slate {
-  --module-accent: #e96800;
-  --module-accent-end: #ffa300;
-  --module-ink: #6b3100;
-  --module-muted: #7c5b3d;
-  --module-surface: #fff4df;
-  --module-surface-end: #ffe8be;
-  --module-soft: #fffaf1;
-  --module-border: #ffd39a;
-  --module-halo: #e9680028;
-  --module-nav: #ffbb55;
+  --module-accent: #395c88;
+  --module-accent-end: #5780ae;
+  --module-ink: #263e5b;
+  --module-muted: #617185;
+  --module-surface: #edf3f9;
+  --module-surface-end: #e3edf6;
+  --module-soft: #f8fbfd;
+  --module-border: #cadbe9;
+  --module-halo: #395c8826;
+  --module-nav: #a6c7e5;
 }

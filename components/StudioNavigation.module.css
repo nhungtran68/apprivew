@@ -82,6 +82,13 @@
 .modeCard:hover:not(:disabled) { border-color: #9bb9ff; background: #f7f9ff; }
 .modeCardActive { border-color: #0b47f5; background: #edf3ff; box-shadow: 0 0 0 1px #0b47f5; }
 .modeIcon { display: inline-grid; place-items: center; flex: 0 0 auto; width: 43px; height: 43px; border-radius: 12px; background: #edf3ff; color: #0b47f5; }
+.modeCard:nth-child(1) { border-left: 3px solid #137655; }
+.modeCard:nth-child(1) .modeIcon { background: #e7f6ed; color: #137655; }
+.modeCard:nth-child(2) { border-left: 3px solid #b8501d; }
+.modeCard:nth-child(2) .modeIcon { background: #fff0e5; color: #b8501d; }
+.modeCard:nth-child(3) { border-left: 3px solid #6a46b5; }
+.modeCard:nth-child(3) .modeIcon { background: #f1eaff; color: #6a46b5; }
+.modeCard:nth-child(4) { border-left: 3px solid #0b47f5; }
 .modeCardActive .modeIcon { background: #d8e5ff; }
 .modeCardCopy { display: grid; gap: 4px; min-width: 0; flex: 1; }
 .modeCardCopy strong { color: #13234f; font-size: 14px; line-height: 1.3; }
