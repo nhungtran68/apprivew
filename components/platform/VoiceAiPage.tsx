@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAccount } from "./AccountProvider";
 import { PlatformIcon } from "./PlatformIcon";
-import { downloadSpeechSegments, prepareMaziaoVoiceSample, uploadVoiceSamples, cleanupAnalysisMedia } from "@/lib/studio-upload";
+import { downloadSpeechSegments } from "@/lib/studio-upload";
 import styles from "./VoiceAiPage.module.css";
 
 type Voice = { voiceId: string; name: string; category: string; group?: string; previewUrl?: string; isPersonalClone?: boolean };
@@ -29,10 +29,6 @@ export default function VoiceAiPage() {
   const [notice, setNotice] = useState("");
   const [audio, setAudio] = useState<AudioResult | null>(null);
   const [audioSrc, setAudioSrc] = useState("");
-  const [cloneName, setCloneName] = useState("");
-  const [cloneGender, setCloneGender] = useState<"female" | "male">("female");
-  const [cloneFile, setCloneFile] = useState<File | null>(null);
-  const [consent, setConsent] = useState(false);
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState("all");
   const [catalogBusy, setCatalogBusy] = useState("");
@@ -114,24 +110,6 @@ export default function VoiceAiPage() {
     finally { setBusy(""); }
   }
 
-  async function clone() {
-    if (!cloneName.trim() || !cloneFile || !consent || busy) return;
-    setBusy("clone"); setError(""); setNotice("");
-    let paths: string[] = [];
-    try {
-      const sample = await prepareMaziaoVoiceSample(cloneFile);
-      const uploaded = await uploadVoiceSamples([sample]); paths = uploaded.samplePaths;
-      const response = await fetch("/api/voices", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ name: cloneName.trim(), consent: true, samplePaths: paths, gender: cloneGender }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Không nhân bản được giọng.");
-      setCloneName(""); setCloneFile(null); setConsent(false);
-      window.dispatchEvent(new Event("studio-credits-changed"));
-      await load();
-      setSelected(data.voiceId || ""); setNotice("Đã tạo giọng cá nhân thành công.");
-    } catch (err) { setError(friendlyError(err)); }
-    finally { if (paths.length) await cleanupAnalysisMedia(paths).catch(() => {}); setBusy(""); }
-  }
-
   async function deletePersonalVoice(voice: Voice) {
     if (busy || isAdmin || !voice.isPersonalClone || deleteCandidate !== voice.voiceId) return;
     setBusy("delete"); setError(""); setNotice("");
@@ -190,6 +168,7 @@ export default function VoiceAiPage() {
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>01</span><h2>Chọn giọng nói</h2></div><button className={styles.textButton} onClick={() => void load()} disabled={Boolean(busy)}><PlatformIcon name="refresh" size={17}/> Làm mới</button></div>
             <div className={styles.filterBar}><input aria-label="Tìm kiếm giọng nói" placeholder="Tìm giọng theo tên..." value={search} onChange={e => setSearch(e.target.value)}/><select aria-label="Nhóm giọng" value={group} onChange={e => setGroup(e.target.value)}><option value="all">Tất cả giọng</option><option value="shared">Giọng thư viện</option><option value="personal">Giọng cá nhân</option></select></div>
+            <p className={styles.muted}>Muốn thêm giọng riêng? <Link href="/ca-nhan/nhan-ban-giong" className={styles.scriptLink}>Nhân bản giọng trong Cá nhân <PlatformIcon name="arrow" size={16}/></Link></p>
             {busy === "loading" && voices.length === 0 ? <p className={styles.muted}>Đang tải giọng nói đã lưu…</p> : visible.length ? <div className={styles.voiceGrid}>{visible.map(voice =>
               <article key={voice.voiceId} className={selected === voice.voiceId ? styles.voiceSelected : styles.voiceItem}>
                 <button type="button" className={styles.voiceSelectButton} disabled={Boolean(busy)} onClick={() => { setSelected(voice.voiceId); setAudio(null); setAudioSrc(""); }}>
@@ -227,16 +206,6 @@ export default function VoiceAiPage() {
             <div className={styles.sectionHeading}><div><span className={styles.step}>04</span><h2>Cấu hình âm thanh</h2></div></div>
             {([{ label: "Tốc độ", value: speed, set: setSpeed, min: 0.8, max: 1.2 }, { label: "Âm lượng", value: volume, set: setVolume, min: 0.5, max: 1.5 }, { label: "Cao độ", value: pitch, set: setPitch, min: 0.8, max: 1.2 }] as const).map(setting => <label className={styles.slider} key={setting.label}><span><strong>{setting.label}</strong><output>{setting.value.toFixed(2)}{setting.label === "Tốc độ" ? "x" : ""}</output></span><input type="range" min={setting.min} max={setting.max} step="0.05" value={setting.value} onChange={e => setting.set(Number(e.target.value))}/></label>)}
             <button className={styles.reset} onClick={() => { setSpeed(1); setVolume(1); setPitch(1); }}>Đặt lại mặc định</button>
-          </section>
-          <section className={styles.card}>
-            <div className={styles.sectionHeading}><div><span className={styles.step}>05</span><h2>Nhân bản giọng</h2></div></div>
-            <p className={styles.muted}>Tạo một giọng cá nhân từ mẫu của bạn. Hãy nghe thử giọng mới trước khi xóa giọng cũ.</p>
-            <div className={styles.quota}>50 credit cho mỗi lần nhân bản thành công</div>
-            <label className={styles.field}>Tên giọng<input value={cloneName} onChange={e => setCloneName(e.target.value)} placeholder="Ví dụ: Giọng của tôi"/></label>
-            <label className={styles.field}>Loại giọng<select value={cloneGender} onChange={e => setCloneGender(e.target.value as "female"|"male")}><option value="female">Giọng nữ</option><option value="male">Giọng nam</option></select></label>
-            <label className={styles.uploadBlock}>Chọn mẫu giọng MP3, WAV, M4A (3–8 giây)<input type="file" accept="audio/*" onChange={e => setCloneFile(e.target.files?.[0] || null)}/></label>
-            <label className={styles.consent}><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/> Tôi sở hữu giọng nói này hoặc được chủ giọng đồng ý nhân bản.</label>
-            <button className={styles.cloneButton} disabled={Boolean(busy) || !consent || !cloneName.trim() || !cloneFile} onClick={() => void clone()}>{busy === "clone" ? "Đang nhân bản…" : "Nhân bản giọng nói"}</button>
           </section>
         </aside>
       </div>

@@ -339,7 +339,7 @@ test("the actual speech screen explains Vieten's short-script limit while leavin
   }
 });
 
-test("the actual voice screen presents provider-specific clone requirements while keeping ElevenLabs uploads", () => {
+test("the legacy voice screen keeps voice browsing and sends cloning to the personal area", () => {
   for (const provider of ["maziao", "eleven"]) {
     const configuredSource = source.replace('useState<View>(initialView)', 'useState<View>("voices")')
       .replace('useState<Configuration>({ userId: "local", deepseek: false, eleven: false })', `useState<Configuration>({ userId: "member", deepseek: true, eleven: ${provider === "eleven"}, voiceProvider: "${provider}", voiceConfigured: true, maziaoConfigured: ${provider === "maziao"} })`);
@@ -347,11 +347,9 @@ test("the actual voice screen presents provider-specific clone requirements whil
     const viewModule = { exports: {} };
     new Function("require", "module", "exports", output)(componentRequire, viewModule, viewModule.exports);
     const html = renderToString(React.createElement(viewModule.exports.default));
-    assert.ok(html.includes("Tạo giọng cá nhân"), "the actual voice page should be rendered");
-    assert.equal(html.includes('id="clone-gender"'), provider === "maziao");
-    assert.equal(/id="voice-samples"[^>]*multiple=""/.test(html), provider === "eleven");
-    assert.equal(html.includes("gói ElevenLabs Starter"), provider === "eleven");
-    assert.equal(html.includes("ít nhất 3 giây"), provider === "maziao");
+    assert.ok(html.includes("Giọng của tôi"), "the actual voice page should be rendered");
+    assert.ok(html.includes('href="/ca-nhan/nhan-ban-giong"'));
+    assert.equal(html.includes('id="voice-samples"'), false);
     const refreshAttributes = html.match(/<button class="button secondary"([^>]*)>/)?.[1];
     assert.equal(typeof refreshAttributes, "string");
     assert.equal(refreshAttributes.includes("disabled"), false, "configured Maziao must not be blocked by an absent ElevenLabs key");

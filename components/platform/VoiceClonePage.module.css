@@ -1,0 +1,54 @@
+.page { max-width: 1100px; margin: 0 auto; padding: 4px 0 80px; color: #2e4738; }
+.backLink { display: inline-flex; align-items: center; gap: 9px; min-height: 44px; margin-bottom: 18px; color: #496952; font-size: 14px; font-weight: 600; }
+.backLink svg { transform: rotate(180deg); }
+.heading { margin-bottom: 25px; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; color: #9a6842; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+.heading h1 { margin: 8px 0; font-size: clamp(29px, 5vw, 40px); line-height: 1.2; }
+.heading p { max-width: 650px; color: #687b6d; font-size: 15px; line-height: 1.7; }
+.grid { display: grid; gap: 20px; align-items: start; }
+.card, .state { min-width: 0; padding: 20px; border: 1px solid #e1e7e1; border-radius: 16px; background: white; box-shadow: 0 8px 26px #20392908; }
+.cardHeading { display: flex; align-items: center; gap: 12px; }
+.icon, .voiceAvatar { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 12px; color: #a26941; background: #faf1e5; }
+.card h2, .state h2 { margin: 0; color: #2e4738; font-size: 20px; line-height: 1.35; }
+.cardHeading p, .listHeading p { margin: 5px 0 0; color: #718176; font-size: 13px; line-height: 1.5; }
+.hint { margin: 22px 0 14px; color: #64766a; font-size: 13px; line-height: 1.6; }
+.cost, .limit { margin: 0 0 10px; color: #64766a; font-size: 13px; line-height: 1.6; }
+.cost strong { color: #91582f; }
+.field { display: block; margin-top: 17px; color: #334c3b; font-size: 14px; font-weight: 600; }
+.field input, .field select { display: block; width: 100%; min-height: 48px; margin-top: 7px; padding: 10px 13px; border: 1px solid #d8e2d9; border-radius: 10px; background: #fbfdfb; color: #213b2b; font: inherit; font-weight: 400; }
+.upload { display: block; margin-top: 20px; padding: 17px; border: 1px dashed #b7c9ba; border-radius: 12px; background: #f8fbf7; color: #354e3c; cursor: pointer; }
+.upload strong, .upload span { display: block; }
+.upload span { margin-top: 4px; color: #6a7d6f; font-size: 12px; }
+.upload input { display: block; width: 100%; margin-top: 12px; font-size: 13px; }
+.selectedFile { margin: 9px 0 0; color: #52705b; font-size: 12px; overflow-wrap: anywhere; }
+.consent { display: flex; align-items: flex-start; gap: 10px; margin: 20px 0; color: #4d6352; font-size: 13px; line-height: 1.6; cursor: pointer; }
+.consent input { flex: none; width: 19px; height: 19px; margin: 1px 0 0; accent-color: #58755a; }
+.submit, .actionLink, .useVoice { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; border: 0; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; }
+.submit { width: 100%; padding: 12px 18px; color: white; background: #405d45; }
+.submit:hover { background: #314d36; }
+.submit:disabled { opacity: .55; cursor: not-allowed; }
+.listHeading { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.refresh { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 5px; border: 0; background: transparent; color: #496952; font-size: 13px; font-weight: 650; cursor: pointer; }
+.refresh:disabled { opacity: .5; cursor: wait; }
+.voiceList { display: grid; gap: 12px; margin: 20px 0 0; padding: 0; list-style: none; }
+.voiceItem { min-width: 0; padding: 15px; border: 1px solid #e0e8e1; border-radius: 12px; background: #fbfdfb; }
+.voiceName { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.voiceName strong { min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+.voiceAvatar { width: 38px; height: 38px; border-radius: 10px; }
+.player { display: block; width: 100%; height: 38px; margin-top: 13px; }
+.noPreview { margin: 12px 0 0; color: #748378; font-size: 12px; line-height: 1.6; }
+.empty { margin: 20px 0 0; padding: 20px; border-radius: 11px; background: #f7faf7; color: #6d7e71; font-size: 13px; line-height: 1.7; }
+.deleteTrigger { min-height: 44px; margin-top: 8px; padding: 0; border: 0; background: transparent; color: #a54e36; font-size: 12px; font-weight: 650; cursor: pointer; }
+.deleteConfirm { margin-top: 14px; padding: 13px; border: 1px solid #efd4ca; border-radius: 10px; background: #fff8f5; }
+.deleteConfirm p { margin: 0 0 10px; color: #874834; font-size: 12px; line-height: 1.55; }
+.deleteConfirm > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.deleteConfirm button { min-height: 42px; padding: 8px 12px; border: 1px solid #dec4ba; border-radius: 8px; background: white; color: #74412f; font-size: 12px; font-weight: 650; cursor: pointer; }
+.deleteConfirm .deleteFinal { border-color: #b44732; background: #b44732; color: white; }
+.useVoice, .actionLink { width: 100%; margin-top: 20px; padding: 11px 15px; border: 1px solid #cbdacb; background: #f5faf4; color: #375c40; text-align: center; }
+.useVoice:hover, .actionLink:hover { background: #ebf4eb; }
+.state { max-width: 600px; }
+.state p { margin: 10px 0 0; color: #65766a; line-height: 1.6; }
+.error, .success { padding: 13px 16px; border-radius: 10px; font-size: 13px; line-height: 1.6; }
+.error { border: 1px solid #f0c7bb; background: #fff4f0; color: #9a4029; }
+.success { border: 1px solid #c6dfcb; background: #f1f9f2; color: #32633d; }
+@media (min-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .card { padding: 26px; } }
