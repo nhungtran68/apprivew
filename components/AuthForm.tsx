@@ -20,7 +20,7 @@ export default function AuthForm({ configured, updatePassword = false, linkError
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Chưa hoàn tất. Hãy thử lại.");
       setPassword("");
-      if (mode === "login" || mode === "update") window.location.assign("/");
+      if (mode === "login" || mode === "update" || (mode === "register" && result.signedIn)) window.location.assign("/");
       else setMessage(result.message || "Đã gửi yêu cầu.");
     } catch (reason) { setError(true); setMessage(reason instanceof Error ? reason.message : "Kết nối gián đoạn. Hãy thử lại."); }
     finally { setBusy(false); }
