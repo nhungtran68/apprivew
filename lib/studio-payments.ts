@@ -9,9 +9,10 @@ import { createStudioSupabaseServer } from "./studio-supabase";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LINK_ID = /^[a-zA-Z0-9_-]{16,200}$/;
 const PAYOS_CHECKOUT_ORIGIN = "https://pay.payos.vn";
-const PAYOS_PRODUCTION_ORIGIN = "https://apprivew.vercel.app";
+const PAYOS_WEBHOOK_ORIGIN = "https://apprivew.vercel.app";
+const PAYOS_RETURN_ORIGIN = "https://ibeetool.com";
 const PAYOS_CHECKOUT_LIFETIME_SECONDS = 15 * 60;
-export const PAYOS_PRODUCTION_WEBHOOK = `${PAYOS_PRODUCTION_ORIGIN}/api/payments/payos/webhook`;
+export const PAYOS_PRODUCTION_WEBHOOK = `${PAYOS_WEBHOOK_ORIGIN}/api/payments/payos/webhook`;
 
 export type PaymentPack = {
   id: string;
@@ -293,8 +294,8 @@ export async function createPaymentOrder(userId: string, packId: string, request
   const order = parseOrder(data as Record<string, unknown>);
   if (order.checkoutUrl || order.status !== "pending") return order;
 
-  const returnUrl = `${PAYOS_PRODUCTION_ORIGIN}/nap-credit?orderCode=${code}`;
-  const cancelUrl = `${PAYOS_PRODUCTION_ORIGIN}/nap-credit?orderCode=${code}&cancelled=1`;
+  const returnUrl = `${PAYOS_RETURN_ORIGIN}/nap-credit?orderCode=${code}`;
+  const cancelUrl = `${PAYOS_RETURN_ORIGIN}/nap-credit?orderCode=${code}&cancelled=1`;
   const description = `CR${String(code).slice(-7)}`; // <= 9 ASCII characters for bank compatibility.
   const payload = {
     orderCode: code, amount: order.priceVnd, description,
