@@ -24,8 +24,10 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
     {getVisibleModules().map(module => <div key={module.id}>{navLink(moduleHref(module), module.shortTitle, module.icon, module.tone)}</div>)}
     <p className={styles.navLabel}>KHÔNG GIAN CỦA BẠN</p>
     {navLink("/thu-vien", "Thư viện của tôi", "folder")}
-    {navLink("/ca-nhan", "Tài khoản cá nhân", "user")}
-    {navLink("/ca-nhan/nhan-ban-giong", "Nhân bản giọng", "voice")}
+    <div className={styles.personalNavGroup}>
+      {navLink("/ca-nhan", "Tài khoản cá nhân", "user")}
+      <div className={styles.personalNavChild}>{navLink("/ca-nhan/nhan-ban-giong", "Nhân bản giọng", "voice")}</div>
+    </div>
     {navLink("/nap-credit", "Nạp credit", "plus")}
     {account?.isAdmin ? navLink("/quan-tri", "Quản trị nền tảng", "shield") : null}
   </nav>;

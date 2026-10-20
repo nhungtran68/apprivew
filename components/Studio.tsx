@@ -251,6 +251,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
   const [exportMessage, setExportMessage] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [readingVideo, setReadingVideo] = useState("");
   const [scriptInstruction, setScriptInstruction] = useState("");
   const [builtinScriptTypes, setBuiltinScriptTypes] = useState<BuiltinScriptType[]>(FORMATS.map(item => ({ format: item.id, title: item.name, description: item.note })));
   const [customScriptTypes, setCustomScriptTypes] = useState<ScriptType[]>([]);
@@ -264,6 +265,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
   const recognition = useRef<BrowserRecognition | null>(null);
   const startedAt = useRef(0);
   const uploadInput = useRef<HTMLInputElement>(null);
+  const projectInput = useRef<HTMLInputElement>(null);
   const narrationInput = useRef<HTMLInputElement>(null);
   const projectRef = useRef(project);
   const accountDefaultsRef = useRef<Profile>({...EMPTY_PROFILE});
@@ -430,6 +432,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
   async function startRecording() {
     if (busy || recording) return;
     ++uploadToken.current;
+    setReadingVideo("");
     try {
       if (typeof MediaRecorder === "undefined") throw new Error("Trình duyệt này chưa hỗ trợ quay trực tiếp. Hãy quay bằng camera điện thoại và chọn Tải video lên.");
       const active = streamRef.current?.active ? streamRef.current : await camera();
@@ -459,6 +462,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
     if (busy) { notify("Hãy chờ thao tác hiện tại hoàn tất trước khi đổi video."); return; }
     if (recording) { notify("Hãy dừng quay trước khi chọn video khác."); return; }
     const token = ++uploadToken.current;
+    setReadingVideo("");
     if (file.name.endsWith(".loike") || file.name.endsWith(".json")) {
       try {
         if (file.size > 180 * 1024 * 1024) throw new Error("Bản sao dự án quá lớn. Giới hạn tệp nhập là 180 MB.");
@@ -475,10 +479,12 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
     if (!file.type.startsWith("video/") && !/\.(mp4|mov|webm|m4v|avi)$/i.test(file.name)) { notify("Hãy chọn một tệp video MP4, MOV hoặc WebM.", "error"); return; }
     if (file.size > 60 * 1024 * 1024) { notify("Bản đầu hỗ trợ video tối đa 60 MB. Hãy chọn hoặc cắt một đoạn ngắn hơn trước khi tải lên.", "error"); return; }
     stopCamera();
+    setReadingVideo(file.name);
     const metadataVideo = document.createElement("video"); const url = URL.createObjectURL(file);
     metadataVideo.preload = "metadata"; metadataVideo.src = url;
     metadataVideo.onloadedmetadata = () => {
       if (token !== uploadToken.current) { URL.revokeObjectURL(url); return; }
+      setReadingVideo("");
       const duration = Number.isFinite(metadataVideo.duration) ? metadataVideo.duration : 0;
       if (duration > 90 || (duration > 0 && duration < 2)) { URL.revokeObjectURL(url); notify("Hãy chọn một video dài từ 2 đến 90 giây cho câu chuyện này.", "error"); return; }
       const source = file.type ? file : new File([file], file.name, { type: /\.webm$/i.test(file.name) ? "video/webm" : /\.mov$/i.test(file.name) ? "video/quicktime" : "video/mp4" });
@@ -486,7 +492,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
       setView("studio"); URL.revokeObjectURL(url);
       if (!duration) notify("Đã mở video. Chưa đọc được thời lượng; hãy nhập số giây ở phần thông tin video."); else notify("Video đã sẵn sàng. Câu chuyện của bạn bắt đầu từ đây.", "success");
     };
-    metadataVideo.onerror = () => { URL.revokeObjectURL(url); notify("Trình duyệt chưa đọc được video này. Hãy thử bản MP4 H.264.", "error"); };
+    metadataVideo.onerror = () => { URL.revokeObjectURL(url); if (token === uploadToken.current) { setReadingVideo(""); notify("Trình duyệt chưa đọc được video này. Hãy thử bản MP4 H.264.", "error"); } };
   }
   async function toggleIntentRecording() {
     if (intentRecording) { recognition.current?.stop(); return; }
@@ -719,8 +725,8 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
       setLeavingStudio(false);
     }
   }
-  function newProject() { ++uploadToken.current; ++narrationToken.current; setNarrationChecking(false); flushCurrentProject(); stopCamera(); setProject(freshProject(config.userId, accountDefaultsRef.current)); setIntentInterim(""); setExported(undefined); setView("studio"); setSaveState("Sẵn sàng lưu"); }
-  function openProject(item: Project) { ++uploadToken.current; ++narrationToken.current; setNarrationChecking(false); flushCurrentProject(); stopCamera(); setProject(item.id === projectRef.current.id ? projectRef.current : item); setView("studio"); if(item.id!==projectRef.current.id) setExported(undefined); }
+  function newProject() { ++uploadToken.current; ++narrationToken.current; setReadingVideo(""); setNarrationChecking(false); flushCurrentProject(); stopCamera(); setProject(freshProject(config.userId, accountDefaultsRef.current)); setIntentInterim(""); setExported(undefined); setView("studio"); setSaveState("Sẵn sàng lưu"); }
+  function openProject(item: Project) { ++uploadToken.current; ++narrationToken.current; setReadingVideo(""); setNarrationChecking(false); flushCurrentProject(); stopCamera(); setProject(item.id === projectRef.current.id ? projectRef.current : item); setView("studio"); if(item.id!==projectRef.current.id) setExported(undefined); }
   async function deleteProject() {
     if (!deleteTarget) return;
     deletedProjectIds.current.add(deleteTarget.id);
@@ -808,7 +814,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
       {view === "studio" && (!embedded || videoMode === "record" || videoMode === "upload") ? <>
         <div className="project-bar">
           <div>{hasClip ? <input className="project-name" aria-label="Tên dự án" value={visibleProjectTitle(project.title)} onChange={event => update({ title: event.target.value })} /> : <span className="project-name-static">Video mới</span>}<span className="save-label"><Icon name="check" size={13} />{saveState}</span></div>
-          <details className="project-menu"><summary aria-label="Tùy chọn dự án">···</summary><div><button onClick={newProject} disabled={working}><Icon name="plus" size={18} />Tạo video mới</button><button onClick={() => void exportProject()} disabled={!hasClip || working}><Icon name="folder" size={18} />Tải bản sao dự án</button><button onClick={() => uploadInput.current?.click()} disabled={working}><Icon name="upload" size={18} />Nhập dự án</button></div></details>
+          <details className="project-menu"><summary aria-label="Tùy chọn dự án">···</summary><div><button onClick={newProject} disabled={working}><Icon name="plus" size={18} />Tạo video mới</button><button onClick={() => void exportProject()} disabled={!hasClip || working}><Icon name="folder" size={18} />Tải bản sao dự án</button><button onClick={() => projectInput.current?.click()} disabled={working}><Icon name="upload" size={18} />Nhập dự án</button></div></details>
         </div>
 
         <div className="mobile-progress"><span>Bước {step+1} / 5</span><strong>{step === 0 && videoMode === "upload" ? "Tải video lên" : STEPS[step]}</strong></div>
@@ -821,6 +827,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
           <div className="capture-actions">
             {recording ? <button className="button primary large recording-button" onClick={stopRecording}><span className="stop-square" />Dừng quay</button> : hasClip ? <><button className="button primary large" onClick={() => navigateStep(1)}>Dùng video này<Icon name="arrow" /></button><button className="button secondary large" onClick={() => videoMode === "upload" ? uploadInput.current?.click() : void startRecording()} disabled={Boolean(busy) || !ready}><Icon name={videoMode === "upload" ? "upload" : "camera"} />{videoMode === "upload" ? "Chọn video khác" : "Quay lại"}</button></> : videoMode === "upload" ? <button className="button primary large" onClick={() => uploadInput.current?.click()}><Icon name="upload" />Chọn video từ thiết bị</button> : <><button className="button primary large" onClick={() => void startRecording()} disabled={Boolean(busy) || !ready}><span className="record-circle" />Quay video</button>{!embedded ? <button className="button secondary large" onClick={() => uploadInput.current?.click()}><Icon name="upload" />Tải video lên</button> : null}</>}
           </div>
+          {videoMode === "upload" || (!embedded && !hasClip) ? <p className="capture-file-help" role="status">{readingVideo ? <>Đang đọc video <strong>{readingVideo}</strong>…</> : hasClip ? <>Đã chọn: <strong>{project.sourceName || "Video của bạn"}</strong> · {fileSize(project.source?.size || 0)} · {time(project.duration)}</> : "Chọn video MP4, MOV hoặc WebM · 2–90 giây · tối đa 60 MB. Video mở ngay trên thiết bị."}</p> : null}
           <div className={`camera-stage ${stream ? "camera-live" : ""} ${dragging ? "dragging" : ""}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); void ingestFile(event.dataTransfer.files[0]); }}>
             {stream ? <video ref={cameraVideo} className={`live-camera ${facing === "user" ? "mirrored" : ""}`} autoPlay muted playsInline /> : hasClip ? <video className="source-preview" src={sourceUrl || undefined} controls playsInline preload="metadata" /> : <div className="camera-empty"><div className="camera-orbit"><Icon name={videoMode === "upload" ? "upload" : "camera"} size={44} /><span>✦</span></div><strong>{videoMode === "upload" ? "Chọn video để bắt đầu." : "Sẵn sàng khi bạn muốn quay."}</strong><p>{videoMode === "upload" ? "MP4, MOV hoặc WebM từ điện thoại hay máy tính." : "Giữ máy vững và quay thật tự nhiên."}</p></div>}
             {recording ? <div className="recording-timer"><span />{time(recordSeconds)}</div> : null}
@@ -881,7 +888,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
 
       {view === "profile" ? <section className="step-card creator-page" aria-labelledby="creator-title"><div className="step-heading"><span className="step-kicker">PHONG CÁCH RIÊNG CỦA BẠN</span><h1 id="creator-title">Để AI hiểu bạn hơn</h1><p>Điền một lần, dùng cho nhiều video. Viết bằng cách nói tự nhiên của bạn.</p></div><ProfileEditor profile={accountProfile} onChange={changes=>setAccountProfile(current=>({...current,...changes}))} />{settingsError ? <p className="settings-error" role="alert">{settingsError}</p> : null}<div className="step-actions"><button className="text-button" onClick={()=>setView("studio")}>Quay lại video</button><button className="button primary large" onClick={()=>void saveSettings()} disabled={settingsSaving || !config.authenticated}>{settingsSaving ? <Spinner /> : <Icon name="check" size={18} />}{settingsSaving ? "Đang lưu…" : "Lưu phong cách của tôi"}</button></div>{!config.authenticated ? <p className="helper-text"><a href="/dang-nhap">Đăng nhập</a> để lưu hồ sơ riêng trong tài khoản.</p> : null}</section> : null}
 
-      {view === "projects" ? <section className="library-page"><div className="view-heading"><div><h1>Video của tôi</h1><p>Tiếp tục những câu chuyện bạn đã bắt đầu.</p></div><button className="button primary" onClick={newProject}><Icon name="plus" size={19} />Tạo video</button></div>{projects.length ? <div className="project-grid">{projects.map(item => <ProjectCard key={item.id} project={item} onOpen={() => openProject(item)} onExport={() => void exportProject(item)} onDelete={() => setDeleteTarget(item)} />)}</div> : <div className="large-empty"><span className="empty-icon"><Icon name="folder" size={36} /></span><h2>Chưa có video nào</h2><p>Quay video đầu tiên để bắt đầu câu chuyện của bạn.</p><button className="button primary large" onClick={newProject}><Icon name="camera" size={19} />Tạo video đầu tiên</button></div>}<div className="library-bottom"><p><Icon name="lock" size={16} />Dự án lưu trong trình duyệt này. Tải bản sao để giữ hoặc chuyển thiết bị.</p><button className="text-button" onClick={() => uploadInput.current?.click()}><Icon name="upload" size={17} />Nhập bản sao dự án</button></div></section> : null}
+      {view === "projects" ? <section className="library-page"><div className="view-heading"><div><h1>Video của tôi</h1><p>Tiếp tục những câu chuyện bạn đã bắt đầu.</p></div><button className="button primary" onClick={newProject}><Icon name="plus" size={19} />Tạo video</button></div>{projects.length ? <div className="project-grid">{projects.map(item => <ProjectCard key={item.id} project={item} onOpen={() => openProject(item)} onExport={() => void exportProject(item)} onDelete={() => setDeleteTarget(item)} />)}</div> : <div className="large-empty"><span className="empty-icon"><Icon name="folder" size={36} /></span><h2>Chưa có video nào</h2><p>Quay video đầu tiên để bắt đầu câu chuyện của bạn.</p><button className="button primary large" onClick={newProject}><Icon name="camera" size={19} />Tạo video đầu tiên</button></div>}<div className="library-bottom"><p><Icon name="lock" size={16} />Dự án lưu trong trình duyệt này. Tải bản sao để giữ hoặc chuyển thiết bị.</p><button className="text-button" onClick={() => projectInput.current?.click()}><Icon name="upload" size={17} />Nhập bản sao dự án</button></div></section> : null}
 
       {view === "voices" ? <section className="library-page"><div className="view-heading"><div><h1>Giọng của tôi</h1><p>Nghe mẫu, rồi chọn giọng hợp câu chuyện.</p></div><button className="button secondary" onClick={() => void loadVoices()} disabled={!voiceReady || voicesLoading}><Icon name="refresh" size={18} />{voicesLoading ? "Đang tải…" : "Làm mới"}</button></div><VoiceFilter value={voiceFilter} onChange={setVoiceFilter} voices={voices} provider={voiceProvider} /><p className="voice-plan-note">{voicePlanNote}</p><p className="voice-library-note">{isMaziao ? "Giọng tiếng Việt được ưu tiên cho kể chuyện và review. Giọng cá nhân của bạn chỉ hiện trong tài khoản này." : "Tiếng Việt được ưu tiên theo mục đích kể chuyện, review và video mạng xã hội. Số người đã thêm lấy từ ElevenLabs, không phải điểm đánh giá chất lượng."}</p><div className="step-card voice-library-card">{!voiceReady ? <div className="empty-small"><Icon name="mic" size={36} /><h2>Giọng đọc AI chưa sẵn sàng</h2><p>Quản trị viên sẽ kết nối tính năng này cho tài khoản của bạn.</p></div> : voicesLoading ? <div className="empty-small"><Spinner /><p>Đang tải những giọng bạn có thể dùng…</p></div> : filteredVoices.length ? <div className="voice-list">{filteredVoices.map(voice => <div className="voice-list-item" key={voice.voice_id || voice.id}><span className="voice-avatar"><Icon name="mic" size={22} /></span><div><strong>{voice.name}</strong><VoiceDetail voice={voice} /></div><button className={`button ${project.voiceId === (voice.voice_id || voice.id) ? "selected-voice" : "secondary"}`} onClick={() => { update({ voiceId: voice.voice_id || voice.id || "", step: hasClip && project.segments.some(segment => segment.text.trim()) ? 3 : step }); notify(`Đã chọn giọng ${voice.name}.`, "success"); if(hasClip) setView("studio"); }}>{project.voiceId === (voice.voice_id || voice.id) ? <><Icon name="check" size={17} />Đã chọn</> : "Dùng giọng"}</button></div>)}</div> : <div className="empty-small"><Icon name="mic" size={36} /><h2>Chưa có giọng trong nhóm này</h2><p>Thử làm mới hoặc chọn nhóm Tất cả. Bạn có thể nhân bản giọng trong mục Cá nhân.</p></div>}</div><a className="button secondary" href="/ca-nhan/nhan-ban-giong"><Icon name="plus" size={18} />Nhân bản giọng trong Cá nhân</a>{hasClip ? <button className="text-button return-studio" onClick={() => setView("studio")}>Quay lại video đang làm<Icon name="arrow" size={17} /></button> : null}</section> : null}
 
@@ -889,7 +896,8 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
       {!embedded ? <footer className="app-footer"><span>Lời Kể<span className="brand-dot">.</span> Câu chuyện của bạn, giọng nói của bạn.</span><button onClick={() => setView("guide")} disabled={working}>Cần hướng dẫn?</button></footer> : null}
     </WorkspaceTag>
 
-    <input ref={uploadInput} className="visually-hidden" type="file" accept="video/*,.loike,.json" aria-label="Chọn video hoặc bản sao dự án" disabled={navigationLocked} onChange={event => { void ingestFile(event.target.files?.[0]); event.target.value = ""; }} />
+    <input ref={uploadInput} className="visually-hidden" type="file" accept="video/*" aria-label="Chọn video từ thiết bị" disabled={navigationLocked} onChange={event => { void ingestFile(event.target.files?.[0]); event.target.value = ""; }} />
+    <input ref={projectInput} className="visually-hidden" type="file" accept=".loike,.json,application/json" aria-label="Chọn bản sao dự án" disabled={navigationLocked} onChange={event => { void ingestFile(event.target.files?.[0]); event.target.value = ""; }} />
     <input ref={narrationInput} className="visually-hidden" type="file" accept="audio/*" aria-label="Chọn tệp lời thoại" disabled={navigationLocked} onChange={event => { void ingestNarration(event.target.files?.[0]); event.target.value = ""; }} />
     <div inert={navigationLocked}>
     {notice ? <div className={`toast ${notice.type}`} role={notice.type === "error" ? "alert" : "status"}><Icon name={notice.type === "success" ? "check" : "info"} size={21} /><p>{notice.text}</p><button className="icon-button" onClick={() => setNotice(null)} aria-label="Đóng thông báo"><Icon name="close" size={19} /></button></div> : null}

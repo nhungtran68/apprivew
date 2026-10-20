@@ -20,7 +20,7 @@ export const aiModules: readonly AiModule[] = [
     slug: "giong-noi-ai",
     title: "Tạo giọng nói AI",
     shortTitle: "Giọng nói",
-    description: "Chuyển văn bản thành giọng nói, nhân bản giọng và xử lý âm thanh.",
+    description: "Chuyển văn bản thành giọng nói, nghe thử và tải âm thanh.",
     category: "audio",
     icon: "voice",
     tone: "violet",
