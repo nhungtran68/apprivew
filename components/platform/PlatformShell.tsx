@@ -25,6 +25,7 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
     <p className={styles.navLabel}>KHÔNG GIAN CỦA BẠN</p>
     {navLink("/thu-vien", "Thư viện của tôi", "folder")}
     {navLink("/ca-nhan", "Tài khoản cá nhân", "user")}
+    {navLink("/ca-nhan/nhan-ban-giong", "Nhân bản giọng", "voice")}
     {navLink("/nap-credit", "Nạp credit", "plus")}
     {account?.isAdmin ? navLink("/quan-tri", "Quản trị nền tảng", "shield") : null}
   </nav>;
@@ -44,7 +45,7 @@ function ShellContent({ children }: { children: ReactNode }) {
     return () => media.removeEventListener("change", closeOnDesktop);
   }, []);
   const tool = getVisibleModules().find(module => pathname === moduleHref(module));
-  const title = tool?.title || ({ "/": "Tổng quan", "/thu-vien": "Thư viện của tôi", "/ca-nhan": "Tài khoản cá nhân", "/nap-credit": "Nạp credit", "/huong-dan": "Hướng dẫn bắt đầu" }[pathname] || "Không gian sáng tạo");
+  const title = tool?.title || ({ "/": "Tổng quan", "/thu-vien": "Thư viện của tôi", "/ca-nhan": "Tài khoản cá nhân", "/ca-nhan/nhan-ban-giong": "Nhân bản giọng", "/nap-credit": "Nạp credit", "/huong-dan": "Hướng dẫn bắt đầu" }[pathname] || "Không gian sáng tạo");
   return <div className={styles.platform}>
     <a href="#noi-dung-chinh" className={styles.skipLink}>Đến nội dung chính</a>
     <aside className={styles.sidebar}>
@@ -70,7 +71,7 @@ function ShellContent({ children }: { children: ReactNode }) {
     </div>
     <nav className={styles.bottomNav} aria-label="Điều hướng trên điện thoại">
       {[{ href: "/", label: "Tổng quan", icon: "home" as const }, { href: "/#cong-cu", label: "Công cụ AI", icon: "spark" as const }, { href: "/thu-vien", label: "Thư viện", icon: "folder" as const }, { href: "/ca-nhan", label: "Cá nhân", icon: "user" as const }].map(item => {
-        const active = item.href === "/#cong-cu" ? pathname.startsWith("/cong-cu/") : pathname === item.href;
+        const active = item.href === "/#cong-cu" ? pathname.startsWith("/cong-cu/") : item.href === "/ca-nhan" ? pathname === "/ca-nhan" || pathname.startsWith("/ca-nhan/") : pathname === item.href;
         return <Link key={item.href} href={item.href} className={active ? styles.bottomActive : ""} aria-current={active ? "page" : undefined}><PlatformIcon name={item.icon} size={22} /><span>{item.label}</span></Link>;
       })}
     </nav>

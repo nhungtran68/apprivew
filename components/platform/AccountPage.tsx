@@ -88,9 +88,10 @@ export default function AccountPage() {
     </section>}
 
     <section className={styles.toolsSection} aria-labelledby="personal-tools-heading">
-      <div className={shared.sectionHeading}><div><h2 id="personal-tools-heading">Thiết lập của bạn</h2><p>Tiếp tục sử dụng các thiết lập đã có trong Studio.</p></div></div>
+      <div className={shared.sectionHeading}><div><h2 id="personal-tools-heading">Thiết lập của bạn</h2><p>Quản lý hồ sơ, giọng nói và những thiết lập riêng.</p></div></div>
       <div className={styles.toolGrid}>
         <Link href="/studio?view=profile" prefetch={false} className={styles.toolCard}><span className={styles.toolIcon}><PlatformIcon name="user" /></span><span><strong>Hồ sơ & phong cách</strong><span>Cập nhật thông tin, sản phẩm và cách bạn muốn kể chuyện.</span></span><PlatformIcon name="arrow" size={19} /></Link>
+        <Link href="/ca-nhan/nhan-ban-giong" className={styles.toolCard}><span className={`${styles.toolIcon} ${styles.voiceIcon}`}><PlatformIcon name="voice" /></span><span><strong>Nhân bản giọng</strong><span>Tạo giọng riêng từ bản thu mẫu và nghe lại giọng của bạn.</span></span><PlatformIcon name="arrow" size={19} /></Link>
         <Link href="/studio?view=voices" prefetch={false} className={styles.toolCard}><span className={`${styles.toolIcon} ${styles.voiceIcon}`}><PlatformIcon name="voice" /></span><span><strong>Giọng nói của tôi</strong><span>Mở thư viện giọng nói và quản lý giọng đọc trong Studio.</span></span><PlatformIcon name="arrow" size={19} /></Link>
         {status === "ready" && account?.isAdmin ? <Link href="/quan-tri" className={`${styles.toolCard} ${styles.adminCard}`}><span className={styles.toolIcon}><PlatformIcon name="shield" /></span><span><strong>Trang quản trị</strong><span>Quản lý thành viên, quyền truy cập và cấp credit.</span></span><PlatformIcon name="arrow" size={19} /></Link> : null}
       </div>
