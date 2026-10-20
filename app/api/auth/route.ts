@@ -1,6 +1,7 @@
 import { createStudioSupabaseServer } from "@/lib/studio-supabase";
 import { apiError, json, limitedJson } from "@/lib/studio-server";
 import { StudioError } from "@/lib/studio-contract";
+import { describeSignupError } from "@/lib/studio-signup-errors";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
@@ -34,8 +35,12 @@ export async function POST(request: Request) {
     if (action === "register") {
       const name = typeof body.name === "string" ? body.name.trim().slice(0, 100) : "";
       const result = await client.auth.signUp({ email, password, options: { data: { display_name: name }, emailRedirectTo: `${origin}/auth/callback` } });
-      if (result.error) throw new StudioError("REGISTER_FAILED", "Chưa tạo được tài khoản. Kiểm tra email, mật khẩu hoặc liên hệ quản trị viên.", 422);
-      return json({ ok: true, message: "Đã gửi yêu cầu đăng ký. Xác nhận email nếu có thư, rồi chờ quản trị viên cấp quyền." });
+      if (result.error) {
+        const failure = describeSignupError(result.error);
+        throw new StudioError(failure.code, failure.message, failure.status);
+      }
+      const signedIn = Boolean(result.data.session);
+      return json({ ok: true, signedIn, message: signedIn ? "Tài khoản đã được tạo. Đang mở ứng dụng…" : "Đã gửi email xác nhận. Hãy kiểm tra hộp thư và thư rác, sau đó đăng nhập." });
     }
     if (action !== "login") throw new StudioError("INVALID_ACTION", "Thao tác không hợp lệ.");
     const result = await client.auth.signInWithPassword({ email, password });
