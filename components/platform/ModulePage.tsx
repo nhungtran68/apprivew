@@ -5,6 +5,7 @@ import tones from "./ModuleTone.module.css";
 import styles from "./ModulePage.module.css";
 
 export default function ModulePage({ module }: { module: AiModule }) {
+  const isImageModule = module.id === "image";
   const related = getVisibleModules().filter(item => item.id !== module.id).slice(0, 3);
 
   return (
@@ -24,7 +25,7 @@ export default function ModulePage({ module }: { module: AiModule }) {
           <h1>{module.title}</h1>
           <p className={styles.description}>{module.description}</p>
         </div>
-        <span className={styles.stage}><span aria-hidden="true" />Đang chuẩn bị</span>
+        <span className={styles.stage}><span aria-hidden="true" />{isImageModule ? "Đang xây dựng" : "Đang chuẩn bị"}</span>
       </header>
 
       <section className={styles.workspace} aria-labelledby="workspace-status">
@@ -32,13 +33,13 @@ export default function ModulePage({ module }: { module: AiModule }) {
           <div className={styles.preparationIcon} aria-hidden="true">
             <PlatformIcon name={module.icon} size={32} />
           </div>
-          <p className={styles.sectionLabel}>MỘT KHÔNG GIAN RIÊNG CHO CÔNG VIỆC CỦA BẠN</p>
-          <h2 id="workspace-status">Không gian {module.title.toLocaleLowerCase("vi")} đang được hoàn thiện</h2>
-          <p className={styles.preparationText}>Các tính năng bên dưới đang được chuẩn bị để bạn thực hiện công việc trong một quy trình dễ sử dụng.</p>
-          <Link href="/" className={styles.backLink}><span aria-hidden="true">←</span> Về trang tổng quan</Link>
+          <p className={styles.sectionLabel}>{isImageModule ? "TẠO ẢNH AI" : "MỘT KHÔNG GIAN RIÊNG CHO CÔNG VIỆC CỦA BẠN"}</p>
+          <h2 id="workspace-status">{isImageModule ? "Chức năng đang xây dựng" : `Không gian ${module.title.toLocaleLowerCase("vi")} đang được hoàn thiện`}</h2>
+          <p className={styles.preparationText}>{isImageModule ? "Vui lòng quay lại sau." : "Các tính năng bên dưới đang được chuẩn bị để bạn thực hiện công việc trong một quy trình dễ sử dụng."}</p>
+          <Link href="/" className={styles.backLink}><span aria-hidden="true">←</span> {isImageModule ? "Quay lại trang chủ" : "Về trang tổng quan"}</Link>
         </div>
 
-        <div className={styles.capabilities}>
+        {!isImageModule ? <div className={styles.capabilities}>
           <div className={styles.capabilitiesHeading}>
             <h3>Những tính năng sắp có</h3>
             <span>Định hướng không gian</span>
@@ -52,7 +53,7 @@ export default function ModulePage({ module }: { module: AiModule }) {
               </article>
             ))}
           </div>
-        </div>
+        </div> : null}
       </section>
 
       {module.legacy ? (
@@ -66,7 +67,7 @@ export default function ModulePage({ module }: { module: AiModule }) {
         </aside>
       ) : null}
 
-      <section className={styles.related} aria-labelledby="related-modules-title">
+      {!isImageModule ? <section className={styles.related} aria-labelledby="related-modules-title">
         <div className={styles.relatedHeading}>
           <div><p className={styles.eyebrow}>CÙNG MỘT NỀN TẢNG</p><h2 id="related-modules-title">Khám phá không gian khác</h2></div>
           <Link href="/">Xem tất cả <span aria-hidden="true">→</span></Link>
@@ -80,7 +81,7 @@ export default function ModulePage({ module }: { module: AiModule }) {
             </Link>
           ))}
         </div>
-      </section>
+      </section> : null}
     </div>
   );
 }
