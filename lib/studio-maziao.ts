@@ -3,7 +3,7 @@ import { StudioError, cleanText, type StudioSegment } from "./studio-contract";
 import { MAZIAO_MODELS, authorizedVoiceRows, getMember, sharedVoiceCatalog, maziaoModel, providerKey, saveAuthorizedVoice, savePersonalVoicePreview, saveSharedVoiceList, type MaziaoModel } from "./studio-server";
 import { shortenSegment } from "./studio-deepseek";
 import { creditsForSpeech, deriveCreditRequestId, markCreditProviderTask, refundCredits, reserveCredits, settleCredits } from "./studio-credits";
-import { removeOwnedMedia, storeNarration } from "./studio-supabase";
+import { createStudioSupabaseServer, removeOwnedMedia, storeNarration } from "./studio-supabase";
 import { inspectWav } from "./studio-wav";
 import { inspectMp3 } from "./studio-mp3";
 import type { StudioVoice } from "./studio-eleven";
@@ -35,10 +35,10 @@ function definitivelyNotDelivered(error: unknown): boolean {
 }
 type ProviderVoice = { id?: unknown; name?: unknown; userId?: unknown; user_id?: unknown; language?: unknown; gender?: unknown; modelId?: unknown; model_id?: unknown; previewUrl?: unknown; preview_url?: unknown; refFile?: unknown; ref_file?: unknown; refText?: unknown; ref_text?: unknown };
 type ProviderModel = { id?: unknown; support_cloning?: unknown; supported_languages?: unknown };
-type SpeechJob = { id?: unknown; status?: unknown; resultUrl?: unknown; resultUrls?: unknown; totalTasks?: unknown; completedTasks?: unknown };
+type SpeechJob = { id?: unknown; status?: unknown; resultUrl?: unknown; resultUrls?: unknown; result_url?: unknown; result_urls?: unknown; totalTasks?: unknown; completedTasks?: unknown };
 type Audio = { bytes: Uint8Array; mime: "audio/wav" | "audio/mpeg"; duration: number; sampleRate: number; channels: number };
 
-const invalidResponse = () => new StudioError("MAZIAO_INVALID_RESPONSE", "Hệ thống giọng nói trả kết quả chưa hợp lệ. Vui lòng thử lại sau.", 502);
+const invalidResponse = () => new StudioError("MAZIAO_INVALID_RESPONSE", "Chưa đọc được kết quả giọng nói. Nếu vừa bấm tạo, hãy dùng Lấy lại lời đọc trước khi tạo mới.", 502);
 const rawId = (value: unknown): value is string => typeof value === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
 const scopedId = (model: MaziaoModel, id: string) => `maziao:${model}:${id}`;
 const belowObservedMinimum = (model: MaziaoModel, segments: StudioSegment[]) => model === "vieten_speech" && segments.reduce((sum, segment) => sum + segment.text.length, 0) < 100;
@@ -432,16 +432,58 @@ async function fetchAudio(value: unknown, deadline: number): Promise<Audio> {
   return { bytes, mime: isWav ? "audio/wav" : "audio/mpeg", duration: info.duration, sampleRate: info.sampleRate, channels: info.channels };
 }
 
-function resultUrls(job: SpeechJob, count: number): string[] {
-  let result: unknown = job.resultUrls;
-  if (result === undefined && typeof job.resultUrl === "string") {
-    if (job.resultUrl.trim().startsWith("[")) { try { result = JSON.parse(job.resultUrl); } catch { throw invalidResponse(); } }
-    else if (count === 1) result = [job.resultUrl];
+function resultUrls(job: SpeechJob, count: number): string[] | undefined {
+  // Status can report completion before the output is attached. The detail
+  // endpoint may also use database-style snake_case keys; Maziao's own client
+  // normalizes those keys after fetching /tts/:id.
+  let result: unknown = job.resultUrls ?? job.result_urls;
+  if (result === null || result === "" || (Array.isArray(result) && result.length === 0)) result = undefined;
+  if (result === undefined) result = job.resultUrl ?? job.result_url;
+  if (result == null || result === "") return;
+  if (typeof result === "string") {
+    if (result.trim().startsWith("[")) { try { result = JSON.parse(result); } catch { throw invalidResponse(); } }
+    else if (count === 1) result = [result];
   }
   if (!Array.isArray(result) || result.length !== count || result.some(item => !safeMediaUrl(item))) throw invalidResponse();
   return result as string[];
 }
-async function synthesizeBatch(key: string, userId: string, requestId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[], settings = { speed: 1, pitch: 1, volume: 1 }, mode: "multiParts" | "paragraph" = "multiParts"): Promise<Audio[]> {
+
+async function taskDetail(key: string, taskId: string, deadline: number): Promise<SpeechJob> {
+  const response = await api(key, `/tts/${encodeURIComponent(taskId)}`, {}, deadline);
+  const job = response.data;
+  if (!job || typeof job !== "object" || Array.isArray(job) || (job as SpeechJob).id !== taskId) throw invalidResponse();
+  return job as SpeechJob;
+}
+
+async function completedAudio(key: string, taskId: string, count: number, deadline: number): Promise<Audio[]> {
+  let missingRows = 0;
+  while (Date.now() < deadline) {
+    const polled = await api(key, "/tts/status", { method: "POST", body: JSON.stringify({ ids: [taskId] }) }, deadline);
+    const job = Array.isArray(polled.data) ? (polled.data as SpeechJob[]).find(item => item?.id === taskId) : undefined;
+    if (job?.status === "failed") throw new StudioError("MAZIAO_TASK_FAILED", "Hệ thống không tạo được lời đọc. Kiểm tra giọng và trạng thái tác vụ trước khi thử lại.", 422);
+    if (job && !["pending", "processing", "saving", "exportingSrt", "completed"].includes(String(job.status))) throw invalidResponse();
+    missingRows = job ? 0 : missingRows + 1;
+    if (job?.status === "completed" || missingRows >= 2) {
+      let urls = job ? resultUrls(job, count) : undefined;
+      // A missing status row is transient shortly after submit. After another
+      // poll, or when /status marks completion without an URL, read the detail.
+      if (!urls) {
+        const detail = await taskDetail(key, taskId, deadline);
+        if (detail.status === "failed") throw new StudioError("MAZIAO_TASK_FAILED", "Hệ thống không tạo được lời đọc. Kiểm tra giọng và trạng thái tác vụ trước khi thử lại.", 422);
+        if (!["pending", "processing", "saving", "exportingSrt", "completed"].includes(String(detail.status))) throw invalidResponse();
+        if (detail.status === "completed") urls = resultUrls(detail, count);
+      }
+      if (urls) {
+        const audio: Audio[] = [];
+        for (const url of urls) audio.push(await fetchAudio(url, deadline));
+        return audio;
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.min(6000, Math.max(0, deadline - Date.now()))));
+  }
+  throw new StudioError("MAZIAO_TIMEOUT", "Hệ thống chưa xử lý xong trong thời gian chờ. Kiểm tra tác vụ hiện tại trước khi tạo lại để tránh trừ credit lặp.", 504);
+}
+async function synthesizeBatch(key: string, userId: string, requestId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[], settings = { speed: 1, pitch: 1, volume: 1 }, mode: "multiParts" | "paragraph" = "multiParts", beforeSettle?: (audio: Audio[]) => Promise<Record<string, unknown>>): Promise<Audio[]> {
   const parsed = parseMaziaoVoiceId(voiceId);
   if (mode === "paragraph" && segments.length !== 1) throw invalidResponse();
   const started = Date.now();
@@ -454,34 +496,29 @@ async function synthesizeBatch(key: string, userId: string, requestId: string, v
   const reservation = await reserveCredits(userId, requestId, "tts", creditsForSpeech(characters), {
     provider: "maziao", model: parsed.model, requestHash: await payloadHash(JSON.stringify(payload))
   });
-  if (!reservation.created) return reusedCreditRequest();
-  let submitted = false;
+  if (!reservation.created && (reservation.status !== "reserved" || !rawId(reservation.providerTaskId))) return reusedCreditRequest();
+  let submitted = !reservation.created;
   try {
-    const result = await api(key, "/tts/submit", { method: "POST", body: JSON.stringify(payload) }, deadline);
-    const data = result.data as { taskId?: unknown; totalCost?: unknown } | undefined;
-    if (!data || !rawId(data.taskId)) throw invalidResponse();
-    submitted = true;
-    await markCreditProviderTask(userId, requestId, data.taskId);
+    let taskId = reservation.providerTaskId as string | undefined;
+    let providerCredits: number | null = null;
+    if (reservation.created) {
+      const result = await api(key, "/tts/submit", { method: "POST", body: JSON.stringify(payload) }, deadline);
+      const data = result.data as { taskId?: unknown; totalCost?: unknown } | undefined;
+      if (!data || !rawId(data.taskId)) throw invalidResponse();
+      taskId = data.taskId;
+      submitted = true;
+      await markCreditProviderTask(userId, requestId, taskId);
+      providerCredits = typeof data.totalCost === "number" && Number.isFinite(data.totalCost) && data.totalCost >= 0 && data.totalCost <= 1000000000 ? data.totalCost : null;
+      console.info(JSON.stringify({ event: "studio_voice_usage", provider: "maziao", model: parsed.model, taskId, characters, credits: providerCredits, segments: segments.length, elapsedMs: Date.now() - started }));
+    }
+    if (!taskId) throw invalidResponse();
     // Provider credits are recorded for cost accounting, distinct from the
     // app's published credits (one per 100 text characters).
-    const providerCredits = typeof data.totalCost === "number" && Number.isFinite(data.totalCost) && data.totalCost >= 0 && data.totalCost <= 1000000000 ? data.totalCost : null;
     costs.push(providerCredits);
-    console.info(JSON.stringify({ event: "studio_voice_usage", provider: "maziao", model: parsed.model, taskId: data.taskId, characters, credits: providerCredits, segments: segments.length, elapsedMs: Date.now() - started }));
-    while (Date.now() < deadline) {
-      const polled = await api(key, "/tts/status", { method: "POST", body: JSON.stringify({ ids: [data.taskId] }) }, deadline);
-      const job = Array.isArray(polled.data) ? (polled.data as SpeechJob[]).find(item => item?.id === data.taskId) : undefined;
-      if (!job) throw invalidResponse();
-      if (job.status === "completed") {
-        const urls = resultUrls(job, segments.length), audio: Audio[] = [];
-        for (const url of urls) audio.push(await fetchAudio(url, deadline));
-        await settleCredits(userId, requestId, undefined, { provider: "maziao", providerCredits, providerTaskId: data.taskId, characters, model: parsed.model });
-        return audio;
-      }
-      if (job.status === "failed") throw new StudioError("MAZIAO_TASK_FAILED", "Hệ thống không tạo được lời đọc. Kiểm tra giọng và trạng thái tác vụ trước khi thử lại.", 422);
-      if (!["pending", "processing", "saving", "exportingSrt"].includes(String(job.status))) throw invalidResponse();
-      await new Promise(resolve => setTimeout(resolve, Math.min(6000, Math.max(0, deadline - Date.now()))));
-    }
-    throw new StudioError("MAZIAO_TIMEOUT", "Hệ thống chưa xử lý xong trong thời gian chờ. Kiểm tra tác vụ hiện tại trước khi tạo lại để tránh trừ credit lặp.", 504);
+    const audio = await completedAudio(key, taskId, segments.length, deadline);
+    const output = beforeSettle ? await beforeSettle(audio) : {};
+    await settleCredits(userId, requestId, undefined, { provider: "maziao", providerCredits, providerTaskId: taskId, characters, model: parsed.model, ...output });
+    return audio;
   } catch (error) {
     if (error instanceof StudioError && (error.code === "MAZIAO_TASK_FAILED" || !submitted && definitivelyNotDelivered(error)))
       await refundCredits(userId, requestId).catch(() => {});
@@ -555,7 +592,60 @@ export async function generateMaziaoVoiceOver(input: { key: string; userId: stri
   await assertModel(input.key, parsed.model, deadline);
   const segments: StudioSegment[] = [{ start: 0, end: 180, text: input.text }];
   const costs: (number | null)[] = [];
-  const [audio] = await synthesizeBatch(input.key, input.userId, input.requestId, input.voiceId, segments, deadline, costs, { speed: input.speed, pitch: input.pitch, volume: input.volume }, "paragraph");
-  const media = await storeNarration(input.userId, audio.bytes, 0, audio.mime);
+  let media: Awaited<ReturnType<typeof storeNarration>> | undefined;
+  const [audio] = await synthesizeBatch(input.key, input.userId, input.requestId, input.voiceId, segments, deadline, costs, { speed: input.speed, pitch: input.pitch, volume: input.volume }, "paragraph", async ([spoken]) => {
+    media = await storeNarration(input.userId, spoken.bytes, 0, spoken.mime);
+    return { audioPath: media.audioPath, audioMime: spoken.mime, duration: spoken.duration, voiceId: input.voiceId };
+  });
+  if (!media) throw invalidResponse();
   return { ...media, audioMime: audio.mime, duration: audio.duration, voiceId: input.voiceId, provider: "maziao", usage: { credits: costs[0] ?? null, jobs: costs.length } };
+}
+
+type PendingVoiceOperation = { request_id: string; created_at: string; provider_task_id: string | null; metadata: unknown };
+const creditId = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+// Video segment jobs use deterministic UUIDv8 children; standalone voice-over
+// uses the browser's UUIDv4. Do not offer a multi-part video job as one MP3.
+const standaloneCreditId = (value: unknown) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+const voiceOperation = (row: PendingVoiceOperation) => {
+  const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata as Record<string, unknown> : {};
+  return standaloneCreditId(row.request_id) && metadata.provider === "maziao" && MAZIAO_MODELS.some(model => model === metadata.model) && rawId(row.provider_task_id);
+};
+
+/** Existing paid jobs are visible only to their owner. Listing does not poll or submit. */
+export async function listPendingMaziaoVoiceOvers(userId: string) {
+  const client = await createStudioSupabaseServer();
+  const { data, error } = await client.from("studio_credit_operations")
+    .select("request_id,created_at,provider_task_id,metadata")
+    .eq("user_id", userId).eq("kind", "tts").eq("status", "reserved")
+    .not("provider_task_id", "is", null).order("created_at", { ascending: false }).limit(10);
+  if (error) throw new StudioError("CREDIT_LEDGER_UNAVAILABLE", "Chưa xem được tác vụ giọng đang xử lý.", 503);
+  return ((data || []) as PendingVoiceOperation[]).filter(voiceOperation).map(row => ({ requestId: row.request_id, createdAt: row.created_at }));
+}
+
+/** Reuse a previously submitted Maziao job, never spending on another submit. */
+export async function recoverMaziaoVoiceOver(input: { key: string; userId: string; requestId: unknown }) {
+  if (!creditId(input.requestId)) throw new StudioError("INVALID_CREDIT_REQUEST", "Mã tác vụ chưa hợp lệ.", 400);
+  const client = await createStudioSupabaseServer();
+  const { data, error } = await client.from("studio_credit_operations")
+    .select("request_id,created_at,provider_task_id,metadata,status")
+    .eq("user_id", input.userId).eq("request_id", input.requestId).eq("kind", "tts").maybeSingle();
+  if (error) throw new StudioError("CREDIT_LEDGER_UNAVAILABLE", "Chưa xem được tác vụ giọng đang xử lý.", 503);
+  if (!data || data.status !== "reserved" || !voiceOperation(data as PendingVoiceOperation))
+    throw new StudioError("CREDIT_REQUEST_REUSED", "Tác vụ này không còn chờ khôi phục. Hãy tải lại trang để xem kết quả mới nhất.", 409);
+  const taskId = data.provider_task_id as string;
+  let audio: Audio;
+  try {
+    [audio] = await completedAudio(input.key, taskId, 1, Date.now() + 240000);
+  } catch (error) {
+    if (error instanceof StudioError && error.code === "MAZIAO_TASK_FAILED")
+      await refundCredits(input.userId, input.requestId).catch(() => {});
+    throw error;
+  }
+  const media = await storeNarration(input.userId, audio.bytes, 0, audio.mime);
+  await settleCredits(input.userId, input.requestId, undefined, {
+    provider: "maziao", providerCredits: null, providerTaskId: taskId,
+    model: (data.metadata as Record<string, unknown>).model,
+    audioPath: media.audioPath, audioMime: audio.mime, duration: audio.duration,
+  });
+  return { ...media, audioMime: audio.mime, duration: audio.duration, provider: "maziao", usage: { credits: null, jobs: 1 } };
 }

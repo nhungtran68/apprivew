@@ -9,7 +9,8 @@ import styles from "./VoiceAiPage.module.css";
 type Voice = { voiceId: string; name: string; category: string; group?: string; previewUrl?: string; isPersonalClone?: boolean };
 type CuratedVoice = { voice_id: string; name: string; enabled: boolean; kind: "system" | "admin_clone" };
 type AdminCloneCandidate = { voice_id: string; name: string; enabled: boolean; kind: "admin_clone"; previewUrl?: string };
-type AudioResult = { audioPath: string; audioMime: string; duration: number; voiceId: string; audioUrl?: string };
+type AudioResult = { audioPath: string; audioMime: string; duration: number; voiceId?: string; audioUrl?: string };
+type PendingVoiceTask = { requestId: string; createdAt: string };
 const scriptTypes = ".txt,.md,.csv,.srt,.vtt";
 const MAX_SCRIPT = 6000;
 const friendlyError = (value: unknown) => value instanceof Error ? value.message : "Có lỗi kết nối. Hãy thử lại.";
@@ -29,6 +30,7 @@ export default function VoiceAiPage() {
   const [notice, setNotice] = useState("");
   const [audio, setAudio] = useState<AudioResult | null>(null);
   const [audioSrc, setAudioSrc] = useState("");
+  const [pendingTasks, setPendingTasks] = useState<PendingVoiceTask[]>([]);
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState("all");
   const [catalogBusy, setCatalogBusy] = useState("");
@@ -36,6 +38,7 @@ export default function VoiceAiPage() {
   const [deleteCandidate, setDeleteCandidate] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const activeSrc = useRef("");
+  const lastRequest = useRef<{ fingerprint: string; id: string } | null>(null);
   const loading = account.status === "loading";
   const isAdmin = account.status === "ready" && account.account?.isAdmin === true;
 
@@ -54,6 +57,15 @@ export default function VoiceAiPage() {
   }, []);
 
   useEffect(() => { if (account.status === "ready") void load(); }, [account.status, load]);
+  const loadPendingTasks = useCallback(async () => {
+    try {
+      const response = await fetch("/api/voice-over/recover", { cache: "no-store" });
+      if (!response.ok) return;
+      const result = await response.json();
+      setPendingTasks(Array.isArray(result.tasks) ? result.tasks.filter((item: PendingVoiceTask) => typeof item.requestId === "string" && typeof item.createdAt === "string") : []);
+    } catch { /* The main voice workflow remains available if recovery listing is offline. */ }
+  }, []);
+  useEffect(() => { if (account.status === "ready") void loadPendingTasks(); }, [account.status, loadPendingTasks]);
   useEffect(() => () => { if (activeSrc.current) URL.revokeObjectURL(activeSrc.current); }, []);
 
   const visible = voices.filter(voice => (group === "all" || (group === "personal" ? voice.category === "cloned" : voice.category !== "cloned")) && (!search.trim() || voice.name.toLocaleLowerCase("vi").includes(search.toLocaleLowerCase("vi").trim())));
@@ -75,18 +87,47 @@ export default function VoiceAiPage() {
     } catch (err) { setError(friendlyError(err)); }
   }
 
+  function acceptAudioResult(result: AudioResult) {
+    if (!result || typeof result.audioPath !== "string" || !["audio/mpeg", "audio/wav"].includes(result.audioMime) || !Number.isFinite(result.duration) || result.duration <= 0)
+      throw new Error("Đã nhận tác vụ nhưng tệp lời đọc chưa sẵn sàng. Hãy dùng nút khôi phục bên dưới.");
+    if (activeSrc.current) URL.revokeObjectURL(activeSrc.current);
+    activeSrc.current = ""; setAudioSrc(""); setAudio(result);
+    window.dispatchEvent(new Event("studio-credits-changed"));
+  }
+
   async function generate() {
     if (busy || !selected || !text.trim()) return;
     setBusy("speech"); setError(""); setNotice("");
     try {
-      const response = await fetch("/api/voice-over", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ voiceId: selected, text: text.trim(), speed, volume, pitch }) });
+      const payload = { voiceId: selected, text: text.trim(), speed, volume, pitch };
+      const fingerprint = JSON.stringify(payload);
+      if (lastRequest.current?.fingerprint !== fingerprint) lastRequest.current = { fingerprint, id: crypto.randomUUID() };
+      const response = await fetch("/api/voice-over", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": lastRequest.current.id }, body: JSON.stringify(payload) });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Không tạo được giọng đọc.");
-      if (activeSrc.current) URL.revokeObjectURL(activeSrc.current);
-      activeSrc.current = ""; setAudioSrc(""); setAudio(result); setNotice("Đã tạo lời đọc. Bấm Nghe hoặc Tải MP3/WAV để nhận tệp.");
-      window.dispatchEvent(new Event("studio-credits-changed"));
-    } catch (err) { setError(friendlyError(err)); }
+      if (!response.ok) {
+        if (!["MAZIAO_INVALID_RESPONSE", "MAZIAO_TIMEOUT", "MAZIAO_UNAVAILABLE", "MAZIAO_AUDIO_DOWNLOAD", "INVALID_AUDIO", "AUDIO_STORE_FAILED", "AUDIO_LINK_FAILED", "CREDIT_LEDGER_UNAVAILABLE"].includes(result.code)) lastRequest.current = null;
+        throw new Error(result.error || "Không tạo được giọng đọc.");
+      }
+      acceptAudioResult(result);
+      setPendingTasks(previous => previous.filter(task => task.requestId !== lastRequest.current?.id));
+      lastRequest.current = null; await loadPendingTasks();
+      setNotice("Đã tạo lời đọc. Bấm Nghe hoặc Tải MP3/WAV để nhận tệp.");
+    } catch (err) { setError(friendlyError(err)); await loadPendingTasks(); }
     finally { setBusy(""); }
+  }
+
+  async function recover(task: PendingVoiceTask) {
+    if (busy) return;
+    setBusy("recover"); setError(""); setNotice("");
+    try {
+      const response = await fetch("/api/voice-over/recover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: task.requestId }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Chưa lấy lại được lời đọc. Hãy thử lại sau.");
+      acceptAudioResult(result); lastRequest.current = null;
+      setPendingTasks(previous => previous.filter(item => item.requestId !== task.requestId));
+      setNotice("Đã lấy lại lời đọc từ tác vụ cũ. Bạn có thể nghe và tải tệp ngay.");
+    } catch (err) { setError(friendlyError(err)); }
+    finally { await loadPendingTasks(); setBusy(""); }
   }
 
   async function downloadAudio(save: boolean) {
@@ -103,7 +144,9 @@ export default function VoiceAiPage() {
       if (save) {
         const link = document.createElement("a");
         link.href = url; link.download = "loi-ke-ai-" + Date.now() + (audio.audioMime === "audio/mpeg" ? ".mp3" : ".wav");
+        document.body.appendChild(link);
         link.click();
+        link.remove();
       }
       setNotice(save ? "Đã gửi tệp xuống trình duyệt. Tệp vẫn được giữ để tải lại." : "Đã nhận lời đọc, có thể nghe ngay bên dưới.");
     } catch (err) { setError(friendlyError(err)); }
@@ -198,6 +241,7 @@ export default function VoiceAiPage() {
             <div className={styles.sectionHeading}><div><span className={styles.step}>03</span><h2>Tạo và tải giọng đọc</h2></div></div>
             <p className={styles.muted}>Chi phí AI sẽ tính theo số ký tự và tác vụ thực tế. Lời thoại dưới 100 ký tự có thể chưa đủ điều kiện xử lý ở model tiếng Việt hiện tại.</p>
             <button className={styles.generate} onClick={() => void generate()} disabled={Boolean(busy) || !selected || !text.trim()}>{busy === "speech" ? "Đang tạo giọng, vui lòng chờ…" : "Tạo giọng nói AI"} <PlatformIcon name="arrow" size={19}/></button>
+            {pendingTasks.length > 0 && <div className={styles.result}><strong>Lời đọc đã gửi, có thể lấy lại</strong><p className={styles.muted}>Nếu lần tạo trước bị gián đoạn, lấy lại tệp từ tác vụ cũ mà không tạo thêm lượt mới.</p><div className={styles.resultButtons}>{pendingTasks.map(task => <button key={task.requestId} type="button" disabled={Boolean(busy)} onClick={() => void recover(task)}>{busy === "recover" ? "Đang lấy lại…" : `Lấy lại lời đọc ${new Date(task.createdAt).toLocaleString("vi-VN")}`}</button>)}</div></div>}
             {audio && <div className={styles.result}><strong>Đã tạo lời đọc • {audio.duration.toFixed(1)} giây</strong><div className={styles.resultButtons}><button onClick={() => void downloadAudio(false)} disabled={Boolean(busy)}>Nghe lời đọc</button><button onClick={() => void downloadAudio(true)} disabled={Boolean(busy)}>Tải MP3 / WAV</button></div>{audioSrc && <audio controls src={audioSrc} className={styles.player}/>}<p className={styles.muted}>Nếu mất mạng khi tải, bấm lại để nhận chính tệp đã tạo, không tạo lại từ đầu.</p></div>}
           </section>
         </div>
