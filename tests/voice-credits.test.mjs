@@ -27,14 +27,15 @@ function wav(seconds = 1) {
 }
 
 async function harness() {
-  let balance = 100, status = "completed", submitFailure = false;
+  let balance = 100, status = "completed", submitFailure = false, statusResponses = [];
   const operations = new Map(), requests = [], events = [];
   const modules = new Map(), synthetics = new Map();
   let contract;
   const context = vm.createContext({
     console: { ...console, info: () => {} }, crypto, process: { env: {} },
     TextEncoder, TextDecoder, Uint8Array, DataView, ArrayBuffer, FormData, File,
-    Request, Response, Headers, URL, URLSearchParams, AbortSignal, setTimeout,
+    Request, Response, Headers, URL, URLSearchParams, AbortSignal,
+    setTimeout(callback) { queueMicrotask(callback); return 0; },
     fetch: async (url, init = {}) => {
       const pathname = new URL(String(url)).pathname;
       requests.push({ pathname, method: init.method || "GET" });
@@ -43,7 +44,8 @@ async function harness() {
         if (submitFailure) throw new Error("Network broke after sending body");
         return Response.json({ data: { taskId: "taskVoice1", totalCost: 109 } });
       }
-      if (pathname === "/api/tts/status") return Response.json({ data: [{ id: "taskVoice1", status, resultUrl: "https://r2-storage.maziao.com/voice.wav" }] });
+      if (pathname === "/api/tts/status") return Response.json({ data: statusResponses.length ? statusResponses.shift() : [{ id: "taskVoice1", status, resultUrl: "https://r2-storage.maziao.com/voice.wav" }] });
+      if (pathname === "/api/tts/taskVoice1") return Response.json({ data: { id: "taskVoice1", status, result_url: "https://r2-storage.maziao.com/voice.wav" } });
       if (pathname === "/voice.wav") return new Response(wav(), { headers: { "content-type": "audio/wav" } });
       if (pathname === "/api/voices" && init.method === "POST") return Response.json({ data: { id: "clone123", refFile: "https://r2-storage.maziao.com/sample.wav" } });
       throw new Error(`Unexpected provider path ${pathname}`);
@@ -52,16 +54,16 @@ async function harness() {
   const credit = {
     creditsForSpeech: chars => Math.ceil(chars / 100),
     deriveCreditRequestId: async (parent, label) => `${parent.slice(0, 8)}-${parent.slice(9, 13)}-8${parent.slice(15, 18)}-8${parent.slice(20, 23)}-${label.padEnd(12, "0").slice(0, 12)}`,
-    reserveCredits: async (_user, requestId, kind, amount) => {
-      if (operations.has(requestId)) return { created: false };
+    reserveCredits: async (_user, requestId, kind, amount, metadata) => {
+      if (operations.has(requestId)) { const op = operations.get(requestId); return { created: false, status: op.status, providerTaskId: op.providerTaskId }; }
       if (balance < amount) throw new contract.StudioError("INSUFFICIENT_CREDITS", "Hết credit", 402);
       balance -= amount;
-      operations.set(requestId, { kind, amount, status: "reserved" });
+      operations.set(requestId, { kind, amount, status: "reserved", metadata });
       events.push(["reserve", kind, amount]);
       return { created: true };
     },
     markCreditProviderTask: async (_user, id, taskId) => { operations.get(id).providerTaskId = taskId; events.push(["mark", taskId]); },
-    settleCredits: async (_user, id) => { operations.get(id).status = "settled"; events.push(["settle", id]); },
+    settleCredits: async (_user, id, _actual, usage) => { operations.get(id).status = "settled"; operations.get(id).providerUsage = usage; events.push(["settle", id]); },
     refundCredits: async (_user, id) => { const op = operations.get(id); if (op.status === "reserved") { balance += op.amount; op.status = "refunded"; } events.push(["refund", id]); },
   };
   const server = {
@@ -77,6 +79,17 @@ async function harness() {
     [path.join(root, "lib/studio-server.ts"), server],
     [path.join(root, "lib/studio-deepseek.ts"), { shortenSegment: async () => { throw new Error("No shortening expected"); } }],
     [path.join(root, "lib/studio-supabase.ts"), {
+      createStudioSupabaseServer: async () => ({ from: () => {
+        const filters = {};
+        const query = {
+          select: () => query,
+          eq: (key, value) => { filters[key] = value; return query; },
+          not: () => query, order: () => query,
+          limit: async () => ({ data: [...operations].filter(([id, op]) => op.kind === filters.kind && op.status === filters.status && op.providerTaskId).map(([id, op]) => ({ request_id: id, created_at: new Date().toISOString(), provider_task_id: op.providerTaskId, metadata: op.metadata })), error: null }),
+          maybeSingle: async () => { const op = operations.get(filters.request_id); return { data: op && op.kind === filters.kind ? { request_id: filters.request_id, provider_task_id: op.providerTaskId, metadata: op.metadata, status: op.status } : null, error: null }; },
+        };
+        return query;
+      } }),
       removeOwnedMedia: async () => {},
       storeNarration: async () => ({ audioPath: `${userId}/narration/result.wav`, audioUrl: "https://audio.example.invalid/result.wav" }),
     }],
@@ -111,7 +124,7 @@ async function harness() {
   }
   contract = await entry("lib/studio-contract.ts");
   const maziao = await entry("lib/studio-maziao.ts");
-  return { maziao, operations, requests, events, setBalance: value => { balance = value; }, balance: () => balance, setStatus: value => { status = value; }, setSubmitFailure: value => { submitFailure = value; } };
+  return { maziao, operations, requests, events, setBalance: value => { balance = value; }, balance: () => balance, setStatus: value => { status = value; }, setStatusResponses: value => { statusResponses = value; }, setSubmitFailure: value => { submitFailure = value; } };
 }
 
 const script = "Đây là lời thoại tiếng Việt đã được người dùng duyệt. ".repeat(3);
@@ -141,6 +154,41 @@ assert.equal(ambiguous.operations.get(ids.ambiguous).status, "reserved");
 await assert.rejects(ambiguous.maziao.generateMaziaoVoiceOver({ ...base, requestId: ids.ambiguous }), { code: "CREDIT_REQUEST_REUSED" });
 assert.equal(ambiguous.requests.filter(item => item.pathname === "/api/tts/submit").length, 1);
 
+const delayed = await harness();
+delayed.setStatusResponses([[], [{ id: "taskVoice1", status: "completed", resultUrls: null, resultUrl: "https://r2-storage.maziao.com/voice.wav" }]]);
+const delayedResult = await delayed.maziao.generateMaziaoVoiceOver({ ...base, requestId: ids.ambiguous });
+assert.equal(delayedResult.audioMime, "audio/wav");
+assert.equal(delayed.requests.filter(item => item.pathname === "/api/tts/submit").length, 1);
+assert.equal(delayed.requests.filter(item => item.pathname === "/api/tts/status").length, 2);
+assert.equal(delayed.operations.get(ids.ambiguous).providerUsage.audioPath, delayedResult.audioPath);
+
+const detail = await harness();
+detail.setStatusResponses([[{ id: "taskVoice1", status: "completed", resultUrls: null }]]);
+const detailResult = await detail.maziao.generateMaziaoVoiceOver({ ...base, requestId: ids.ambiguous });
+assert.equal(detailResult.audioMime, "audio/wav");
+assert.equal(detail.requests.filter(item => item.pathname === "/api/tts/taskVoice1").length, 1);
+
+const recoverable = await harness();
+recoverable.setStatus("unknown");
+await assert.rejects(recoverable.maziao.generateMaziaoVoiceOver({ ...base, requestId: ids.ambiguous }), { code: "MAZIAO_INVALID_RESPONSE" });
+assert.equal(recoverable.operations.get(ids.ambiguous).status, "reserved");
+recoverable.setStatus("completed");
+const pending = await recoverable.maziao.listPendingMaziaoVoiceOvers(userId);
+assert.equal(pending.length, 1);
+assert.equal(pending[0].requestId, ids.ambiguous);
+const recovered = await recoverable.maziao.recoverMaziaoVoiceOver({ key: base.key, userId, requestId: ids.ambiguous });
+assert.equal(recovered.audioMime, "audio/wav");
+assert.equal(recoverable.operations.get(ids.ambiguous).status, "settled");
+assert.equal(recoverable.requests.filter(item => item.pathname === "/api/tts/submit").length, 1, "recovery must not submit again");
+await assert.rejects(recoverable.maziao.recoverMaziaoVoiceOver({ key: base.key, userId, requestId: ids.ambiguous }), { code: "CREDIT_REQUEST_REUSED" });
+
+const resumed = await harness();
+resumed.setStatus("unknown");
+await assert.rejects(resumed.maziao.generateMaziaoVoiceOver({ ...base, requestId: ids.ambiguous }), { code: "MAZIAO_INVALID_RESPONSE" });
+resumed.setStatus("completed");
+await resumed.maziao.generateMaziaoVoiceOver({ ...base, requestId: ids.ambiguous });
+assert.equal(resumed.requests.filter(item => item.pathname === "/api/tts/submit").length, 1, "same idempotency key resumes the provider job");
+
 const empty = await harness();
 empty.setBalance(0);
 await assert.rejects(empty.maziao.generateMaziaoVoiceOver({ ...base, requestId: ids.empty }), { code: "INSUFFICIENT_CREDITS" });
@@ -154,4 +202,4 @@ assert.equal(clone.balance(), 50);
 assert.equal(clone.operations.get(ids.clone).status, "settled");
 assert.equal(clone.requests.filter(item => item.pathname === "/api/voices" && item.method === "POST").length, 1);
 
-console.log("PASS voice credit reserve, settle, refund, replay, ambiguous job, zero balance and clone");
+console.log("PASS voice credit reserve, delayed status, detail fallback, recovery, replay, zero balance and clone");
