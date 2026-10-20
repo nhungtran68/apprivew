@@ -76,10 +76,12 @@ Next.js App Router chạy trên Vercel; Supabase Auth/Postgres/Storage cho thàn
 2. Giữ lệnh build mặc định pnpm run build và Output Directory mặc định. Bộ FFmpeg được chuẩn bị tự động khi build; không cần tải WASM lên GitHub.
 3. Tạo dự án Supabase. Chạy supabase/setup.sql một lần trong SQL Editor của dự án mới; đọc supabase/README.md và kiểm tra bằng supabase/verify.sql + Security Advisors. Bản apprivew đã áp dụng schema và kiểm tra quyền trên Supabase Singapore; với dự án mới khác, bạn cần chạy lại phần thiết lập.
 4. Thêm biến môi trường bên dưới vào Vercel, rồi deploy lại. Chưa có biến vẫn dựng được giao diện, nhưng đăng nhập/AI sẽ báo chưa kết nối.
-5. Trong Supabase Auth → URL Configuration, đặt Site URL là domain Vercel chính thức; thêm URL đó cùng đường dẫn /auth/callback và /auth/confirm vào Redirect URLs. Cấu hình SMTP cho email thành viên nếu cần gửi xác nhận, mời hoặc đặt lại mật khẩu.
+5. Trong Supabase Auth → URL Configuration, đặt Site URL là domain Vercel chính thức; thêm URL đó cùng đường dẫn /auth/callback và /auth/confirm vào Redirect URLs. Đăng ký công khai và đặt lại mật khẩu cần SMTP riêng trong Supabase Auth; SMTP mặc định chỉ dành cho thử nghiệm.
 6. Đăng ký tài khoản của bạn; lấy UUID trong Supabase Auth và cấp admin theo hướng dẫn bên dưới.
 
 ## Email đăng ký, lời mời và đặt lại mật khẩu
+
+Trước khi mở đăng ký thành viên, xác minh tên miền gửi thư với nhà cung cấp email và bật **Custom SMTP** tại Supabase Authentication → SMTP Settings. Nhập host, port, username, password, email gửi và tên người gửi tại Supabase, không đưa mật khẩu SMTP vào GitHub hoặc biến `NEXT_PUBLIC_*`. Sau khi lưu, xem Authentication → Rate Limits để đặt hạn mức phù hợp rồi thử một đăng ký với email mới. SMTP mặc định của Supabase bị giới hạn và không gửi tới người ngoài nhóm dự án; Vercel không quản lý hạn mức email này.
 
 Trong Supabase Auth → Email Templates, dùng liên kết TokenHash dưới đây để xác nhận hoạt động cả khi người nhận mở email trên trình duyệt khác. Thay liên kết trong các mẫu tương ứng:
 
@@ -87,7 +89,7 @@ Trong Supabase Auth → Email Templates, dùng liên kết TokenHash dưới đ�
 - Invite user: `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite`
 - Reset password: `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery`
 
-Site URL phải là domain chính thức của app. Nếu giữ luồng PKCE mặc định, cho phép thêm URL `https://DOMAIN_APP/auth/callback?next=/dat-mat-khau` trong Redirect URLs; thư mời nên dùng mẫu TokenHash ở trên. Tài khoản mới vẫn chờ quản trị viên duyệt và cấp hạn mức trước khi dùng AI.
+Site URL phải là domain chính thức của app. Nếu giữ luồng PKCE mặc định, cho phép thêm URL `https://DOMAIN_APP/auth/callback?next=/dat-mat-khau` trong Redirect URLs; thư mời nên dùng mẫu TokenHash ở trên. Tài khoản mới có thể đăng nhập sau khi xác nhận email; quyền và hạn mức được quản lý riêng trong ứng dụng.
 
 ## Biến môi trường
 
