@@ -10,12 +10,13 @@ export const creditRates = Object.freeze({
   script: 10,
   analyze: 15,
   scenePlan: 10,
+  transcribePerMinute: 3,
   ttsPer100Chars: 1,
   clone: 50,
   stockPer2MiB: 1,
 });
 
-export type CreditKind = "script" | "analyze" | "scenePlan" | "tts" | "clone" | "stockVideo";
+export type CreditKind = "script" | "analyze" | "scenePlan" | "transcribe" | "tts" | "clone" | "stockVideo";
 export type CreditBalance = { balance: number; reserved: number; available: number };
 export type CreditReservation = CreditBalance & {
   created: boolean;
@@ -26,7 +27,7 @@ export type CreditReservation = CreditBalance & {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DB_KIND: Record<CreditKind, string> = {
-  script: "script", analyze: "analyze", scenePlan: "scene_plan",
+  script: "script", analyze: "analyze", scenePlan: "scene_plan", transcribe: "transcribe",
   tts: "tts", clone: "clone", stockVideo: "stock_video",
 };
 let privilegedClient: SupabaseClient | undefined;
@@ -107,6 +108,12 @@ export function creditsForSpeech(textOrCharacters: string | number): number {
   if (!Number.isSafeInteger(chars) || chars < 1 || chars > 100000)
     throw new StudioError("INVALID_CREDIT_REQUEST", "Độ dài lời thoại không hợp lệ.", 400);
   return Math.max(1, Math.ceil(chars / 100)) * creditRates.ttsPer100Chars;
+}
+
+export function creditsForTranscription(seconds: number): number {
+  if (!Number.isFinite(seconds) || seconds < 2 || seconds > 90)
+    throw new StudioError("INVALID_CREDIT_REQUEST", "Thời lượng lời thoại để nhận diện không hợp lệ.", 400);
+  return Math.ceil(seconds / 60) * creditRates.transcribePerMinute;
 }
 
 export function creditsForStockBytes(bytes: number): number {
