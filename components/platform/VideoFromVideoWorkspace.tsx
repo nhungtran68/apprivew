@@ -151,6 +151,8 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
   const exportedUrl = useObjectUrl(exported);
   const audioCurrent = Boolean(generatedAudio && generatedText === approvedScript && generatedVoiceId === voiceId);
   const selectedVoice = voices.find(item => voiceKey(item) === voiceId);
+  const selectedScriptType = builtins.some(item => scriptType === `builtin:${item.format}`)
+    || templates.some(item => scriptType === `custom:${item.id}`) ? scriptType : "builtin:review";
 
   useEffect(() => { onBusyChangeRef.current = onBusyChange; }, [onBusyChange]);
   useEffect(() => { onBusyChangeRef.current(Boolean(busy)); }, [busy]);
@@ -231,7 +233,7 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
       }
       setBusy("script"); setProgressText("AI đang viết lời thoại theo dạng kịch bản bạn chọn…");
       const purpose = intent.trim() || "Viết lời thoại có thông điệp hữu ích cho người xem từ tư liệu video. Chỉ dùng điều nhìn thấy; không đoán lời nói, trải nghiệm hoặc kết quả chưa được cung cấp.";
-      const style = scriptType.startsWith("custom:") ? { templateId: scriptType.slice(7) } : { format: scriptType.replace(/^builtin:/, "") };
+      const style = selectedScriptType.startsWith("custom:") ? { templateId: selectedScriptType.slice(7) } : { format: selectedScriptType.replace(/^builtin:/, "") };
       const scriptBody = { analysis, intent: purpose, confirmedIntent: purpose, ...style, profile: { ...profile, mode: "scenery" }, duration: sourceDuration, instruction: "Viết lời thoại tự nhiên để đọc thành một tệp âm thanh liên tục. Tổng nội dung không quá 1.100 ký tự. Không thêm nhãn phân cảnh hay lời chỉ dẫn sân khấu." };
       const fingerprint = JSON.stringify(scriptBody);
       if (scriptRequestRef.current?.fingerprint !== fingerprint) scriptRequestRef.current = { fingerprint, id: crypto.randomUUID() };
@@ -390,7 +392,12 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
 
     {source ? <div className={styles.section}>
       <div className={styles.heading}><span className={styles.number}>2</span><div><h3>Chọn dạng kịch bản</h3><p>AI xem hình ảnh làm tư liệu và viết lời thoại theo dạng bạn chọn.</p></div></div>
-      <div className={styles.types} role="group" aria-label="Dạng kịch bản">{builtins.map(item => <button key={item.format} type="button" className={scriptType === `builtin:${item.format}` ? styles.typeActive : styles.type} onClick={() => setScriptType(`builtin:${item.format}`)} disabled={Boolean(busy)} aria-pressed={scriptType === `builtin:${item.format}`}><strong>{item.title}</strong><span>{item.description}</span></button>)}{templates.map(item => <button key={item.id} type="button" className={scriptType === `custom:${item.id}` ? styles.typeActive : styles.type} onClick={() => setScriptType(`custom:${item.id}`)} disabled={Boolean(busy)} aria-pressed={scriptType === `custom:${item.id}`}><strong>{item.title}</strong><span>{item.description || (item.scope === "shared" ? "Dạng dùng chung" : "Dạng của bạn")}</span></button>)}</div>
+      <label className={styles.field}>Chọn dạng kịch bản
+        <select value={selectedScriptType} onChange={event => setScriptType(event.target.value)} disabled={Boolean(busy)}>
+          <optgroup label="Dạng có sẵn">{builtins.map(item => <option key={item.format} value={`builtin:${item.format}`}>{item.title}</option>)}</optgroup>
+          {templates.length ? <optgroup label="Dạng đã thêm">{templates.map(item => <option key={item.id} value={`custom:${item.id}`}>{item.title}</option>)}</optgroup> : null}
+        </select>
+      </label>
       <label className={styles.field}>Điều bạn muốn người xem hiểu <span>(khuyến khích)</span><textarea value={intent} onChange={event => setIntent(event.target.value)} maxLength={5000} rows={3} placeholder="Ví dụ: Sản phẩm này giúp chuẩn bị bữa sáng nhanh hơn; hãy kể như trải nghiệm của tôi." disabled={Boolean(busy)} /></label>
       <p className={styles.hint}>AI chỉ phân tích khung hình, không nghe tiếng trong video gốc. Hãy nhập ý chính nếu video có lời nói hoặc thông tin không thể nhìn thấy.</p>
       <button type="button" className={styles.primary} onClick={() => void analyzeAndWrite()} disabled={Boolean(busy) || !deepseekReady || Boolean(uncertainStage)}>{busy === "analyze" ? "Đang phân tích video…" : busy === "script" ? "Đang viết kịch bản…" : analysisRef.current?.source === source ? "Viết lại kịch bản" : "Phân Tích & Tạo Kịch Bản"}</button>
