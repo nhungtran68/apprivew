@@ -471,7 +471,7 @@ async function taskDetail(key: string, taskId: string, deadline: number): Promis
   return job as SpeechJob;
 }
 
-async function completedAudio(key: string, taskId: string, count: number, deadline: number, timing?: { providerWaitMs: number; downloadMs: number }): Promise<Audio[]> {
+async function completedAudio(key: string, taskId: string, count: number, deadline: number, timing?: { statusPollMs: number; downloadMs: number }): Promise<Audio[]> {
   const waitingSince = Date.now();
   let missingRows = 0;
   while (Date.now() < deadline) {
@@ -491,7 +491,7 @@ async function completedAudio(key: string, taskId: string, count: number, deadli
         if (detail.status === "completed") urls = resultUrls(detail, count);
       }
       if (urls) {
-        if (timing) timing.providerWaitMs = Date.now() - waitingSince;
+        if (timing) timing.statusPollMs = Date.now() - waitingSince;
         const downloadSince = Date.now();
         const audio: Audio[] = [];
         for (const url of urls) audio.push(await fetchAudio(url, deadline));
@@ -542,14 +542,14 @@ async function synthesizeBatch(key: string, userId: string, requestId: string, v
     // Provider credits are recorded for cost accounting, distinct from the
     // app's published credits (one per 100 text characters).
     costs.push(providerCredits);
-    const timing = { providerWaitMs: 0, downloadMs: 0 };
+    const timing = { statusPollMs: 0, downloadMs: 0 };
     const audio = await completedAudio(key, taskId, segments.length, deadline, timing);
     const storageSince = Date.now();
     const output = beforeSettle ? await beforeSettle(audio) : {};
-    const storageMs = Date.now() - storageSince;
+    const beforeSettleMs = Date.now() - storageSince;
     const settleSince = Date.now();
     await settleCredits(userId, requestId, undefined, { provider: "maziao", providerCredits, providerTaskId: taskId, characters, model: parsed.model, ...output });
-    console.info(JSON.stringify({ event: "studio_voice_timing", phase: "completed", provider: "maziao", model: parsed.model, taskId, providerWaitMs: timing.providerWaitMs, downloadMs: timing.downloadMs, storageMs, settleMs: Date.now() - settleSince, totalMs: Date.now() - started }));
+    console.info(JSON.stringify({ event: "studio_voice_timing", phase: "completed", provider: "maziao", model: parsed.model, taskId, statusPollMs: timing.statusPollMs, downloadMs: timing.downloadMs, beforeSettleMs, settleMs: Date.now() - settleSince, requestMs: Date.now() - started }));
     return audio;
   } catch (error) {
     if (error instanceof StudioError && (error.code === "MAZIAO_TASK_FAILED" || !submitted && definitivelyNotDelivered(error)))
@@ -684,7 +684,7 @@ export async function recoverMaziaoVoiceOver(input: { key: string; userId: strin
   if (!creditId(input.requestId)) throw new StudioError("INVALID_CREDIT_REQUEST", "Mã tác vụ chưa hợp lệ.", 400);
   const client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_credit_operations")
-    .select("request_id,created_at,provider_task_id,metadata,status,provider_usage")
+    .select("request_id,created_at,updated_at,provider_task_id,metadata,status,provider_usage")
     .eq("user_id", input.userId).eq("request_id", input.requestId).eq("kind", "tts").maybeSingle();
   if (error) throw new StudioError("CREDIT_LEDGER_UNAVAILABLE", "Chưa xem được tác vụ giọng đang xử lý.", 503);
   // A completed provider job may have reached Storage and settled the charge
@@ -714,7 +714,7 @@ export async function recoverMaziaoVoiceOver(input: { key: string; userId: strin
     throw new StudioError("CREDIT_REQUEST_REUSED", "Tác vụ này không còn chờ khôi phục. Hãy tải lại trang để xem kết quả mới nhất.", 409);
   const taskId = data.provider_task_id as string;
   let audio: Audio;
-  const timing = { providerWaitMs: 0, downloadMs: 0 };
+  const timing = { statusPollMs: 0, downloadMs: 0 };
   try {
     [audio] = await completedAudio(input.key, taskId, 1, Date.now() + (input.requestSliceMs ?? 240000), timing);
   } catch (error) {
@@ -731,7 +731,8 @@ export async function recoverMaziaoVoiceOver(input: { key: string; userId: strin
     model: (data.metadata as Record<string, unknown>).model,
     audioPath: media.audioPath, audioMime: audio.mime, duration: audio.duration,
   });
-  console.info(JSON.stringify({ event: "studio_voice_timing", phase: "recovered", provider: "maziao", taskId, providerWaitMs: timing.providerWaitMs, downloadMs: timing.downloadMs, storageMs, settleMs: Date.now() - settleSince, recoveryMs: Date.now() - recoverySince }));
+  const taskRecordedAt = Date.parse(data.updated_at);
+  console.info(JSON.stringify({ event: "studio_voice_timing", phase: "recovered", provider: "maziao", taskId, statusPollMs: timing.statusPollMs, downloadMs: timing.downloadMs, storageMs, settleMs: Date.now() - settleSince, recoveryMs: Date.now() - recoverySince, taskRecordedAgeMs: Number.isFinite(taskRecordedAt) ? Math.max(0, Date.now() - taskRecordedAt) : null }));
   await registerLibraryAudio({ userId: input.userId, requestId: input.requestId, audioPath: media.audioPath,
     audioMime: audio.mime, sizeBytes: audio.bytes.length, durationSeconds: audio.duration }).catch(error => {
     console.warn(JSON.stringify({ event: "library_audio_index_failed", code: error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN" }));

@@ -665,7 +665,7 @@ await check("speech submits the entire timeline once, polls at three seconds, an
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/status")).length, 2);
   assert.deepEqual(h.waits, [3000]); assert.equal(h.media.size, 2); assert.equal(h.shortened.length, 0);
   assert.equal(h.usage.length, 1); assert.equal(h.usage[0].credits, 34.5); assert.equal(h.usage[0].characters, 28);
-  assert.equal(h.timing.find(entry => entry.phase === "completed")?.providerWaitMs, 3000);
+  assert.equal(h.timing.find(entry => entry.phase === "completed")?.statusPollMs, 3000);
   for (const secret of [h.key, original[0].text, "https://"]) assert.ok(!JSON.stringify(h.timing).includes(secret));
   assert.ok(!JSON.stringify(h.usage).includes(h.key)); assert.ok(!JSON.stringify(h.usage).includes(original[0].text));
   for (const request of h.requests) {
@@ -705,7 +705,7 @@ await check("standalone narration uses paragraph mode, one voice, and the provid
   assert.equal(h.indexedAudio[0].sizeBytes, bytes.length);
   assert.deepEqual(h.timing.map(entry => entry.phase), ["submitted", "completed"]);
   assert.equal(h.timing[0].modelCheckMs, 0);
-  assert.equal(h.timing[1].storageMs, 0);
+  assert.equal(h.timing[1].beforeSettleMs, 0);
   assert.ok(!JSON.stringify(h.timing).includes(text));
 });
 
