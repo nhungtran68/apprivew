@@ -13,7 +13,7 @@ let sequence = 0;
 
 async function harness() {
   const key = `offline-maziao-secret-${++sequence}`;
-  const requests = [], grants = new Map(), charged = [], deleted = [], media = new Map(), storedMimes = new Map(), mp3Reads = [], waits = [], shortened = [], usage = [], indexedAudio = [];
+  const requests = [], grants = new Map(), charged = [], deleted = [], media = new Map(), storedMimes = new Map(), mp3Reads = [], waits = [], shortened = [], usage = [], timing = [], indexedAudio = [];
   let handle = async () => { throw new Error("Unexpected provider request"); };
   let accountVoices = [];
   let accountHandler;
@@ -24,7 +24,7 @@ async function harness() {
   class TestDate extends Date { static now() { return now; } }
   const modules = new Map(), synthetics = new Map();
   const context = vm.createContext({
-    console: { ...console, info: value => usage.push(JSON.parse(value)) }, crypto, process: { env: { MAZIAO_API_KEY: key } }, Date: TestDate,
+    console: { ...console, info: value => { const entry = JSON.parse(value); (entry.event === "studio_voice_timing" ? timing : usage).push(entry); } }, crypto, process: { env: { MAZIAO_API_KEY: key } }, Date: TestDate,
     TextEncoder, TextDecoder, Uint8Array, DataView, ArrayBuffer, FormData, File,
     Request, Response, Headers, URL, URLSearchParams, AbortSignal, btoa, atob,
     setTimeout(callback, ms = 0) { waits.push(ms); now += ms; queueMicrotask(callback); return 0; },
@@ -160,7 +160,7 @@ async function harness() {
     return module.namespace;
   }
   const wav = await entry("lib/studio-wav.ts");
-  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, indexedAudio, wav, entry, setHandler(handler) { handle = handler; }, setAccountVoices(rows) { accountVoices = rows; }, setAccountHandler(handler) { accountHandler = handler; }, setMemberRole(role) { memberRole = role; }, setCatalog(rows) { catalog = rows; }, failStorageAt(index) { failStorageAt = index; } };
+  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, timing, indexedAudio, wav, entry, setHandler(handler) { handle = handler; }, setAccountVoices(rows) { accountVoices = rows; }, setAccountHandler(handler) { accountHandler = handler; }, setMemberRole(role) { memberRole = role; }, setCatalog(rows) { catalog = rows; }, failStorageAt(index) { failStorageAt = index; } };
 }
 
 function syntheticMpegFrames() {
@@ -649,7 +649,7 @@ await check("provider errors never reflect API secrets, private text or raw prov
   await assert.rejects(maziao.listMaziaoVoices(h.key, alice), error => error.code === "MAZIAO_REJECTED" && !error.message.includes(h.key));
 });
 
-await check("speech submits the entire timeline once, polls at six seconds, and stores actual WAV durations", async () => {
+await check("speech submits the entire timeline once, polls at three seconds, and stores actual WAV durations", async () => {
   const h = await harness(), maziao = await provider(h), original = sampleSegments();
   h.setHandler(speechHandler(h, { status: "processing-first", onSubmit: body => {
     assert.equal(body.mode, "multiParts"); assert.equal(body.modelId, "lingual_speech_v2");
@@ -663,8 +663,10 @@ await check("speech submits the entire timeline once, polls at six seconds, and 
   assert.deepEqual(Array.from(result.segments, item => item.revised), [false, false]);
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/status")).length, 2);
-  assert.deepEqual(h.waits, [6000]); assert.equal(h.media.size, 2); assert.equal(h.shortened.length, 0);
+  assert.deepEqual(h.waits, [3000]); assert.equal(h.media.size, 2); assert.equal(h.shortened.length, 0);
   assert.equal(h.usage.length, 1); assert.equal(h.usage[0].credits, 34.5); assert.equal(h.usage[0].characters, 28);
+  assert.equal(h.timing.find(entry => entry.phase === "completed")?.providerWaitMs, 3000);
+  for (const secret of [h.key, original[0].text, "https://"]) assert.ok(!JSON.stringify(h.timing).includes(secret));
   assert.ok(!JSON.stringify(h.usage).includes(h.key)); assert.ok(!JSON.stringify(h.usage).includes(original[0].text));
   for (const request of h.requests) {
     if (isApi(request)) assert.equal(request.headers.Authorization, `Bearer ${h.key}`);
@@ -701,6 +703,22 @@ await check("standalone narration uses paragraph mode, one voice, and the provid
   assert.equal(h.indexedAudio.length, 1);
   assert.equal(h.indexedAudio[0].audioPath, result.audioPath);
   assert.equal(h.indexedAudio[0].sizeBytes, bytes.length);
+  assert.deepEqual(h.timing.map(entry => entry.phase), ["submitted", "completed"]);
+  assert.equal(h.timing[0].modelCheckMs, 0);
+  assert.equal(h.timing[1].storageMs, 0);
+  assert.ok(!JSON.stringify(h.timing).includes(text));
+});
+
+await check("positive model validation is briefly reused and a rotated key gets its own check", async () => {
+  const h = await harness(), maziao = await provider(h);
+  h.setHandler(speechHandler(h, { durations: [1] }));
+  const input = { userId: alice, voiceId: shortSpeechVoice(), text: exactMinimumText, speed: 1, volume: 1, pitch: 1 };
+  await maziao.generateMaziaoVoiceOver({ ...input, key: h.key });
+  await maziao.generateMaziaoVoiceOver({ ...input, key: h.key });
+  assert.equal(h.requests.filter(request => request.url.endsWith("/configs")).length, 1);
+  await maziao.generateMaziaoVoiceOver({ ...input, key: `${h.key}-rotated` });
+  assert.equal(h.requests.filter(request => request.url.endsWith("/configs")).length, 2);
+  assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 3);
 });
 
 await check("vieten rejects totals below 100 characters before network, quota or script changes", async () => {

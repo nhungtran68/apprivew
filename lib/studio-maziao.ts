@@ -18,6 +18,10 @@ const SHORTEN_CREDITS = 10;
 // Keep each browser request short. A Maziao job can take several minutes, so
 // subsequent requests resume the recorded task instead of submitting it again.
 const VOICE_REQUEST_SLICE_MS = 18_000;
+// Warm server instances can reuse a recent positive model check. A rotated API
+// key gets a different cache entry; Maziao still validates every paid submit.
+const MODEL_CONFIG_TTL_MS = 120_000;
+const validatedModels = new Map<string, number>();
 
 async function payloadHash(data: string | Uint8Array): Promise<string> {
   const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
@@ -118,10 +122,14 @@ async function api(key: string, path: string, init: RequestInit = {}, deadline =
 }
 
 async function assertModel(key: string, model: MaziaoModel, deadline?: number) {
+  const cacheKey = await payloadHash(`${key}\0${model}`);
+  if ((validatedModels.get(cacheKey) ?? 0) > Date.now()) return;
   const result = await api(key, "/configs", {}, deadline), data = result.data as { ttsModels?: ProviderModel[] } | undefined;
   const config = Array.isArray(data?.ttsModels) ? data.ttsModels.find(item => item?.id === model) : undefined;
   const languages = config?.supported_languages;
   if (!config || config.support_cloning !== true || !Array.isArray(languages) || !languages.includes("vi")) throw new StudioError("MAZIAO_MODEL_UNAVAILABLE", "Model đang chọn chưa hỗ trợ nhân bản tiếng Việt trong tài khoản này. Quản trị viên cần kiểm tra cấu hình model.", 422, "contact_admin");
+  if (validatedModels.size >= 16) validatedModels.delete(validatedModels.keys().next().value!);
+  validatedModels.set(cacheKey, Date.now() + MODEL_CONFIG_TTL_MS);
 }
 
 function safeMediaUrl(value: unknown): string | undefined {
@@ -463,7 +471,8 @@ async function taskDetail(key: string, taskId: string, deadline: number): Promis
   return job as SpeechJob;
 }
 
-async function completedAudio(key: string, taskId: string, count: number, deadline: number): Promise<Audio[]> {
+async function completedAudio(key: string, taskId: string, count: number, deadline: number, timing?: { providerWaitMs: number; downloadMs: number }): Promise<Audio[]> {
+  const waitingSince = Date.now();
   let missingRows = 0;
   while (Date.now() < deadline) {
     const polled = await api(key, "/tts/status", { method: "POST", body: JSON.stringify({ ids: [taskId] }) }, deadline);
@@ -482,16 +491,19 @@ async function completedAudio(key: string, taskId: string, count: number, deadli
         if (detail.status === "completed") urls = resultUrls(detail, count);
       }
       if (urls) {
+        if (timing) timing.providerWaitMs = Date.now() - waitingSince;
+        const downloadSince = Date.now();
         const audio: Audio[] = [];
         for (const url of urls) audio.push(await fetchAudio(url, deadline));
+        if (timing) timing.downloadMs = Date.now() - downloadSince;
         return audio;
       }
     }
-    await new Promise(resolve => setTimeout(resolve, Math.min(6000, Math.max(0, deadline - Date.now()))));
+    await new Promise(resolve => setTimeout(resolve, Math.min(3000, Math.max(0, deadline - Date.now()))));
   }
   throw new StudioError("MAZIAO_TIMEOUT", "Hệ thống chưa xử lý xong trong thời gian chờ. Kiểm tra tác vụ hiện tại trước khi tạo lại để tránh trừ credit lặp.", 504);
 }
-async function synthesizeBatch(key: string, userId: string, requestId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[], settings = { speed: 1, pitch: 1, volume: 1 }, mode: "multiParts" | "paragraph" = "multiParts", beforeSettle?: (audio: Audio[]) => Promise<Record<string, unknown>>): Promise<Audio[]> {
+async function synthesizeBatch(key: string, userId: string, requestId: string, voiceId: string, segments: StudioSegment[], deadline: number, costs: (number | null)[], settings = { speed: 1, pitch: 1, volume: 1 }, mode: "multiParts" | "paragraph" = "multiParts", beforeSettle?: (audio: Audio[]) => Promise<Record<string, unknown>>, modelCheckMs?: number): Promise<Audio[]> {
   const parsed = parseMaziaoVoiceId(voiceId);
   if (mode === "paragraph" && segments.length !== 1) throw invalidResponse();
   const started = Date.now();
@@ -501,31 +513,43 @@ async function synthesizeBatch(key: string, userId: string, requestId: string, v
     ? { mode, parts: [{ text: segments[0].text }], voiceId: parsed.id, config: { speed: settings.speed, volume: settings.volume, pitch: settings.pitch, export_srt: false }, modelId: parsed.model }
     : { mode, parts: segments.map(segment => ({ text: segment.text, voiceId: parsed.id, speed: settings.speed, pitch: settings.pitch })), config: { volume: settings.volume, pitch: settings.pitch, export_srt: false }, modelId: parsed.model };
   const characters = segments.reduce((sum, segment) => sum + segment.text.length, 0);
+  const reserveSince = Date.now();
   const reservation = await reserveCredits(userId, requestId, "tts", creditsForSpeech(characters), {
     provider: "maziao", model: parsed.model, requestHash: await payloadHash(JSON.stringify(payload))
   });
+  const reserveMs = Date.now() - reserveSince;
   if (!reservation.created && (reservation.status !== "reserved" || !rawId(reservation.providerTaskId))) return reusedCreditRequest();
   let submitted = !reservation.created;
   try {
     let taskId = reservation.providerTaskId as string | undefined;
     let providerCredits: number | null = null;
     if (reservation.created) {
+      const submitSince = Date.now();
       const result = await api(key, "/tts/submit", { method: "POST", body: JSON.stringify(payload) }, deadline);
+      const providerSubmitMs = Date.now() - submitSince;
       const data = result.data as { taskId?: unknown; totalCost?: unknown } | undefined;
       if (!data || !rawId(data.taskId)) throw invalidResponse();
       taskId = data.taskId;
       submitted = true;
+      const taskRecordSince = Date.now();
       await markCreditProviderTask(userId, requestId, taskId);
+      const taskRecordMs = Date.now() - taskRecordSince;
       providerCredits = typeof data.totalCost === "number" && Number.isFinite(data.totalCost) && data.totalCost >= 0 && data.totalCost <= 1000000000 ? data.totalCost : null;
       console.info(JSON.stringify({ event: "studio_voice_usage", provider: "maziao", model: parsed.model, taskId, characters, credits: providerCredits, segments: segments.length, elapsedMs: Date.now() - started }));
+      console.info(JSON.stringify({ event: "studio_voice_timing", phase: "submitted", provider: "maziao", model: parsed.model, taskId, modelCheckMs: modelCheckMs ?? null, reserveMs, providerSubmitMs, taskRecordMs }));
     }
     if (!taskId) throw invalidResponse();
     // Provider credits are recorded for cost accounting, distinct from the
     // app's published credits (one per 100 text characters).
     costs.push(providerCredits);
-    const audio = await completedAudio(key, taskId, segments.length, deadline);
+    const timing = { providerWaitMs: 0, downloadMs: 0 };
+    const audio = await completedAudio(key, taskId, segments.length, deadline, timing);
+    const storageSince = Date.now();
     const output = beforeSettle ? await beforeSettle(audio) : {};
+    const storageMs = Date.now() - storageSince;
+    const settleSince = Date.now();
     await settleCredits(userId, requestId, undefined, { provider: "maziao", providerCredits, providerTaskId: taskId, characters, model: parsed.model, ...output });
+    console.info(JSON.stringify({ event: "studio_voice_timing", phase: "completed", provider: "maziao", model: parsed.model, taskId, providerWaitMs: timing.providerWaitMs, downloadMs: timing.downloadMs, storageMs, settleMs: Date.now() - settleSince, totalMs: Date.now() - started }));
     return audio;
   } catch (error) {
     if (error instanceof StudioError && (error.code === "MAZIAO_TASK_FAILED" || !submitted && definitivelyNotDelivered(error)))
@@ -597,14 +621,16 @@ export async function generateMaziaoVoiceOver(input: { key: string; userId: stri
   const parsed = parseMaziaoVoiceId(input.voiceId);
   if (parsed.model === "vieten_speech" && input.text.length < 100) throw new StudioError("MAZIAO_TEXT_TOO_SHORT", "Model này yêu cầu tối thiểu 100 ký tự. Hãy nhập thêm lời thoại trước khi tạo.", 422, "script");
   const deadline = Date.now() + (input.requestSliceMs ?? 240000);
+  const modelCheckSince = Date.now();
   await assertModel(input.key, parsed.model, deadline);
+  const modelCheckMs = Date.now() - modelCheckSince;
   const segments: StudioSegment[] = [{ start: 0, end: 180, text: input.text }];
   const costs: (number | null)[] = [];
   let media: Awaited<ReturnType<typeof storeNarration>> | undefined;
   const [audio] = await synthesizeBatch(input.key, input.userId, input.requestId, input.voiceId, segments, deadline, costs, { speed: input.speed, pitch: input.pitch, volume: input.volume }, "paragraph", async ([spoken]) => {
     media = await storeNarration(input.userId, spoken.bytes, 0, spoken.mime);
     return { audioPath: media.audioPath, audioMime: spoken.mime, duration: spoken.duration, voiceId: input.voiceId };
-  });
+  }, modelCheckMs);
   if (!media) throw invalidResponse();
   await registerLibraryAudio({ userId: input.userId, requestId: input.requestId, audioPath: media.audioPath,
     audioMime: audio.mime, sizeBytes: audio.bytes.length, durationSeconds: audio.duration }).catch(error => {
@@ -654,6 +680,7 @@ export function recoverableVoiceError(error: unknown) {
 
 /** Reuse a previously submitted Maziao job, never spending on another submit. */
 export async function recoverMaziaoVoiceOver(input: { key: string; userId: string; requestId: unknown; requestSliceMs?: number }) {
+  const recoverySince = Date.now();
   if (!creditId(input.requestId)) throw new StudioError("INVALID_CREDIT_REQUEST", "Mã tác vụ chưa hợp lệ.", 400);
   const client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_credit_operations")
@@ -687,19 +714,24 @@ export async function recoverMaziaoVoiceOver(input: { key: string; userId: strin
     throw new StudioError("CREDIT_REQUEST_REUSED", "Tác vụ này không còn chờ khôi phục. Hãy tải lại trang để xem kết quả mới nhất.", 409);
   const taskId = data.provider_task_id as string;
   let audio: Audio;
+  const timing = { providerWaitMs: 0, downloadMs: 0 };
   try {
-    [audio] = await completedAudio(input.key, taskId, 1, Date.now() + (input.requestSliceMs ?? 240000));
+    [audio] = await completedAudio(input.key, taskId, 1, Date.now() + (input.requestSliceMs ?? 240000), timing);
   } catch (error) {
     if (error instanceof StudioError && error.code === "MAZIAO_TASK_FAILED")
       await refundCredits(input.userId, input.requestId).catch(() => {});
     throw error;
   }
+  const storageSince = Date.now();
   const media = await storeNarration(input.userId, audio.bytes, 0, audio.mime);
+  const storageMs = Date.now() - storageSince;
+  const settleSince = Date.now();
   await settleCredits(input.userId, input.requestId, undefined, {
     provider: "maziao", providerCredits: null, providerTaskId: taskId,
     model: (data.metadata as Record<string, unknown>).model,
     audioPath: media.audioPath, audioMime: audio.mime, duration: audio.duration,
   });
+  console.info(JSON.stringify({ event: "studio_voice_timing", phase: "recovered", provider: "maziao", taskId, providerWaitMs: timing.providerWaitMs, downloadMs: timing.downloadMs, storageMs, settleMs: Date.now() - settleSince, recoveryMs: Date.now() - recoverySince }));
   await registerLibraryAudio({ userId: input.userId, requestId: input.requestId, audioPath: media.audioPath,
     audioMime: audio.mime, sizeBytes: audio.bytes.length, durationSeconds: audio.duration }).catch(error => {
     console.warn(JSON.stringify({ event: "library_audio_index_failed", code: error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN" }));
