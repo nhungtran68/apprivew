@@ -12,7 +12,9 @@ type AdminCloneCandidate = { voice_id: string; name: string; enabled: boolean; k
 type AudioResult = { audioPath: string; audioMime: string; duration: number; voiceId?: string; audioUrl?: string };
 type PendingVoiceTask = { requestId: string; createdAt: string };
 const scriptTypes = ".txt,.md,.csv,.srt,.vtt";
-const MAX_SCRIPT = 6000;
+// The standalone player/download path accepts one file up to 180 seconds.
+// Keep generated speech within that practical bound until long-form chunking exists.
+const MAX_SCRIPT = 1200;
 const friendlyError = (value: unknown) => value instanceof Error ? value.message : "Có lỗi kết nối. Hãy thử lại.";
 
 export default function VoiceAiPage() {
@@ -39,6 +41,8 @@ export default function VoiceAiPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const activeSrc = useRef("");
   const lastRequest = useRef<{ fingerprint: string; id: string } | null>(null);
+  const requestInFlight = useRef(false);
+  const tracking = useRef<AbortController | null>(null);
   const loading = account.status === "loading";
   const isAdmin = account.status === "ready" && account.account?.isAdmin === true;
 
@@ -66,7 +70,7 @@ export default function VoiceAiPage() {
     } catch { /* The main voice workflow remains available if recovery listing is offline. */ }
   }, []);
   useEffect(() => { if (account.status === "ready") void loadPendingTasks(); }, [account.status, loadPendingTasks]);
-  useEffect(() => () => { if (activeSrc.current) URL.revokeObjectURL(activeSrc.current); }, []);
+  useEffect(() => () => { tracking.current?.abort(); if (activeSrc.current) URL.revokeObjectURL(activeSrc.current); }, []);
 
   const visible = voices.filter(voice => (group === "all" || (group === "personal" ? voice.category === "cloned" : voice.category !== "cloned")) && (!search.trim() || voice.name.toLocaleLowerCase("vi").includes(search.toLocaleLowerCase("vi").trim())));
   const shareableVoices = (() => {
@@ -82,7 +86,7 @@ export default function VoiceAiPage() {
     if (!file.size || file.size > 100000 || !/\.(txt|md|csv|srt|vtt)$/i.test(file.name)) { setError("Chọn tệp TXT, MD, CSV, SRT hoặc VTT tối đa 100 KB."); return; }
     try {
       const value = (await file.text()).replace(/^\uFEFF/, "").replace(/^WEBVTT[^\n]*\n/i, "").replace(/^\d+\s*$/gm, "").replace(/^\d\d:\d\d(?::\d\d)?[,.]\d+\s*-->[^\n]*$/gm, "").trim();
-      if (!value || value.length > MAX_SCRIPT) throw new Error("Kịch bản cần từ 1 đến 6.000 ký tự.");
+      if (!value || value.length > MAX_SCRIPT) throw new Error("Mỗi tệp giọng hỗ trợ tối đa 1.200 ký tự. Hãy chia kịch bản dài thành các đoạn ngắn hơn.");
       setText(value); setAudio(null); setNotice("Đã nhập kịch bản từ " + file.name);
     } catch (err) { setError(friendlyError(err)); }
   }
@@ -95,39 +99,78 @@ export default function VoiceAiPage() {
     window.dispatchEvent(new Event("studio-credits-changed"));
   }
 
+  async function trackPending(task: PendingVoiceTask, controller: AbortController, initialReason?: string) {
+    setPendingTasks(previous => previous.some(item => item.requestId === task.requestId) ? previous : [task, ...previous]);
+    setBusy("recover"); setNotice(initialReason === "MAZIAO_REJECTED" || initialReason === "MAZIAO_UNAVAILABLE"
+      ? "Maziao tạm gián đoạn khi kiểm tra kết quả. Tác vụ đã được gửi; ứng dụng đang lấy lại chính tác vụ này, không tính thêm lượt tạo."
+      : "Lời đọc đã được gửi. Đang kiểm tra kết quả; không gửi thêm yêu cầu tạo giọng.");
+    const limit = Date.now() + 8 * 60_000;
+    let invalidResponses = 0;
+    while (!controller.signal.aborted && Date.now() < limit) {
+      await new Promise(resolve => setTimeout(resolve, 4_000));
+      if (controller.signal.aborted) return;
+      const response = await fetch("/api/voice-over/recover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: task.requestId }), signal: controller.signal });
+      const result = await response.json();
+      if (response.status === 202 && result.pending === true) {
+        invalidResponses = result.reason === "MAZIAO_INVALID_RESPONSE" ? invalidResponses + 1 : 0;
+        if (invalidResponses >= 2) throw new Error("Dịch vụ đã nhận tác vụ nhưng trả kết quả chưa đúng định dạng. Tác vụ vẫn được giữ; hãy dùng Lấy lại lời đọc sau hoặc liên hệ quản trị viên.");
+        continue;
+      }
+      if (!response.ok) throw new Error(result.error || "Chưa lấy lại được lời đọc. Hãy thử lại sau.");
+      acceptAudioResult(result);
+      lastRequest.current = null;
+      setPendingTasks(previous => previous.filter(item => item.requestId !== task.requestId));
+      setNotice("Đã tạo lời đọc. Bấm Nghe hoặc Tải MP3/WAV để nhận tệp.");
+      await loadPendingTasks();
+      return;
+    }
+    if (!controller.signal.aborted) setNotice("Maziao chưa trả file sau thời gian chờ. Trạng thái chờ đã kết thúc trên trang; bấm Lấy lại lời đọc sau để kiểm tra cùng tác vụ, không tạo lượt mới.");
+  }
+
   async function generate() {
-    if (busy || !selected || !text.trim()) return;
+    if (requestInFlight.current || busy || !selected || !text.trim()) return;
+    requestInFlight.current = true;
+    const controller = new AbortController(); tracking.current = controller;
     setBusy("speech"); setError(""); setNotice("");
     try {
       const payload = { voiceId: selected, text: text.trim(), speed, volume, pitch };
       const fingerprint = JSON.stringify(payload);
       if (lastRequest.current?.fingerprint !== fingerprint) lastRequest.current = { fingerprint, id: crypto.randomUUID() };
+      const existing = pendingTasks.find(task => task.requestId === lastRequest.current?.id);
+      if (existing) { await trackPending(existing, controller); return; }
       const response = await fetch("/api/voice-over", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": lastRequest.current.id }, body: JSON.stringify(payload) });
       const result = await response.json();
+      if (response.status === 202 && result.pending === true) {
+        await trackPending({ requestId: lastRequest.current.id, createdAt: new Date().toISOString() }, controller, result.reason);
+        return;
+      }
       if (!response.ok) {
-        if (!["MAZIAO_INVALID_RESPONSE", "MAZIAO_TIMEOUT", "MAZIAO_UNAVAILABLE", "MAZIAO_AUDIO_DOWNLOAD", "INVALID_AUDIO", "AUDIO_STORE_FAILED", "AUDIO_LINK_FAILED", "CREDIT_LEDGER_UNAVAILABLE"].includes(result.code)) lastRequest.current = null;
+        if (!["MAZIAO_INVALID_RESPONSE", "MAZIAO_TIMEOUT", "MAZIAO_UNAVAILABLE", "MAZIAO_REJECTED", "MAZIAO_AUDIO_DOWNLOAD", "INVALID_AUDIO", "AUDIO_STORE_FAILED", "AUDIO_LINK_FAILED", "CREDIT_LEDGER_UNAVAILABLE"].includes(result.code)) lastRequest.current = null;
         throw new Error(result.error || "Không tạo được giọng đọc.");
       }
       acceptAudioResult(result);
       setPendingTasks(previous => previous.filter(task => task.requestId !== lastRequest.current?.id));
       lastRequest.current = null; await loadPendingTasks();
       setNotice("Đã tạo lời đọc. Bấm Nghe hoặc Tải MP3/WAV để nhận tệp.");
-    } catch (err) { setError(friendlyError(err)); await loadPendingTasks(); }
-    finally { setBusy(""); }
+    } catch (err) { if (!controller.signal.aborted) { setError(friendlyError(err)); await loadPendingTasks(); } }
+    finally { if (tracking.current === controller) { requestInFlight.current = false; tracking.current = null; setBusy(""); } }
   }
 
   async function recover(task: PendingVoiceTask) {
-    if (busy) return;
+    if (requestInFlight.current || busy) return;
+    requestInFlight.current = true;
+    const controller = new AbortController(); tracking.current = controller;
     setBusy("recover"); setError(""); setNotice("");
-    try {
-      const response = await fetch("/api/voice-over/recover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: task.requestId }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Chưa lấy lại được lời đọc. Hãy thử lại sau.");
-      acceptAudioResult(result); lastRequest.current = null;
-      setPendingTasks(previous => previous.filter(item => item.requestId !== task.requestId));
-      setNotice("Đã lấy lại lời đọc từ tác vụ cũ. Bạn có thể nghe và tải tệp ngay.");
-    } catch (err) { setError(friendlyError(err)); }
-    finally { await loadPendingTasks(); setBusy(""); }
+    try { await trackPending(task, controller); }
+    catch (err) { if (!controller.signal.aborted) setError(friendlyError(err)); }
+    finally { if (tracking.current === controller) { requestInFlight.current = false; tracking.current = null; await loadPendingTasks(); setBusy(""); } }
+  }
+
+  function stopTracking() {
+    tracking.current?.abort(); tracking.current = null;
+    requestInFlight.current = false;
+    setBusy("");
+    setNotice("Đã dừng chờ trên trang này. Tác vụ vẫn tiếp tục xử lý; hãy dùng Lấy lại lời đọc để nhận file, không tạo lượt mới.");
   }
 
   async function downloadAudio(save: boolean) {
@@ -239,8 +282,9 @@ export default function VoiceAiPage() {
           </section>
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>03</span><h2>Tạo và tải giọng đọc</h2></div></div>
-            <p className={styles.muted}>Chi phí AI sẽ tính theo số ký tự và tác vụ thực tế. Lời thoại dưới 100 ký tự có thể chưa đủ điều kiện xử lý ở model tiếng Việt hiện tại.</p>
-            <button className={styles.generate} onClick={() => void generate()} disabled={Boolean(busy) || !selected || !text.trim()}>{busy === "speech" ? "Đang tạo giọng, vui lòng chờ…" : "Tạo giọng nói AI"} <PlatformIcon name="arrow" size={19}/></button>
+            <p className={styles.muted}>Mỗi tệp giọng hỗ trợ tối đa 1.200 ký tự. Lời thoại dưới 100 ký tự có thể chưa đủ điều kiện xử lý ở model tiếng Việt hiện tại. Credit được giữ khi đang xử lý; tác vụ thất bại đã xác nhận sẽ được hoàn lại.</p>
+            <button className={styles.generate} onClick={() => void generate()} disabled={Boolean(busy) || !selected || !text.trim()}>{busy === "speech" ? "Đã gửi lời đọc, đang chờ…" : busy === "recover" ? "Đang lấy kết quả giọng…" : "Tạo giọng nói AI"} <PlatformIcon name="arrow" size={19}/></button>
+            {busy === "recover" && <button type="button" className={styles.textButton} onClick={stopTracking}>Dừng chờ trên trang này</button>}
             {pendingTasks.length > 0 && <div className={styles.result}><strong>Lời đọc đã gửi, có thể lấy lại</strong><p className={styles.muted}>Nếu lần tạo trước bị gián đoạn, lấy lại tệp từ tác vụ cũ mà không tạo thêm lượt mới.</p><div className={styles.resultButtons}>{pendingTasks.map(task => <button key={task.requestId} type="button" disabled={Boolean(busy)} onClick={() => void recover(task)}>{busy === "recover" ? "Đang lấy lại…" : `Lấy lại lời đọc ${new Date(task.createdAt).toLocaleString("vi-VN")}`}</button>)}</div></div>}
             {audio && <div className={styles.result}><strong>Đã tạo lời đọc • {audio.duration.toFixed(1)} giây</strong><div className={styles.resultButtons}><button onClick={() => void downloadAudio(false)} disabled={Boolean(busy)}>Nghe lời đọc</button><button onClick={() => void downloadAudio(true)} disabled={Boolean(busy)}>Tải MP3 / WAV</button></div>{audioSrc && <audio controls src={audioSrc} className={styles.player}/>}<p className={styles.muted}>Nếu mất mạng khi tải, bấm lại để nhận chính tệp đã tạo, không tạo lại từ đầu.</p></div>}
           </section>

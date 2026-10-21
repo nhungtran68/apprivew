@@ -28,14 +28,16 @@ function wav(seconds = 1) {
 
 async function harness() {
   let balance = 100, status = "completed", submitFailure = false, statusResponses = [];
+  let now = 1_700_000_000_000;
+  class TestDate extends Date { static now() { return now; } }
   const operations = new Map(), requests = [], events = [];
   const modules = new Map(), synthetics = new Map();
   let contract;
   const context = vm.createContext({
-    console: { ...console, info: () => {} }, crypto, process: { env: {} },
+    console: { ...console, info: () => {}, warn: () => {} }, crypto, process: { env: {} }, Date: TestDate,
     TextEncoder, TextDecoder, Uint8Array, DataView, ArrayBuffer, FormData, File,
     Request, Response, Headers, URL, URLSearchParams, AbortSignal,
-    setTimeout(callback) { queueMicrotask(callback); return 0; },
+    setTimeout(callback, milliseconds = 0) { now += milliseconds; queueMicrotask(callback); return 0; },
     fetch: async (url, init = {}) => {
       const pathname = new URL(String(url)).pathname;
       requests.push({ pathname, method: init.method || "GET" });
@@ -86,7 +88,7 @@ async function harness() {
           eq: (key, value) => { filters[key] = value; return query; },
           not: () => query, order: () => query,
           limit: async () => ({ data: [...operations].filter(([id, op]) => op.kind === filters.kind && op.status === filters.status && op.providerTaskId).map(([id, op]) => ({ request_id: id, created_at: new Date().toISOString(), provider_task_id: op.providerTaskId, metadata: op.metadata })), error: null }),
-          maybeSingle: async () => { const op = operations.get(filters.request_id); return { data: op && op.kind === filters.kind ? { request_id: filters.request_id, provider_task_id: op.providerTaskId, metadata: op.metadata, status: op.status } : null, error: null }; },
+          maybeSingle: async () => { const op = operations.get(filters.request_id); return { data: op && op.kind === filters.kind ? { request_id: filters.request_id, provider_task_id: op.providerTaskId, metadata: op.metadata, status: op.status, provider_usage: op.providerUsage } : null, error: null }; },
         };
         return query;
       } }),
@@ -168,6 +170,19 @@ const detailResult = await detail.maziao.generateMaziaoVoiceOver({ ...base, requ
 assert.equal(detailResult.audioMime, "audio/wav");
 assert.equal(detail.requests.filter(item => item.pathname === "/api/tts/taskVoice1").length, 1);
 
+const slow = await harness();
+slow.setStatus("processing");
+await assert.rejects(slow.maziao.generateMaziaoVoiceOver({ ...base, requestId: ids.ambiguous, requestSliceMs: 12_000 }), { code: "MAZIAO_TIMEOUT" });
+assert.equal(slow.operations.get(ids.ambiguous).status, "reserved");
+assert.equal(await slow.maziao.pendingMaziaoVoiceOver(userId, ids.ambiguous), true);
+assert.equal(slow.requests.filter(item => item.pathname === "/api/tts/submit").length, 1);
+slow.setStatus("completed");
+const slowResult = await slow.maziao.recoverMaziaoVoiceOver({ key: base.key, userId, requestId: ids.ambiguous, requestSliceMs: 12_000 });
+assert.equal(slowResult.audioMime, "audio/wav");
+assert.equal(slow.operations.get(ids.ambiguous).status, "settled");
+assert.equal(await slow.maziao.pendingMaziaoVoiceOver(userId, ids.ambiguous), false);
+assert.equal(slow.requests.filter(item => item.pathname === "/api/tts/submit").length, 1, "a slow paid job must be recovered, not submitted twice");
+
 const recoverable = await harness();
 recoverable.setStatus("unknown");
 await assert.rejects(recoverable.maziao.generateMaziaoVoiceOver({ ...base, requestId: ids.ambiguous }), { code: "MAZIAO_INVALID_RESPONSE" });
@@ -180,7 +195,9 @@ const recovered = await recoverable.maziao.recoverMaziaoVoiceOver({ key: base.ke
 assert.equal(recovered.audioMime, "audio/wav");
 assert.equal(recoverable.operations.get(ids.ambiguous).status, "settled");
 assert.equal(recoverable.requests.filter(item => item.pathname === "/api/tts/submit").length, 1, "recovery must not submit again");
-await assert.rejects(recoverable.maziao.recoverMaziaoVoiceOver({ key: base.key, userId, requestId: ids.ambiguous }), { code: "CREDIT_REQUEST_REUSED" });
+const restored = await recoverable.maziao.recoverMaziaoVoiceOver({ key: base.key, userId, requestId: ids.ambiguous });
+assert.equal(restored.audioPath, recovered.audioPath, "a lost HTTP response reuses the stored file");
+assert.equal(recoverable.requests.filter(item => item.pathname === "/api/tts/submit").length, 1);
 
 const resumed = await harness();
 resumed.setStatus("unknown");
