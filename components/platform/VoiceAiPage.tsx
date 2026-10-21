@@ -280,22 +280,27 @@ export default function VoiceAiPage() {
             <textarea aria-label="Nội dung lời thoại" className={styles.textarea} value={text} maxLength={MAX_SCRIPT} placeholder="Nhập nội dung cần chuyển thành giọng nói tại đây…" onChange={e => { setText(e.target.value); setAudio(null); setAudioSrc(""); }} />
             <div className={styles.scriptFooter}><label className={styles.upload}><PlatformIcon name="plus" size={18}/> Tải kịch bản lên<input ref={fileInput} type="file" accept={scriptTypes} onChange={e => { const file=e.target.files?.[0]; if(file) void readScript(file); e.target.value=""; }}/></label><Link href="/cong-cu/kich-ban-ai" className={styles.scriptLink}>Chưa có kịch bản? Tạo bằng AI <PlatformIcon name="arrow" size={16}/></Link></div>
           </section>
+          <section className={`${styles.card} ${styles.settingsCard}`}>
+            <details className={styles.audioSettings}>
+              <summary className={styles.settingsToggle}>
+                <span className={styles.step}>03</span>
+                <span className={styles.settingsCopy}><strong>Cấu hình âm thanh</strong><small>Nên giữ mặc định để giọng đọc tự nhiên.</small></span>
+                <span className={styles.settingsArrow} aria-hidden="true"/>
+              </summary>
+              <div className={styles.settingsControls}>
+                {([{ label: "Tốc độ", value: speed, set: setSpeed, min: 0.8, max: 1.2 }, { label: "Âm lượng", value: volume, set: setVolume, min: 0.5, max: 1.5 }, { label: "Cao độ", value: pitch, set: setPitch, min: 0.8, max: 1.2 }] as const).map(setting => <label className={styles.slider} key={setting.label}><span><strong>{setting.label}</strong><output>{setting.value.toFixed(2)}{setting.label === "Tốc độ" ? "x" : ""}</output></span><input type="range" min={setting.min} max={setting.max} step="0.05" value={setting.value} onChange={e => setting.set(Number(e.target.value))}/></label>)}
+                <button type="button" className={styles.reset} onClick={() => { setSpeed(1); setVolume(1); setPitch(1); }}>Đặt lại mặc định</button>
+              </div>
+            </details>
+          </section>
           <section className={styles.card}>
-            <div className={styles.sectionHeading}><div><span className={styles.step}>03</span><h2>Tạo và tải giọng đọc</h2></div></div>
-            <p className={styles.muted}>Mỗi tệp giọng hỗ trợ tối đa 1.200 ký tự. Lời thoại dưới 100 ký tự có thể chưa đủ điều kiện xử lý ở model tiếng Việt hiện tại. Credit được giữ khi đang xử lý; tác vụ thất bại đã xác nhận sẽ được hoàn lại.</p>
+            <div className={styles.sectionHeading}><div><span className={styles.step}>04</span><h2>Tạo và tải giọng đọc</h2></div></div>
             <button className={styles.generate} onClick={() => void generate()} disabled={Boolean(busy) || !selected || !text.trim()}>{busy === "speech" ? "Đã gửi lời đọc, đang chờ…" : busy === "recover" ? "Đang lấy kết quả giọng…" : "Tạo giọng nói AI"} <PlatformIcon name="arrow" size={19}/></button>
             {busy === "recover" && <button type="button" className={styles.textButton} onClick={stopTracking}>Dừng chờ trên trang này</button>}
             {pendingTasks.length > 0 && <div className={styles.result}><strong>Lời đọc đã gửi, có thể lấy lại</strong><p className={styles.muted}>Nếu lần tạo trước bị gián đoạn, lấy lại tệp từ tác vụ cũ mà không tạo thêm lượt mới.</p><div className={styles.resultButtons}>{pendingTasks.map(task => <button key={task.requestId} type="button" disabled={Boolean(busy)} onClick={() => void recover(task)}>{busy === "recover" ? "Đang lấy lại…" : `Lấy lại lời đọc ${new Date(task.createdAt).toLocaleString("vi-VN")}`}</button>)}</div></div>}
             {audio && <div className={styles.result}><strong>Đã tạo lời đọc • {audio.duration.toFixed(1)} giây</strong><div className={styles.resultButtons}><button onClick={() => void downloadAudio(false)} disabled={Boolean(busy)}>Nghe lời đọc</button><button onClick={() => void downloadAudio(true)} disabled={Boolean(busy)}>Tải MP3 / WAV</button></div>{audioSrc && <audio controls src={audioSrc} className={styles.player}/>}<p className={styles.muted}>Nếu mất mạng khi tải, bấm lại để nhận chính tệp đã tạo, không tạo lại từ đầu.</p></div>}
           </section>
         </div>
-        <aside className={styles.sidebar}>
-          <section className={styles.card}>
-            <div className={styles.sectionHeading}><div><span className={styles.step}>04</span><h2>Cấu hình âm thanh</h2></div></div>
-            {([{ label: "Tốc độ", value: speed, set: setSpeed, min: 0.8, max: 1.2 }, { label: "Âm lượng", value: volume, set: setVolume, min: 0.5, max: 1.5 }, { label: "Cao độ", value: pitch, set: setPitch, min: 0.8, max: 1.2 }] as const).map(setting => <label className={styles.slider} key={setting.label}><span><strong>{setting.label}</strong><output>{setting.value.toFixed(2)}{setting.label === "Tốc độ" ? "x" : ""}</output></span><input type="range" min={setting.min} max={setting.max} step="0.05" value={setting.value} onChange={e => setting.set(Number(e.target.value))}/></label>)}
-            <button className={styles.reset} onClick={() => { setSpeed(1); setVolume(1); setPitch(1); }}>Đặt lại mặc định</button>
-          </section>
-        </aside>
       </div>
       {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div><button className={styles.textButton} disabled={syncBusy || Boolean(busy)} onClick={() => void synchronizeVoices()}>{syncBusy ? "Đang đồng bộ…" : "Đồng bộ giọng từ API"}</button></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{shareableVoices.map(voice => {
         const enabled = curated.some(item => item.voice_id === voice.voiceId && item.enabled);
