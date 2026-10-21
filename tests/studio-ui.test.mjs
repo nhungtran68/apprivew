@@ -28,7 +28,8 @@ const downloadModule = { exports: {} };
 new Function("module", "exports", downloadCompiled)(downloadModule, downloadModule.exports);
 const componentRequire = (specifier) => specifier === "@/lib/video-download" ? downloadModule.exports
   : specifier === "@/components/platform/PixabayVideoPicker" ? { default: () => null }
-  : specifier === "@/components/platform/StockVideoWorkspace" ? { default: () => null }
+  : specifier === "@/components/platform/AudioVideoWorkspace" ? { default: () => null }
+  : specifier === "@/components/platform/VideoFromVideoWorkspace" ? { default: () => null }
   : specifier === "./StudioNavigation.module.css" ? { default: { navigation: "studio-navigation", exit: "studio-exit", label: "studio-label" } }
   : baseRequire(specifier);
 new Function("require", "module", "exports", compiled)(componentRequire, evaluated, evaluated.exports);
@@ -109,6 +110,13 @@ const archive = {
   video: { data: "AQID", type: "video/mp4" },
 };
 const project = { ...freshProject("current-user"), duration: 3, voiceId: "voice-one", segments: [audio] };
+
+test("Tạo Video AI chỉ đưa ra hai chế độ mới", () => {
+  const html = renderToString(React.createElement(Studio, { embedded: true }));
+  assert.match(html, /Tạo Video Từ Lời Thoại/);
+  assert.match(html, /Tạo Video Từ Video/);
+  assert.doesNotMatch(html, /Tạo Video Thư Viện|Tạo Video Văn Bản|Quay Video|Tải Video Lên/);
+});
 
 test("archive imports assign a fresh id and current owner, preserving the real media bytes", () => {
   const restored = restoreArchive(archive, "current-user");

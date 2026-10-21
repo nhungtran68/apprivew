@@ -86,8 +86,8 @@ async function readAudioDuration(blob: Blob, fallback: number): Promise<number> 
   return duration;
 }
 
-async function api(path: string, body: Record<string, unknown>, requestId = crypto.randomUUID()) {
-  const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": requestId }, body: JSON.stringify(body) });
+async function api(path: string, body: Record<string, unknown>, requestId: string) {
+  const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": requestId }, body: JSON.stringify(body), signal: AbortSignal.timeout(240_000) });
   const result = await response.json().catch(() => ({})) as Record<string, any>;
   if (response.ok && response.status !== 202) window.dispatchEvent(new Event("studio-credits-changed"));
   if (!response.ok) throw Object.assign(new Error(typeof result.error === "string" ? result.error : result.error?.message || result.message || `Yêu cầu chưa hoàn tất (${response.status}).`), { code: result.code, status: response.status });
@@ -136,9 +136,12 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
   const [progressText, setProgressText] = useState("");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [uncertainStage, setUncertainStage] = useState<"analyze" | "script" | null>(null);
   const [hydratedUserId, setHydratedUserId] = useState("");
   const busyRef = useRef(false);
   const analysisRef = useRef<{ source: File; value: Record<string, unknown> } | null>(null);
+  const analysisRequestRef = useRef<{ source: File; id: string } | null>(null);
+  const scriptRequestRef = useRef<{ fingerprint: string; id: string } | null>(null);
   const voiceRequestRef = useRef<{ fingerprint: string; id: string } | null>(null);
   const recoveryRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
@@ -159,7 +162,8 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
     setGeneratedAudio(undefined); setGeneratedDuration(0); setGeneratedText(""); setGeneratedVoiceId(""); setExported(undefined);
     setReadyVoice(null); setPendingTask(null); setRecoveryBlocked(false); setApprovedScript("");
     setIntent(""); setScriptType("builtin:review"); setScript(""); setTitle(""); setVoiceId("");
-    analysisRef.current = null; voiceRequestRef.current = null;
+    analysisRef.current = null; analysisRequestRef.current = null; scriptRequestRef.current = null; voiceRequestRef.current = null;
+    setUncertainStage(null);
     try {
       const value = JSON.parse(sessionStorage.getItem(`${SESSION_KEY_PREFIX}${userId}`) || "{}") as Record<string, any>;
       if (typeof value.intent === "string") setIntent(value.intent.slice(0, 5000));
@@ -191,7 +195,8 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
       setTitle(file.name.replace(/\.[^.]+$/, "").slice(0, 120));
       if (source) setScript("");
       setApprovedScript(""); setGeneratedAudio(undefined); setGeneratedDuration(0); setExported(undefined);
-      analysisRef.current = null;
+      analysisRef.current = null; analysisRequestRef.current = null; scriptRequestRef.current = null;
+      setUncertainStage(null);
       setNote(`Đã nhận video ${clock(info.duration)}. Hãy chọn dạng kịch bản và cho AI biết điều muốn chia sẻ.`);
     } catch (cause) { setError(errorMessage(cause)); }
     finally { end(); }
@@ -200,6 +205,7 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
   async function analyzeAndWrite() {
     if (!source || !sourceDuration) { setError("Tải video lên trước khi tạo kịch bản."); return; }
     if (!deepseekReady) { setError("AI phân tích và viết kịch bản chưa sẵn sàng."); return; }
+    if (uncertainStage) { setError("Yêu cầu trước chưa rõ kết quả. Hãy kiểm tra credit rồi chọn gửi yêu cầu mới nếu cần; app không tự tính phí lần hai."); return; }
     if (!begin("analyze")) return;
     try {
       let analysis = analysisRef.current?.source === source ? analysisRef.current.value : undefined;
@@ -208,22 +214,42 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
         const { sampleVideoFrames } = await import("@/lib/studio-frames");
         const frames = await sampleVideoFrames(source, sourceDuration, (_fraction, message) => { if (mountedRef.current) setProgressText(message); });
         setProgressText("AI đang xem video làm tư liệu…");
-        const analyzed = await api("/api/analyze", { frames, duration: sourceDuration, intent: "", observationsOnly: true, profile: { ...profile, mode: "scenery" } });
+        if (analysisRequestRef.current?.source !== source) analysisRequestRef.current = { source, id: crypto.randomUUID() };
+        let analyzed: Awaited<ReturnType<typeof api>>;
+        try { analyzed = await api("/api/analyze", { frames, duration: sourceDuration, intent: "", observationsOnly: true, profile: { ...profile, mode: "scenery" } }, analysisRequestRef.current.id); }
+        catch (cause) {
+          const status = cause && typeof cause === "object" && "status" in cause ? Number(cause.status) : 0;
+          if (status && status !== 409) analysisRequestRef.current = null;
+          else setUncertainStage("analyze");
+          throw cause;
+        }
         const value = analyzed.result.analysis || analyzed.result;
         if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("AI chưa trả kết quả phân tích hợp lệ. Hãy thử lại.");
         analysis = value as Record<string, unknown>;
         analysisRef.current = { source, value: analysis };
+        analysisRequestRef.current = null;
       }
       setBusy("script"); setProgressText("AI đang viết lời thoại theo dạng kịch bản bạn chọn…");
       const purpose = intent.trim() || "Viết lời thoại có thông điệp hữu ích cho người xem từ tư liệu video. Chỉ dùng điều nhìn thấy; không đoán lời nói, trải nghiệm hoặc kết quả chưa được cung cấp.";
       const style = scriptType.startsWith("custom:") ? { templateId: scriptType.slice(7) } : { format: scriptType.replace(/^builtin:/, "") };
-      const written = await api("/api/script", { analysis, intent: purpose, confirmedIntent: purpose, ...style, profile: { ...profile, mode: "scenery" }, duration: sourceDuration, instruction: "Viết lời thoại tự nhiên để đọc thành một tệp âm thanh liên tục. Tổng nội dung không quá 1.100 ký tự. Không thêm nhãn phân cảnh hay lời chỉ dẫn sân khấu." });
+      const scriptBody = { analysis, intent: purpose, confirmedIntent: purpose, ...style, profile: { ...profile, mode: "scenery" }, duration: sourceDuration, instruction: "Viết lời thoại tự nhiên để đọc thành một tệp âm thanh liên tục. Tổng nội dung không quá 1.100 ký tự. Không thêm nhãn phân cảnh hay lời chỉ dẫn sân khấu." };
+      const fingerprint = JSON.stringify(scriptBody);
+      if (scriptRequestRef.current?.fingerprint !== fingerprint) scriptRequestRef.current = { fingerprint, id: crypto.randomUUID() };
+      let written: Awaited<ReturnType<typeof api>>;
+      try { written = await api("/api/script", scriptBody, scriptRequestRef.current.id); }
+      catch (cause) {
+        const status = cause && typeof cause === "object" && "status" in cause ? Number(cause.status) : 0;
+        if (status && status !== 409) scriptRequestRef.current = null;
+        else setUncertainStage("script");
+        throw cause;
+      }
       const next = scriptFrom(written.result);
       if (!next) throw new Error("AI chưa viết được kịch bản. Bấm thử lại để dùng phân tích video đã có.");
       setScript(next); setApprovedScript(""); setExported(undefined);
+      scriptRequestRef.current = null;
       if (typeof written.result.title === "string" && written.result.title.trim()) setTitle(written.result.title.trim().slice(0, 120));
       setNote("Kịch bản đã sẵn sàng. Hãy đọc, sửa và duyệt trước khi tạo giọng.");
-    } catch (cause) { setError(`${errorMessage(cause)} Video và bản nháp hiện có vẫn được giữ để thử lại.`); }
+    } catch (cause) { setError(`${errorMessage(cause)} Video và bản nháp hiện có vẫn được giữ. Nếu mạng bị ngắt, app sẽ không tự gửi lượt tính phí mới.`); }
     finally { setProgressText(""); end(); }
   }
 
@@ -367,7 +393,8 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
       <div className={styles.types} role="group" aria-label="Dạng kịch bản">{builtins.map(item => <button key={item.format} type="button" className={scriptType === `builtin:${item.format}` ? styles.typeActive : styles.type} onClick={() => setScriptType(`builtin:${item.format}`)} disabled={Boolean(busy)} aria-pressed={scriptType === `builtin:${item.format}`}><strong>{item.title}</strong><span>{item.description}</span></button>)}{templates.map(item => <button key={item.id} type="button" className={scriptType === `custom:${item.id}` ? styles.typeActive : styles.type} onClick={() => setScriptType(`custom:${item.id}`)} disabled={Boolean(busy)} aria-pressed={scriptType === `custom:${item.id}`}><strong>{item.title}</strong><span>{item.description || (item.scope === "shared" ? "Dạng dùng chung" : "Dạng của bạn")}</span></button>)}</div>
       <label className={styles.field}>Điều bạn muốn người xem hiểu <span>(khuyến khích)</span><textarea value={intent} onChange={event => setIntent(event.target.value)} maxLength={5000} rows={3} placeholder="Ví dụ: Sản phẩm này giúp chuẩn bị bữa sáng nhanh hơn; hãy kể như trải nghiệm của tôi." disabled={Boolean(busy)} /></label>
       <p className={styles.hint}>AI chỉ phân tích khung hình, không nghe tiếng trong video gốc. Hãy nhập ý chính nếu video có lời nói hoặc thông tin không thể nhìn thấy.</p>
-      <button type="button" className={styles.primary} onClick={() => void analyzeAndWrite()} disabled={Boolean(busy) || !deepseekReady}>{busy === "analyze" ? "Đang phân tích video…" : busy === "script" ? "Đang viết kịch bản…" : analysisRef.current?.source === source ? "Viết lại kịch bản" : "Phân Tích & Tạo Kịch Bản"}</button>
+      <button type="button" className={styles.primary} onClick={() => void analyzeAndWrite()} disabled={Boolean(busy) || !deepseekReady || Boolean(uncertainStage)}>{busy === "analyze" ? "Đang phân tích video…" : busy === "script" ? "Đang viết kịch bản…" : analysisRef.current?.source === source ? "Viết lại kịch bản" : "Phân Tích & Tạo Kịch Bản"}</button>
+      {uncertainStage ? <div className={styles.pending}><strong>Chưa xác nhận được kết quả do kết nối bị ngắt</strong><span>Yêu cầu cũ có thể đã dùng credit. App đã dừng tự gửi lại để tránh tính phí hai lần. Nếu chưa nhận được kịch bản, bạn có thể chủ động tạo yêu cầu mới.</span><button type="button" className={styles.secondary} onClick={() => { if (uncertainStage === "analyze") analysisRequestRef.current = null; else scriptRequestRef.current = null; setUncertainStage(null); setError(""); setNote("Đã sẵn sàng gửi yêu cầu mới. Lượt này có thể phát sinh credit."); }} disabled={Boolean(busy)}>Tạo yêu cầu mới (có thể tốn credit)</button></div> : null}
       {!deepseekReady ? <p className={styles.warning}>AI viết kịch bản chưa sẵn sàng. Quản trị viên cần kiểm tra kết nối.</p> : null}
       {(busy === "analyze" || busy === "script") && progressText ? <p className={styles.working} role="status">{progressText}</p> : null}
     </div> : null}
