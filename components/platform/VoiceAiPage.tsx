@@ -107,7 +107,23 @@ export default function VoiceAiPage() {
     const limit = Date.now() + 8 * 60_000;
     let invalidResponses = 0;
     while (!controller.signal.aborted && Date.now() < limit) {
-      await new Promise(resolve => setTimeout(resolve, 4_000));
+      await new Promise<void>(resolve => {
+        let finished = false;
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          window.clearTimeout(timer);
+          document.removeEventListener("visibilitychange", onVisible);
+          window.removeEventListener("focus", onVisible);
+          controller.signal.removeEventListener("abort", finish);
+          resolve();
+        };
+        const onVisible = () => { if (document.visibilityState === "visible") finish(); };
+        const timer = window.setTimeout(finish, 1_000);
+        document.addEventListener("visibilitychange", onVisible);
+        window.addEventListener("focus", onVisible);
+        controller.signal.addEventListener("abort", finish, { once: true });
+      });
       if (controller.signal.aborted) return;
       const response = await fetch("/api/voice-over/recover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: task.requestId }), signal: controller.signal });
       const result = await response.json();
