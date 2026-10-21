@@ -40,11 +40,6 @@
 .metadata { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 15px; min-width: 0; font-size: 12px; }
 .metadata strong { overflow-wrap: anywhere; }
 .metadata span { color: var(--muted); }
-.types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-.workspace .type, .workspace .typeActive { display: grid; gap: 5px; align-content: start; min-height: 82px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: #fff; color: var(--ink); text-align: left; cursor: pointer; }
-.workspace .typeActive { border-color: var(--blue); box-shadow: 0 0 0 2px #d9e5ff; background: #f7f9ff; }
-.types strong { font-size: 13px; line-height: 1.35; }
-.types span { color: var(--muted); font-size: 11px; line-height: 1.4; }
 .field { display: grid; gap: 7px; min-width: 0; font-size: 13px; font-weight: 700; }
 .field > span { color: var(--muted); font-size: 12px; font-weight: 400; }
 .field textarea, .field select { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid #cbd7ed; border-radius: 10px; background: #fff; color: var(--ink); font: inherit; font-weight: 400; line-height: 1.5; }
@@ -82,8 +77,6 @@
   .intro, .section { padding: 16px; border-radius: 15px; }
   .intro p, .heading p { font-size: 12px; }
   .heading h3 { font-size: 16px; }
-  .types { grid-template-columns: 1fr; }
-  .workspace .type, .workspace .typeActive { min-height: 60px; }
   .workspace .primary, .actions .secondary, .voiceRow .secondary { width: 100%; min-height: 48px; }
   .voiceRow .field { flex-basis: 100%; }
   .error, .note { bottom: 84px; }
