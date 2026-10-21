@@ -17,7 +17,7 @@ create table if not exists public.studio_credit_accounts (
 create table if not exists public.studio_credit_operations (
   request_id uuid primary key,
   user_id uuid not null references public.studio_credit_accounts(user_id) on delete restrict,
-  kind text not null check (kind in ('script','analyze','scene_plan','tts','clone','stock_video')),
+  kind text not null check (kind in ('script','analyze','scene_plan','transcribe','tts','clone','stock_video')),
   reserved_credits integer not null check (reserved_credits between 1 and 10000),
   charged_credits integer not null default 0 check (charged_credits >= 0),
   status text not null default 'reserved' check (status in ('reserved','settled','refunded')),
@@ -117,7 +117,7 @@ declare
   inserted_id uuid;
 begin
   if p_user_id is null or p_request_id is null or
-    p_kind is null or p_kind not in ('script','analyze','scene_plan','tts','clone','stock_video') or
+    p_kind is null or p_kind not in ('script','analyze','scene_plan','transcribe','tts','clone','stock_video') or
     p_credits is null or p_credits < 1 or p_credits > 10000 or
     p_metadata is null or jsonb_typeof(p_metadata) <> 'object' or
     octet_length(p_metadata::text) > 2000 then

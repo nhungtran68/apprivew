@@ -175,3 +175,16 @@ export async function getPixabayVideo(id: number, quality: "medium" | "small" | 
   if (!url) throw new StudioError("PIXABAY_VIDEO_NOT_FOUND", "Video đã chọn không còn khả dụng. Hãy chọn video khác.", 404);
   return { url, size: finiteNonnegative(selected.size) };
 }
+
+/** Read one cached metadata response for all renditions, without exposing media URLs. */
+export async function quotePixabayVideo(id: number) {
+  if (!Number.isSafeInteger(id) || id < 1 || id > 9_999_999_999) throw new StudioError("INVALID_PIXABAY_ID", "Video đã chọn không hợp lệ.");
+  const result = await pixabayRequest(new URLSearchParams({ id: String(id) }));
+  const hit = result.hits.find(item => item && typeof item === "object" && Number(item.id) === id);
+  const size = (quality: "medium" | "small" | "tiny") => {
+    const selected = hit && rendition(hit, quality);
+    const bytes = selected ? finiteNonnegative(selected.size) : 0;
+    return bytes > 0 ? bytes : null;
+  };
+  return { id, medium: size("medium"), small: size("small"), tiny: size("tiny") };
+}

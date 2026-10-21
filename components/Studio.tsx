@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { videoDownloadName, supportsVideoSave, saveVideoFile, canShareVideoFile, shareVideoFile } from "@/lib/video-download";
 import PixabayVideoPicker from "@/components/platform/PixabayVideoPicker";
-import StockVideoWorkspace, { type StockMode } from "@/components/platform/StockVideoWorkspace";
+import AudioVideoWorkspace from "@/components/platform/AudioVideoWorkspace";
+import VideoFromVideoWorkspace from "@/components/platform/VideoFromVideoWorkspace";
 import navigationStyles from "./StudioNavigation.module.css";
 
 type Step = 0 | 1 | 2 | 3 | 4;
 type View = "studio" | "projects" | "voices" | "profile" | "guide";
-type VideoCreationMode = "record" | "upload" | StockMode;
+type VideoCreationMode = "audio" | "video" | "record" | "upload";
 type Profile = { name: string; channel: string; brand: string; audience: string; topic: string; tone: string; pronoun: string; cta: string; facts: string; customPrompt: string };
 type VideoFormat = "review" | "story" | "tips" | "sales";
 type ScriptType = { id: string; title: string; description?: string; scope: "shared" | "personal" };
@@ -573,7 +574,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
     try { const result = await requestJson("/api/voices"); if (token === voicesToken.current) setVoices(Array.isArray(result.voices) ? result.voices : []); } catch (error) { if (token === voicesToken.current) notify(errorText(error), "error"); } finally { if (token === voicesToken.current) setVoicesLoading(false); }
   }
   useEffect(() => { ++voicesToken.current; setVoices([]); setVoicesLoading(false); setVoiceFilter("vietnamese"); }, [voiceProvider, config.userId]);
-  useEffect(() => { if (voiceReady && (view === "voices" || step === 3 || (embedded && (videoMode === "library" || videoMode === "text")))) void loadVoices(); }, [voiceReady, voiceProvider, config.userId, view, step, embedded, videoMode]);
+  useEffect(() => { if (voiceReady && (view === "voices" || step === 3 || (embedded && videoMode === "video"))) void loadVoices(); }, [voiceReady, voiceProvider, config.userId, view, step, embedded, videoMode]);
   async function receiveSpeech(target: Project) {
     const expected = scriptKey(target);
     const stillCurrent = () => mounted.current && !deletedProjectIds.current.has(target.id)
@@ -754,7 +755,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
   useEffect(() => {
     if (!embedded || view !== "studio" || !videoMode) return;
     const frame = window.requestAnimationFrame(() => {
-      const target = document.getElementById(videoMode === "library" || videoMode === "text" ? "stock-mode-title" : "capture-title");
+      const target = document.getElementById(videoMode === "audio" ? "audio-video-title" : "video-source-title");
       if (target) window.scrollTo({ top: Math.max(0, window.scrollY + target.getBoundingClientRect().top - 150), behavior: "smooth" });
     });
     return () => window.cancelAnimationFrame(frame);
@@ -798,20 +799,18 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
         <div className={navigationStyles.modeHeading}><span>TẠO VIDEO AI</span><h1 id="video-mode-title">Bạn muốn làm video theo cách nào?</h1><p>Chọn một cách bắt đầu. Bạn có thể đổi chế độ ngay tại đây.</p></div>
         <div className={navigationStyles.modeGrid}>
           {([
-            { id: "record", icon: "camera", label: "Quay Video", description: "Quay trực tiếp bằng camera điện thoại." },
-            { id: "upload", icon: "upload", label: "Tải Video Lên", description: "Dùng video có sẵn từ thiết bị." },
-            { id: "library", icon: "grid", label: "Tạo Video Thư Viện", description: "Tự chọn nhiều cảnh từ thư viện video." },
-            { id: "text", icon: "file", label: "Tạo Video Văn Bản", description: "AI tìm cảnh theo kịch bản của bạn." },
+            { id: "audio", icon: "mic", label: "Tạo Video Từ Lời Thoại", description: "Tải giọng nói; AI tự tìm cảnh minh họa rồi ghép video." },
+            { id: "video", icon: "upload", label: "Tạo Video Từ Video", description: "Tải video; AI viết kịch bản, tạo giọng rồi ghép." },
           ] as const).map(item => <button type="button" key={item.id} className={`${navigationStyles.modeCard} ${videoMode === item.id ? navigationStyles.modeCardActive : ""}`} aria-pressed={videoMode === item.id} onClick={() => chooseVideoMode(item.id)} disabled={working}><span className={navigationStyles.modeIcon}><Icon name={item.icon} size={24} /></span><span className={navigationStyles.modeCardCopy}><strong>{item.label}</strong><small>{item.description}</small></span><Icon name="arrow" size={18} className={navigationStyles.modeArrow} /></button>)}
         </div>
       </section> : null}
 
       {embedded && view === "studio" && videoMode ? <button type="button" className={navigationStyles.changeMode} onClick={() => { const target = document.getElementById("video-mode-title"); if (target) window.scrollTo({ top: Math.max(0, window.scrollY + target.getBoundingClientRect().top - 145), behavior: "smooth" }); }} disabled={working}><Icon name="chevron" size={16} />Đổi cách tạo video</button> : null}
 
-      {embedded && view === "studio" && (videoMode === "library" || videoMode === "text") ? <StockVideoWorkspace mode={videoMode} deepseekReady={config.deepseek} voiceReady={voiceReady} voices={voices} voicesLoading={voicesLoading} onReloadVoices={() => void loadVoices()} onBusyChange={onStockBusyChange} builtins={builtinScriptTypes} templates={customScriptTypes} /> : null}
-      {embedded && view === "studio" && !videoMode && hasClip ? <div className={navigationStyles.resumeProject}><span>Đã khôi phục video “{visibleProjectTitle(project.title)}”.</span><button type="button" onClick={() => setVideoMode("upload")}>Tiếp tục dự án này<Icon name="arrow" size={16} /></button></div> : null}
+      {embedded && view === "studio" && videoMode === "audio" ? <AudioVideoWorkspace deepseekReady={config.deepseek} onBusyChange={onStockBusyChange} /> : null}
+      {embedded && view === "studio" && videoMode === "video" ? <VideoFromVideoWorkspace userId={config.userId} deepseekReady={config.deepseek} voiceReady={voiceReady} voices={voices} voicesLoading={voicesLoading} onReloadVoices={() => void loadVoices()} onBusyChange={onStockBusyChange} builtins={builtinScriptTypes} templates={customScriptTypes} profile={accountProfile} /> : null}
 
-      {view === "studio" && (!embedded || videoMode === "record" || videoMode === "upload") ? <>
+      {view === "studio" && !embedded ? <>
         <div className="project-bar">
           <div>{hasClip ? <input className="project-name" aria-label="Tên dự án" value={visibleProjectTitle(project.title)} onChange={event => update({ title: event.target.value })} /> : <span className="project-name-static">Video mới</span>}<span className="save-label"><Icon name="check" size={13} />{saveState}</span></div>
           <details className="project-menu"><summary aria-label="Tùy chọn dự án">···</summary><div><button onClick={newProject} disabled={working}><Icon name="plus" size={18} />Tạo video mới</button><button onClick={() => void exportProject()} disabled={!hasClip || working}><Icon name="folder" size={18} />Tải bản sao dự án</button><button onClick={() => projectInput.current?.click()} disabled={working}><Icon name="upload" size={18} />Nhập dự án</button></div></details>

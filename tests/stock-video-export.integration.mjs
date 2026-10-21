@@ -60,16 +60,21 @@ registerHooks({ resolve(specifier, context, nextResolve) {
 } });
 const { exportStockVideo, planStockTimeline } = await import(pathToFileURL(join(project, "lib/video-export.ts")).href);
 
-function tone(seconds) {
+function tone(seconds, frequency = 440) {
   const samples = Math.round(seconds * 48000);
   const data = Buffer.alloc(44 + samples * 2);
   data.write("RIFF"); data.writeUInt32LE(data.length - 8, 4); data.write("WAVEfmt ", 8);
   data.writeUInt32LE(16, 16); data.writeUInt16LE(1, 20); data.writeUInt16LE(1, 22);
   data.writeUInt32LE(48000, 24); data.writeUInt32LE(96000, 28); data.writeUInt16LE(2, 32); data.writeUInt16LE(16, 34);
   data.write("data", 36); data.writeUInt32LE(samples * 2, 40);
-  for (let index = 0; index < samples; index++) data.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 440 * index / 48000) * 8000), 44 + index * 2);
+  for (let index = 0; index < samples; index++) data.writeInt16LE(Math.round(Math.sin(2 * Math.PI * frequency * index / 48000) * 8000), 44 + index * 2);
   return new Blob([data], { type: "audio/wav" });
 }
+
+// The uploaded video may contain speech or music of its own. The new
+// video-source flow must map only the approved narration into the output.
+core.FS.writeFile("source-audio.wav", new Uint8Array(await tone(1, 880).arrayBuffer()));
+execute(["-i", "red.mp4", "-i", "source-audio.wav", "-c:v", "copy", "-c:a", "aac", "-shortest", "with-source-audio.mp4"]);
 
 function inspect(blob) {
   return blob.arrayBuffer().then((buffer) => {
@@ -139,6 +144,26 @@ for (const [time, expected] of [["0.5", "red"], ["1.5", "blue"]]) {
   else assert.ok(pixel[2] > pixel[0] + 80, "Second scene must show blue clip");
 }
 console.log("two-scene export: pass");
+
+const sourceWithAudio = await exportStockVideo({ clips: [clip("with-source-audio.mp4")], narration: tone(2, 440), aspectRatio: "16:9" });
+const mixedInfo = await inspect(sourceWithAudio);
+assert.ok(Number(mixedInfo.streams.find((stream) => stream.codec_type === "audio").duration) + 1 / 30 >= 2);
+execute(["-i", "stock-inspect.mp4", "-vn", "-ac", "1", "-ar", "48000", "-f", "f32le", "stock-audio.pcm"]);
+const mixedPcm = core.FS.readFile("stock-audio.pcm");
+const mixedSamples = new Float32Array(mixedPcm.buffer, mixedPcm.byteOffset, mixedPcm.byteLength / 4);
+function spectralAmplitude(frequency) {
+  let real = 0, imaginary = 0;
+  const start = 12000, end = 36000;
+  for (let sample = start; sample < end; sample++) {
+    const phase = 2 * Math.PI * frequency * sample / 48000;
+    real += mixedSamples[sample] * Math.cos(phase);
+    imaginary += mixedSamples[sample] * Math.sin(phase);
+  }
+  return Math.hypot(real, imaginary) * 2 / (end - start);
+}
+assert.ok(spectralAmplitude(440) > 0.05, "Narration must remain audible");
+assert.ok(spectralAmplitude(880) < spectralAmplitude(440) / 20, "Original source audio must not be mixed into narration");
+console.log("video source with original audio: narration only, pass");
 
 const portraitOutput = await exportStockVideo({ clips: [clip("red.mp4")], narration: tone(1), aspectRatio: "9:16" });
 const portraitInfo = await inspect(portraitOutput);

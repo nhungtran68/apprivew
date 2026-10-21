@@ -143,6 +143,27 @@ test("search authenticates before calling Pixabay, keeps its key private, and ca
   assert.equal(h.calls.filter(call => call[0] === "fetch").length, 1);
 });
 
+test("video quote checks all rendition sizes before any paid download", async () => {
+  process.env.PIXABAY_API_KEY = "test-secret-quote";
+  const h = await fixture();
+  h.setFetch(async (url, options) => {
+    assert.equal(new URL(url).searchParams.get("id"), "125");
+    assert.equal(options.next.revalidate, 86400);
+    return Response.json({ total: 1, totalHits: 1, hits: [validHit] });
+  });
+  const route = await h.entry("app/api/pixabay/video/quote/route.ts");
+  h.setAuthorized(false);
+  assert.equal((await route.GET(h.request("/api/pixabay/video/quote?ids=125"))).status, 401);
+  assert.equal(h.calls.filter(call => call[0] === "fetch").length, 0);
+  h.setAuthorized(true);
+  const response = await route.GET(h.request("/api/pixabay/video/quote?ids=125"));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { quotes: [{ id: 125, medium: 8, small: 5, tiny: null }] });
+  assert.equal(h.calls.filter(call => call[0] === "fetch").length, 1);
+  assert.equal(h.calls.filter(call => call[0] === "reserve").length, 0);
+  assert.equal((await route.GET(h.request("/api/pixabay/video/quote?ids=125,125"))).status, 400);
+});
+
 test("stock-video proxy re-reads the Pixabay ID, streams MP4, and rejects unsafe hosts and oversized media", async () => {
   process.env.PIXABAY_API_KEY = "test-secret-proxy";
   const h = await fixture();
