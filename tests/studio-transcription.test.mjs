@@ -68,6 +68,9 @@ test("Scribe response preserves verbatim transcript and actual word timestamps",
   assert.deepEqual([...result.words].map(word => word.text), ["Xin", "chào", "bạn."]);
   assert.equal(result.words[1].start, 0.6);
   assert.equal(result.duration, 2.5);
+  assert.throws(() => parseTranscriptionResult({ text: "Xin chào", words: [
+    { type: "word", text: "Xin", start: 0.1, end: 0.3 },
+  ] }, 2.5), error => error.code === "TRANSCRIPTION_INVALID");
 });
 
 test("Scribe sends the private file with a server-only key and maps permission errors", async () => {
@@ -80,12 +83,13 @@ test("Scribe sends the private file with a server-only key and maps permission e
     assert.equal(init.body.get("language_code"), "vie");
     assert.equal(init.body.get("timestamps_granularity"), "word");
     assert.equal(init.body.get("file").size, wav(2).size);
-    return Response.json({ text: "Xin chào", language_code: "vie", words: [
+    return Response.json({ text: "Xin chào bạn.", language_code: "vie", words: [
       { type: "word", text: "Xin", start: 0.1, end: 0.3 },
       { type: "word", text: "chào", start: 0.4, end: 0.8 },
+      { type: "word", text: "bạn.", start: 0.9, end: 1.2 },
     ] });
   });
-  assert.equal((await transcribeAudio(wav(2), "private-key", 2)).text, "Xin chào");
+  assert.equal((await transcribeAudio(wav(2), "private-key", 2)).text, "Xin chào bạn.");
   assert.equal(calls, 1);
   const permission = await loadTranscription(async () => new Response("secret diagnostic", { status: 403 }));
   await assert.rejects(permission.transcribeAudio(wav(2), "private-key", 2), error =>
@@ -94,6 +98,8 @@ test("Scribe sends the private file with a server-only key and maps permission e
 
 test("transcribe route authenticates, reads private storage, and reserves before calling provider", async () => {
   const calls = [];
+  let savedResult = null;
+  let status = null;
   const context = vm.createContext({ process, console, Response });
   const exportsByModule = new Map([
     ["studio-contract", { StudioError }],
@@ -107,19 +113,27 @@ test("transcribe route authenticates, reads private storage, and reserves before
         calls.push("reserve"); const result = await run(); calls.push("settle"); return result;
       },
     }],
-    ["studio-credits", { creditsForTranscription: seconds => { assert.equal(seconds, 30); return 3; } }],
+    ["studio-credits", {
+      creditsForTranscription: seconds => { assert.equal(seconds, 30); return 3; },
+      settleCredits: async () => { calls.push("recover-settle"); },
+    }],
     ["studio-supabase", { downloadOwnedMedia: async (_user, file) => {
       assert.equal(file, "user-1/video-transcriptions/recording.mp3"); calls.push("download"); return wav(2);
     } }],
     ["studio-server", {
       requestUser: async () => { calls.push("auth"); return "user-1"; },
       limitedJson: request => request.json(), providerKey: async () => ({ key: "private-key" }),
-      json: data => Response.json(data), apiError: error => Response.json({ code: error.code }, { status: error.status || 500 }),
+      json: (data, status = 200) => Response.json(data, { status }), apiError: error => Response.json({ code: error.code }, { status: error.status || 500 }),
     }],
     ["studio-transcription", {
       measureTranscriptionAudio: async () => { calls.push("measure"); return 30; },
       transcriptionPath: (_user, value) => value,
-      transcribeAudio: async () => { calls.push("provider"); return { text: "Xin chào", words: [{ text: "Xin", start: 0, end: 0.3 }], duration: 30, languageCode: "vie" }; },
+      transcribeAudio: async () => { calls.push("provider"); return { text: "Xin chào bạn.", words: [{ text: "Xin", start: 0, end: 0.3 }], duration: 30, languageCode: "vie" }; },
+    }],
+    ["studio-transcription-result", {
+      readSavedTranscription: async () => { calls.push("lookup"); return savedResult; },
+      transcriptionRequestStatus: async () => { calls.push("status"); return status; },
+      saveTranscription: async (_user, _id, _path, result) => { calls.push("save"); savedResult = result; status = "reserved"; },
     }],
   ]);
   const routeFile = path.join(root, "app/api/video/transcribe/route.ts");
@@ -140,6 +154,32 @@ test("transcribe route authenticates, reads private storage, and reserves before
     body: JSON.stringify({ storagePath: "user-1/video-transcriptions/recording.mp3" }),
   }));
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).text, "Xin chào");
-  assert.deepEqual(calls, ["auth", "idempotency", "download", "measure", "reserve", "provider", "settle"]);
+  assert.equal((await response.json()).text, "Xin chào bạn.");
+  assert.deepEqual(calls, ["auth", "idempotency", "lookup", "status", "download", "measure", "reserve", "provider", "save", "settle"]);
+  calls.length = 0;
+  const replay = await module.namespace.POST(new Request("https://ibeetool.com/api/video/transcribe", {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "ee3de503-9f73-4a2c-a999-9a86b07a01c9" },
+    body: JSON.stringify({ storagePath: "user-1/video-transcriptions/recording.mp3" }),
+  }));
+  assert.equal(replay.status, 200);
+  assert.equal((await replay.json()).text, "Xin chào bạn.");
+  assert.deepEqual(calls, ["auth", "idempotency", "lookup", "recover-settle"]);
+  calls.length = 0;
+  savedResult = null; status = "reserved";
+  const pending = await module.namespace.POST(new Request("https://ibeetool.com/api/video/transcribe", {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "ee3de503-9f73-4a2c-a999-9a86b07a01c9" },
+    body: JSON.stringify({ storagePath: "user-1/video-transcriptions/recording.mp3" }),
+  }));
+  assert.equal(pending.status, 202);
+  assert.equal((await pending.json()).pending, true);
+  assert.deepEqual(calls, ["auth", "idempotency", "lookup", "status"]);
+  calls.length = 0;
+  status = "refunded";
+  const refunded = await module.namespace.POST(new Request("https://ibeetool.com/api/video/transcribe", {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "ee3de503-9f73-4a2c-a999-9a86b07a01c9" },
+    body: JSON.stringify({ storagePath: "user-1/video-transcriptions/recording.mp3" }),
+  }));
+  assert.equal(refunded.status, 409);
+  assert.equal((await refunded.json()).code, "TRANSCRIPTION_RETRY_NEW_REQUEST");
+  assert.deepEqual(calls, ["auth", "idempotency", "lookup", "status"]);
 });

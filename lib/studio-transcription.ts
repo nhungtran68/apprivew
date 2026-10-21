@@ -48,7 +48,7 @@ export function parseTranscriptionResult(value: unknown, duration: number): Audi
     throw new StudioError("TRANSCRIPTION_INVALID", "Dịch vụ chưa trả về bản chép lời hợp lệ. Vui lòng thử lại sau.", 502);
   const result = value as Record<string, unknown>;
   const text = typeof result.text === "string" ? result.text.trim() : "";
-  if (!text || text.length > 6000 || !Array.isArray(result.words))
+  if (text.length < 12 || text.length > 6000 || !Array.isArray(result.words))
     throw new StudioError("TRANSCRIPTION_INVALID", "Chưa nhận diện được lời nói rõ ràng hoặc bản chép lời quá dài. Hãy kiểm tra file âm thanh.", 422);
   const words: TranscriptWord[] = [];
   for (const item of result.words) {
