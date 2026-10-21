@@ -3,9 +3,10 @@ import { StudioError, cleanText, type StudioSegment } from "./studio-contract";
 import { MAZIAO_MODELS, authorizedVoiceRows, getMember, sharedVoiceCatalog, maziaoModel, providerKey, saveAuthorizedVoice, savePersonalVoicePreview, saveSharedVoiceList, type MaziaoModel } from "./studio-server";
 import { shortenSegment } from "./studio-deepseek";
 import { creditsForSpeech, deriveCreditRequestId, markCreditProviderTask, refundCredits, reserveCredits, settleCredits } from "./studio-credits";
-import { createStudioSupabaseServer, removeOwnedMedia, storeNarration } from "./studio-supabase";
+import { STUDIO_MEDIA_BUCKET, createStudioSupabaseServer, removeOwnedMedia, storeNarration } from "./studio-supabase";
 import { inspectWav } from "./studio-wav";
 import { inspectMp3 } from "./studio-mp3";
+import { registerLibraryAudio } from "./library-audio";
 import type { StudioVoice } from "./studio-eleven";
 
 const BASE = "https://app.maziao.com/api";
@@ -605,6 +606,10 @@ export async function generateMaziaoVoiceOver(input: { key: string; userId: stri
     return { audioPath: media.audioPath, audioMime: spoken.mime, duration: spoken.duration, voiceId: input.voiceId };
   });
   if (!media) throw invalidResponse();
+  await registerLibraryAudio({ userId: input.userId, requestId: input.requestId, audioPath: media.audioPath,
+    audioMime: audio.mime, sizeBytes: audio.bytes.length, durationSeconds: audio.duration }).catch(error => {
+    console.warn(JSON.stringify({ event: "library_audio_index_failed", code: error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN" }));
+  });
   return { ...media, audioMime: audio.mime, duration: audio.duration, voiceId: input.voiceId, provider: "maziao", usage: { credits: costs[0] ?? null, jobs: costs.length } };
 }
 
@@ -661,8 +666,22 @@ export async function recoverMaziaoVoiceOver(input: { key: string; userId: strin
     const usage = data.provider_usage as Record<string, unknown>;
     if (typeof usage.audioPath === "string" && usage.audioPath.startsWith(`${input.userId}/narration/`) &&
         (usage.audioMime === "audio/wav" || usage.audioMime === "audio/mpeg") &&
-        typeof usage.duration === "number" && Number.isFinite(usage.duration) && usage.duration > 0)
+        typeof usage.duration === "number" && Number.isFinite(usage.duration) && usage.duration > 0) {
+      const createdAt = Date.parse(data.created_at);
+      if (!Number.isFinite(createdAt) || Date.now() >= createdAt + 30 * 24 * 60 * 60 * 1000)
+        throw new StudioError("AUDIO_EXPIRED", "Lời đọc đã quá thời hạn lưu 30 ngày. Tệp cũ không thể khôi phục; hãy tạo lời đọc mới nếu cần.", 410);
+      let exists: boolean;
+      try {
+        const checked = await client.storage.from(STUDIO_MEDIA_BUCKET).exists(usage.audioPath);
+        if (checked.error) throw checked.error;
+        exists = checked.data === true;
+      } catch {
+        throw new StudioError("AUDIO_CHECK_UNAVAILABLE", "Chưa kiểm tra được tệp lời đọc đã lưu. Hãy thử Lấy lại lời đọc sau; app sẽ không tạo lại hoặc trừ credit.", 503);
+      }
+      if (!exists)
+        throw new StudioError("AUDIO_REMOVED", "Tệp lời đọc đã bị xóa khỏi Thư viện nên không thể khôi phục. Hãy tạo lời đọc mới nếu cần.", 410);
       return { audioPath: usage.audioPath, audioMime: usage.audioMime, duration: usage.duration, provider: "maziao", usage: { credits: typeof usage.providerCredits === "number" ? usage.providerCredits : null, jobs: 1 } };
+    }
   }
   if (!data || data.status !== "reserved" || !voiceOperation(data as PendingVoiceOperation))
     throw new StudioError("CREDIT_REQUEST_REUSED", "Tác vụ này không còn chờ khôi phục. Hãy tải lại trang để xem kết quả mới nhất.", 409);
@@ -680,6 +699,10 @@ export async function recoverMaziaoVoiceOver(input: { key: string; userId: strin
     provider: "maziao", providerCredits: null, providerTaskId: taskId,
     model: (data.metadata as Record<string, unknown>).model,
     audioPath: media.audioPath, audioMime: audio.mime, duration: audio.duration,
+  });
+  await registerLibraryAudio({ userId: input.userId, requestId: input.requestId, audioPath: media.audioPath,
+    audioMime: audio.mime, sizeBytes: audio.bytes.length, durationSeconds: audio.duration }).catch(error => {
+    console.warn(JSON.stringify({ event: "library_audio_index_failed", code: error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN" }));
   });
   return { ...media, audioMime: audio.mime, duration: audio.duration, provider: "maziao", usage: { credits: null, jobs: 1 } };
 }

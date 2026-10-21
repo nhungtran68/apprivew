@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { canShareVideoFile, saveVideoFile, shareVideoFile, supportsVideoSave, videoDownloadName } from "@/lib/video-download";
+import { saveLibraryVideo } from "@/lib/library-client";
 import type { StockAspectRatio } from "@/lib/video-export";
 import styles from "./VideoFromVideoWorkspace.module.css";
 
@@ -9,7 +10,7 @@ type Voice = { voice_id?: string; voiceId?: string; id?: string; name: string; c
 type Builtin = { format: "review" | "story" | "tips" | "sales"; title: string; description: string };
 type Template = { id: string; title: string; description?: string; scope: "shared" | "personal" };
 type Profile = { name?: string; channel?: string; brand?: string; audience?: string; topic?: string; tone?: string; pronoun?: string; cta?: string; facts?: string; customPrompt?: string };
-type Busy = "video" | "analyze" | "script" | "voice" | "recover" | "audio" | "export" | null;
+type Busy = "video" | "analyze" | "script" | "voice" | "recover" | "audio" | "export" | "library" | null;
 type VoiceResult = { audioPath: string; audioUrl?: string; audioMime: string; duration: number; text: string; voiceId: string };
 type VoiceTask = { requestId: string; text: string; voiceId: string; createdAt: string };
 
@@ -131,6 +132,7 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
   const [generatedText, setGeneratedText] = useState("");
   const [generatedVoiceId, setGeneratedVoiceId] = useState("");
   const [exported, setExported] = useState<Blob>();
+  const [librarySave, setLibrarySave] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [busy, setBusy] = useState<Busy>(null);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState("");
@@ -144,6 +146,7 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
   const scriptRequestRef = useRef<{ fingerprint: string; id: string } | null>(null);
   const voiceRequestRef = useRef<{ fingerprint: string; id: string } | null>(null);
   const recoveryRef = useRef<AbortController | null>(null);
+  const latestRendered = useRef<{ blob: Blob; requestId: string; title: string; duration: number } | null>(null);
   const mountedRef = useRef(true);
   const onBusyChangeRef = useRef(onBusyChange);
   const sourceUrl = useObjectUrl(source);
@@ -162,6 +165,7 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
     recoveryRef.current?.abort();
     setSource(undefined); setSourceDuration(0); setSourceSize({ width: 0, height: 0 });
     setGeneratedAudio(undefined); setGeneratedDuration(0); setGeneratedText(""); setGeneratedVoiceId(""); setExported(undefined);
+    latestRendered.current = null; setLibrarySave("idle");
     setReadyVoice(null); setPendingTask(null); setRecoveryBlocked(false); setApprovedScript("");
     setIntent(""); setScriptType("builtin:review"); setScript(""); setTitle(""); setVoiceId("");
     analysisRef.current = null; analysisRequestRef.current = null; scriptRequestRef.current = null; voiceRequestRef.current = null;
@@ -197,6 +201,7 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
       setTitle(file.name.replace(/\.[^.]+$/, "").slice(0, 120));
       if (source) setScript("");
       setApprovedScript(""); setGeneratedAudio(undefined); setGeneratedDuration(0); setExported(undefined);
+      latestRendered.current = null; setLibrarySave("idle");
       analysisRef.current = null; analysisRequestRef.current = null; scriptRequestRef.current = null;
       setUncertainStage(null);
       setNote(`Đã nhận video ${clock(info.duration)}. Hãy chọn dạng kịch bản và cho AI biết điều muốn chia sẻ.`);
@@ -364,12 +369,35 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
     if (!source || !audioCurrent || !generatedAudio || !generatedDuration) { setError("Tạo và nghe thử lời thoại trước khi ghép video."); return; }
     if (generatedDuration > MAX_AUDIO_SECONDS) { setError("Lời thoại dài quá 90 giây cho bộ ghép hiện tại. Hãy rút gọn kịch bản."); return; }
     if (!begin("export")) return;
+    setLibrarySave("idle");
     setProgress(0); setProgressText("Đang chuẩn bị video và lời thoại…");
     try {
       const { exportStockVideo } = await import("@/lib/video-export");
       const result = await exportStockVideo({ clips: [source], narration: generatedAudio, aspectRatio: ratio, onProgress: (fraction, message) => { if (mountedRef.current) { setProgress(Math.round(fraction * 100)); setProgressText(message); } } });
-      setExported(result); setProgress(100); setNote("MP4 đã ghép xong. Hãy phát và nghe đến cuối trước khi tải về.");
+      const current = { blob: result, requestId: crypto.randomUUID(), title: (title || "Video AI").slice(0, 120), duration: generatedDuration };
+      latestRendered.current = current;
+      setExported(result); setProgress(100); setNote("MP4 đã ghép xong. Đang lưu vào Thư viện; bạn vẫn có thể tải về máy.");
+      await storeRendered(current);
     } catch (cause) { setError(`${errorMessage(cause)} Video gốc, kịch bản và lời đọc vẫn được giữ để ghép lại.`); }
+    finally { end(); }
+  }
+
+  async function storeRendered(current = latestRendered.current) {
+    if (!current) return;
+    setLibrarySave("saving"); setBusy("library"); setProgressText("Đang lưu video vào Thư viện…");
+    try {
+      await saveLibraryVideo(current.blob, current.title, current.duration, current.requestId);
+      setLibrarySave("saved"); setNote("Video đã lưu trong Thư viện 7 ngày. Hãy phát kiểm tra hoặc tải MP4 về máy.");
+    } catch (cause) {
+      setLibrarySave("error");
+      setNote("Video vẫn phát và tải về máy được, nhưng chưa lưu vào Thư viện. Hãy thử lưu lại khi mạng ổn định.");
+      setError(errorMessage(cause));
+    }
+  }
+
+  async function retryLibrarySave() {
+    if (!latestRendered.current || !begin("library")) return;
+    try { await storeRendered(latestRendered.current); }
     finally { end(); }
   }
 
@@ -428,8 +456,8 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
       <div className={styles.heading}><span className={styles.number}>5</span><div><h3>Ghép và tải video</h3><p>Giữ trọn lời thoại; tự lặp hoặc cắt hình. Tiếng gốc của video được tắt.</p></div></div>
       <label className={styles.field}>Tỷ lệ video đầu ra<select value={ratio} onChange={event => { setRatio(event.target.value as StockAspectRatio); setExported(undefined); }} disabled={Boolean(busy)}><option value="9:16">Dọc 9:16</option><option value="16:9">Ngang 16:9</option><option value="1:1">Vuông 1:1</option></select></label>
       {busy === "export" ? <div className={styles.progress} role="status"><strong>{progressText || "Đang ghép video…"}</strong><progress max={100} value={progress} /><span>{progress}% · Giữ trang mở đến khi hoàn tất.</span></div> : null}
-      <button type="button" className={styles.primary} onClick={() => void renderVideo()} disabled={Boolean(busy) || generatedDuration > MAX_AUDIO_SECONDS}>{busy === "export" ? "Đang ghép…" : exported ? "Ghép lại video" : "Ghép Video"}</button>
-      {exported && exportedUrl ? <div className={styles.result}><video src={exportedUrl} controls playsInline preload="metadata" aria-label="Xem trước video đã ghép" /><div className={styles.actions}><a className={styles.primary} href={exportedUrl} download={videoDownloadName(title || "video-ai")}>Tải Video MP4</a>{supportsVideoSave() ? <button type="button" className={styles.secondary} onClick={() => void saveExport()}>Lưu vào thư mục…</button> : null}{canShareVideoFile(exported, title || "video-ai") ? <button type="button" className={styles.secondary} onClick={() => void shareExport()}>Chia sẻ</button> : null}<a className={styles.textLink} href={exportedUrl} target="_blank" rel="noopener">Mở video để lưu</a></div><p>Hãy tải tệp trước khi rời trang. Video hoàn chỉnh chỉ được giữ trong lần mở này.</p></div> : null}
+      <button type="button" className={styles.primary} onClick={() => void renderVideo()} disabled={Boolean(busy) || generatedDuration > MAX_AUDIO_SECONDS}>{busy === "export" ? "Đang ghép…" : busy === "library" ? "Đang lưu vào Thư viện…" : exported ? "Ghép lại video" : "Ghép Video"}</button>
+      {exported && exportedUrl ? <div className={styles.result}><video src={exportedUrl} controls playsInline preload="metadata" aria-label="Xem trước video đã ghép" /><div className={styles.actions}><a className={styles.primary} href={exportedUrl} download={videoDownloadName(title || "video-ai")}>Tải Video MP4</a>{supportsVideoSave() ? <button type="button" className={styles.secondary} onClick={() => void saveExport()}>Lưu vào thư mục…</button> : null}{canShareVideoFile(exported, title || "video-ai") ? <button type="button" className={styles.secondary} onClick={() => void shareExport()}>Chia sẻ</button> : null}<a className={styles.textLink} href={exportedUrl} target="_blank" rel="noopener">Mở video để lưu</a></div><p role="status">{librarySave === "saved" ? "Đã lưu vào Thư viện trong 7 ngày." : librarySave === "saving" ? "Đang lưu lên kho riêng. Hãy giữ trang mở; vẫn có thể tải MP4 ngay." : "Video chưa lưu vào Thư viện. Hãy tải MP4 trước khi rời trang."}</p>{librarySave === "error" ? <button type="button" className={styles.secondary} onClick={() => void retryLibrarySave()} disabled={Boolean(busy)}>Thử lưu vào Thư viện</button> : null}</div> : null}
     </div> : null}
   </section>;
 }

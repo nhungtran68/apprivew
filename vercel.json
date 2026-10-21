@@ -13,6 +13,10 @@
     {
       "path": "/api/payments/payos/scheduled",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/library/scheduled",
+      "schedule": "15 4 * * *"
     }
   ]
 }
