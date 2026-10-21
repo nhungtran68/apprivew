@@ -6,6 +6,7 @@ import { cleanupAnalysisMedia } from "@/lib/studio-upload";
 import { audioSceneDurations, type TimedWord } from "@/lib/audio-scene-timing";
 import { planStockClipQualities, type StockClipQuote, type StockQuality } from "@/lib/stock-preflight";
 import { canShareVideoFile, saveVideoFile, shareVideoFile, supportsVideoSave, videoDownloadName } from "@/lib/video-download";
+import { saveLibraryVideo } from "@/lib/library-client";
 import styles from "./StockVideoWorkspace.module.css";
 import local from "./AudioVideoWorkspace.module.css";
 
@@ -20,7 +21,7 @@ type Scene = {
   video: Video | null; alternatives: Video[]; warning?: string;
 };
 type Transcript = { text: string; words: TimedWord[]; duration: number };
-type Busy = "audio" | "upload" | "transcribe" | "plan" | "search" | "export" | null;
+type Busy = "audio" | "upload" | "transcribe" | "plan" | "search" | "export" | "library" | null;
 
 function errorText(error: unknown) {
   if (error instanceof Error && error.name === "TimeoutError") return "Xử lý quá lâu. Hãy kiểm tra kết nối rồi thử lại; tác vụ cũ sẽ được lấy lại khi có kết quả.";
@@ -103,6 +104,7 @@ export default function AudioVideoWorkspace({ deepseekReady, onBusyChange }: { d
   const [ratio, setRatio] = useState<Ratio>("9:16");
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [exported, setExported] = useState<Blob>();
+  const [librarySave, setLibrarySave] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -124,6 +126,7 @@ export default function AudioVideoWorkspace({ deepseekReady, onBusyChange }: { d
   const transcript = useRef<Transcript | null>(null);
   const downloadedClips = useRef(new Map<string, Blob>());
   const downloadRequestIds = useRef(new Map<string, string>());
+  const latestRendered = useRef<{ blob: Blob; requestId: string; title: string; duration: number } | null>(null);
   const audioUrl = useObjectUrl(audio);
   const exportedUrl = useObjectUrl(exported);
   const allScenesReady = scenes.length > 0 && scenes.every(scene => scene.video);
@@ -148,6 +151,7 @@ export default function AudioVideoWorkspace({ deepseekReady, onBusyChange }: { d
       transcript.current = null;
       transcribeRequestId.current = crypto.randomUUID();
       planRequestId.current = crypto.randomUUID();
+      latestRendered.current = null; setLibrarySave("idle");
       setAudio(prepared); setAudioDuration(duration); setScenes([]); setExported(undefined);
       setPlanUncertain(false);
       setReplacementId(null); setResults([]); setPreview(null);
@@ -328,6 +332,7 @@ export default function AudioVideoWorkspace({ deepseekReady, onBusyChange }: { d
 
   async function renderVideo() {
     if (!audio || !audioDuration || !allScenesReady || !enter("export")) return;
+    setLibrarySave("idle");
     setProgress(0); setProgressText("Đang chuẩn bị cảnh và lời thoại…");
     try {
       const ordered = scenes.map(scene => scene.video!);
@@ -365,9 +370,32 @@ export default function AudioVideoWorkspace({ deepseekReady, onBusyChange }: { d
         clips, narration: audio, aspectRatio: ratio, scenes: timeline,
         onProgress: (fraction, detail) => { setProgress(Math.max(0, Math.min(100, fraction * 100))); setProgressText(detail); },
       });
+      const current = { blob: finished, requestId: crypto.randomUUID(), title: `Video từ lời thoại · ${audio.name.replace(/\.[^.]+$/, "")}`.slice(0, 120), duration: audioDuration };
+      latestRendered.current = current;
       setExported(finished); setProgress(100);
-      setNote("Video MP4 đã hoàn tất. Hãy xem lại đầy đủ hình và tiếng trước khi tải.");
+      setNote("Video MP4 đã hoàn tất. Đang lưu vào Thư viện; bạn có thể tải về máy ngay.");
+      await storeRendered(current);
     } catch (cause) { setError(errorText(cause)); }
+    finally { leave(); }
+  }
+
+  async function storeRendered(current = latestRendered.current) {
+    if (!current) return;
+    setLibrarySave("saving"); setBusy("library"); setProgressText("Đang lưu video vào Thư viện…");
+    try {
+      await saveLibraryVideo(current.blob, current.title, current.duration, current.requestId);
+      setLibrarySave("saved");
+      setNote("Video đã lưu trong Thư viện 7 ngày. Bạn cũng có thể tải MP4 về máy ngay.");
+    } catch (cause) {
+      setLibrarySave("error");
+      setNote("Video vẫn phát và tải về máy được, nhưng chưa lưu vào Thư viện. Hãy thử lưu lại khi mạng ổn định.");
+      setError(errorText(cause));
+    }
+  }
+
+  async function retryLibrarySave() {
+    if (!latestRendered.current || !enter("library")) return;
+    try { await storeRendered(latestRendered.current); }
     finally { leave(); }
   }
 
@@ -417,9 +445,9 @@ export default function AudioVideoWorkspace({ deepseekReady, onBusyChange }: { d
 
     {scenes.length ? <div className={styles.section}>
       <div className={styles.sectionHeading}><span className={styles.number}>3</span><div><h3>Ghép và tải video</h3><p>Ứng dụng tự lặp hoặc cắt phần hình cho khớp lời thoại gốc. Không rút ngắn hoặc tạo lại giọng nói.</p></div></div>
-      <button type="button" className={`${styles.primary} ${local.mainAction}`} onClick={() => void renderVideo()} disabled={!allScenesReady || Boolean(busy)}>{busy === "export" ? "Đang ghép video…" : exported ? "Ghép lại bản đã chỉnh" : "Ghép Video"}</button>
-      {busy === "export" ? <div className={styles.exportProgress} role="status"><progress value={progress} max={100} /><span>{Math.round(progress)}% · {progressText}</span></div> : null}
-      {exported && exportedUrl ? <div className={styles.finished}><video src={exportedUrl} controls playsInline preload="metadata" aria-label="Xem video hoàn chỉnh" /><p>Đã ghép xong. Hãy nghe đến hết file trước khi tải.</p><div className={styles.finishedActions}><a className={styles.primary} href={exportedUrl} download={videoDownloadName("video-tu-loi-thoai")}>Tải Video MP4</a>{supportsVideoSave() ? <button type="button" className={styles.secondary} onClick={() => void saveExport()}>Lưu vào thư mục…</button> : null}{canShareVideoFile(exported, "video-tu-loi-thoai") ? <button type="button" className={styles.secondary} onClick={() => void shareExport()}>Chia sẻ video</button> : null}<a className={styles.secondary} href={exportedUrl} target="_blank" rel="noopener">Mở video để lưu</a></div><p>Hãy tải MP4 trước khi rời trang; bản xuất chỉ được giữ trong lần mở này.</p></div> : null}
+      <button type="button" className={`${styles.primary} ${local.mainAction}`} onClick={() => void renderVideo()} disabled={!allScenesReady || Boolean(busy)}>{busy === "export" ? "Đang ghép video…" : busy === "library" ? "Đang lưu vào Thư viện…" : exported ? "Ghép lại bản đã chỉnh" : "Ghép Video"}</button>
+      {busy === "export" || busy === "library" ? <div className={styles.exportProgress} role="status"><progress value={progress} max={100} /><span>{Math.round(progress)}% · {progressText}</span></div> : null}
+      {exported && exportedUrl ? <div className={styles.finished}><video src={exportedUrl} controls playsInline preload="metadata" aria-label="Xem video hoàn chỉnh" /><p>Đã ghép xong. Hãy nghe đến hết file trước khi tải.</p><div className={styles.finishedActions}><a className={styles.primary} href={exportedUrl} download={videoDownloadName("video-tu-loi-thoai")}>Tải Video MP4</a>{supportsVideoSave() ? <button type="button" className={styles.secondary} onClick={() => void saveExport()}>Lưu vào thư mục…</button> : null}{canShareVideoFile(exported, "video-tu-loi-thoai") ? <button type="button" className={styles.secondary} onClick={() => void shareExport()}>Chia sẻ video</button> : null}<a className={styles.secondary} href={exportedUrl} target="_blank" rel="noopener">Mở video để lưu</a></div><p role="status">{librarySave === "saved" ? "Đã lưu vào Thư viện trong 7 ngày." : librarySave === "saving" ? "Đang lưu lên kho riêng. Hãy giữ trang mở; vẫn có thể tải MP4 ngay." : "Video chưa lưu vào Thư viện. Hãy tải MP4 trước khi rời trang."}</p>{librarySave === "error" ? <button type="button" className={styles.secondary} onClick={() => void retryLibrarySave()} disabled={Boolean(busy)}>Thử lưu vào Thư viện</button> : null}</div> : null}
     </div> : null}
     <p className={styles.credit}>Hãy duyệt nội dung và quyền sử dụng của từng cảnh trước khi đăng. Ứng dụng không thêm watermark.</p>
   </section>;

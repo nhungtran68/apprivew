@@ -1,65 +1,52 @@
 .page { min-width: 0; }
-.projectCard { display: flex; align-items: center; justify-content: space-between; gap: 30px; min-height: 320px; padding: 30px; border: 1px solid #e4e1d6; border-radius: 18px; background: #f3f0e6; overflow: hidden; }
-.projectContent { position: relative; min-width: 0; z-index: 1; }
-.availableLabel { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 17px; color: #677457; font-size: 11px; font-weight: 500; }
-.availableLabel > span { height: 6px; width: 6px; border-radius: 50%; background: #68825b; box-shadow: 0 0 0 3px #dce4d033; }
-.projectContent h2 { color: #304936; font-size: clamp(25px, 2.7vw, 32px); line-height: 1.4; letter-spacing: -.9px; }
-.projectContent > p { color: #747768; font-size: 14px; line-height: 1.85; max-width: 400px; margin: 13px 0 23px; }
-.folderArtwork { position: relative; flex-shrink: 0; width: 245px; height: 228px; margin-right: 9px; }
-.sheetBack { position: absolute; left: 52px; top: 17px; width: 154px; height: 169px; border: 1px solid #e1d6bd; background: #e6dcc7; border-radius: 12px; transform: rotate(12deg); }
-.sheetFront { position: absolute; left: 26px; top: 18px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px 20px; width: 156px; height: 164px; border: 1px solid #e5e4d9; background: #fffcf4; color: #80926f; border-radius: 12px; transform: rotate(-7deg); box-shadow: 0 5px 15px #46523908; }
-.sheetFront > span { height: 5px; width: 60px; border-radius: 8px; background: #e0e6d7; }
-.sheetFront > span:last-child { width: 39px; background: #eaece1; }
-.folderFront { position: absolute; display: flex; align-items: center; gap: 12px; left: 10px; bottom: 24px; padding: 50px 20px 27px; width: 215px; height: 126px; border: 1px solid #677a5526; border-radius: 7px 7px 16px 16px; background: #839573; color: #fff9eb; box-shadow: 0 14px 25px #3d543424, inset 0 1px 0 #ffffff40; }
-.folderFront::before { content: ""; position: absolute; width: 76px; height: 15px; top: -14px; left: -1px; background: #839573; border-radius: 8px 14px 0 0; }
-.folderFront > span { font-size: 10px; font-weight: 500; flex: 1; white-space: nowrap; }
-.folderFront > svg { flex-shrink: 0; }
-.soundBadge { position: absolute; right: -2px; top: 68px; display: grid; place-items: center; width: 52px; height: 52px; border: 4px solid #f3f0e6; border-radius: 16px; color: #ae6642; background: #f9e2cb; transform: rotate(9deg); }
-.storageNote { display: flex; align-items: flex-start; gap: 16px; margin-top: 18px; padding: 22px 24px; background: #edf3ed; border: 1px solid #dde7dc; border-radius: 13px; }
-.noteIcon { display: grid; place-items: center; flex-shrink: 0; width: 35px; height: 35px; border-radius: 10px; color: #57704b; background: #e0e9db; }
-.storageNote h2 { font-size: 14px; font-weight: 500; color: #496144; letter-spacing: -.1px; line-height: 1.7; }
-.storageNote p { color: #677760; font-size: 13px; margin-top: 5px; line-height: 1.85; max-width: 870px; }
-.storageNote p + p { margin-top: 9px; }
-.futureSection { margin-top: 36px; }
-.futureSection > div:first-child { flex-wrap: wrap; gap: 12px; }
-.futureSection > div:first-child > span { flex-shrink: 0; margin-top: 3px; }
-.futurePanel { display: flex; flex-direction: column; align-items: center; text-align: center; padding-block: 40px; }
-.mediaIcons { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 3px 0 25px; }
-.mediaIcons > span { display: grid; place-items: center; width: 50px; height: 50px; border: 1px solid #e4e9e1; border-radius: 14px; background: #f4f6f0; color: #839372; transform: rotate(-8deg); }
-.mediaIcons > span:nth-child(2) { width: 63px; height: 63px; border-color: #eadfcd; background: #f7f0e4; color: #aa8757; transform: none; }
-.mediaIcons > span:last-child { transform: rotate(8deg); background: #f6f2ed; border-color: #eae2d9; color: #ad8e70; }
-.futurePanel h3 { font-size: 23px; color: #405440; line-height: 1.55; letter-spacing: -.6px; }
-.futurePanel > p { max-width: 530px; margin-top: 12px; font-size: 14px; line-height: 1.9; }
-.futurePanel > a { margin-top: 16px; }
-.helpNote { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 11px; margin-top: 21px; color: #7b887c; }
-.helpNote p { font-size: 12px; }
-.helpNote > a { margin-left: auto; }
-@media (min-width: 1440px) {
-  .projectCard { padding: 36px 44px; }
-  .folderArtwork { margin-right: 35px; }
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; padding: 5px; border-radius: 14px; background: #edf1fa; }
+.tabs button { display: flex; flex: 1; align-items: center; justify-content: center; gap: 8px; min-height: 47px; padding: 10px; border: 1px solid transparent; border-radius: 10px; color: #657186; font-size: 14px; font-weight: 650; cursor: pointer; }
+.tabs button span { display: inline-grid; place-items: center; min-width: 21px; height: 21px; padding-inline: 5px; border-radius: 7px; background: #dce4f2; font-size: 11px; }
+.tabs .activeTab { border-color: #d9e1f3; background: #fff; color: #1545b7; box-shadow: 0 2px 8px #19366912; }
+.tabs .activeTab span { background: #e8efff; }
+.content { min-height: 300px; padding: 20px; border: 1px solid #e1e7f0; border-radius: 16px; background: #fff; }
+.contentHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.contentHeading h2 { color: #192b4d; font-size: 19px; line-height: 1.35; }
+.contentHeading p { margin-top: 5px; color: #647289; font-size: 13px; line-height: 1.55; }
+.refresh { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; min-height: 40px; padding: 7px 9px; border: 0; background: transparent; color: #1755da; font-size: 13px; font-weight: 600; cursor: pointer; }
+.refresh:disabled { opacity: .55; cursor: wait; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.card { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 11px; align-content: start; padding: 15px; border: 1px solid #e4e9f2; border-radius: 13px; background: #fff; }
+.iconBox { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: #e8efff; color: #215bd4; }
+.audioIcon { background: #fff1e5; color: #c75d14; }
+.cardBody { min-width: 0; }
+.cardBody h3 { overflow: hidden; color: #1d2b44; font-size: 14px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.cardBody > p { margin-top: 4px; color: #738095; font-size: 12px; line-height: 1.4; }
+.cardBody .expiry, .cardBody .expiring { display: flex; align-items: center; gap: 4px; margin-top: 8px; color: #69788d; }
+.cardBody .expiring { color: #a64c13; }
+.cardActions { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 3px; }
+.cardActions button { min-height: 41px; padding: 8px 12px; border: 1px solid #dce4f0; border-radius: 9px; background: #fff; color: #2352ae; font-size: 13px; font-weight: 600; cursor: pointer; }
+.cardActions button:disabled { opacity: .5; cursor: wait; }
+.cardActions .download { flex: 1; border-color: #1553d5; background: #1553d5; color: white; }
+.cardActions .delete { color: #a64f39; }
+.preview { grid-column: 1 / -1; min-width: 0; }
+.preview video { display: block; width: 100%; max-height: 420px; border-radius: 9px; background: #101728; }
+.preview audio { display: block; width: 100%; }
+.empty { display: flex; flex-direction: column; align-items: center; padding: 35px 16px; text-align: center; }
+.empty > span { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 17px; background: #edf3ff; color: #2659ce; }
+.empty h3 { margin-top: 16px; color: #213456; font-size: 17px; }
+.empty p { max-width: 390px; margin: 7px 0 18px; color: #68768c; font-size: 14px; line-height: 1.65; }
+.loading { padding: 30px; color: #68768c; text-align: center; }
+.error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 17px; padding: 12px 14px; border: 1px solid #ffccb7; border-radius: 10px; background: #fff3ed; color: #a83f1a; font-size: 13px; }
+.error button { flex-shrink: 0; border: 0; background: transparent; color: inherit; font-weight: 700; cursor: pointer; }
+.projectNote { display: flex; align-items: flex-start; gap: 12px; margin-top: 18px; padding: 18px; border: 1px solid #dce7dc; border-radius: 13px; background: #f2f7f0; }
+.projectNote > span { display: grid; flex-shrink: 0; place-items: center; width: 36px; height: 36px; border-radius: 9px; background: #e2efde; color: #4f724e; }
+.projectNote h2 { color: #3d5c3b; font-size: 14px; }
+.projectNote p { margin-top: 4px; color: #60735d; font-size: 13px; line-height: 1.55; }
+.projectNote a { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; margin-top: 5px; color: #376b36; font-size: 13px; font-weight: 650; }
+@media (max-width: 700px) {
+  .content { padding: 15px; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
 }
-@media (max-width: 799px) {
-  .projectCard { padding: 26px; }
-  .folderArtwork { transform: scale(.87); transform-origin: right center; margin-left: -25px; margin-right: -2px; width: 224px; }
-}
-@media (max-width: 599px) {
-  .projectCard { min-height: 0; padding: 26px 24px; align-items: flex-start; }
-  .projectContent > p { font-size: 15px; }
-  .folderArtwork { display: none; }
-  .desktopBreak { display: none; }
-  .storageNote { padding: 20px; gap: 12px; }
-  .storageNote h2 { font-size: 15px; }
-  .storageNote p { font-size: 14px; }
-  .noteIcon { width: 28px; height: 32px; background: transparent; }
-  .futurePanel { padding: 32px 22px; }
-  .futurePanel > p { font-size: 15px; }
-  .helpNote { gap: 5px 9px; align-items: flex-start; }
-  .helpNote > svg { margin-top: 2px; flex-shrink: 0; }
-  .helpNote p { flex: 1; font-size: 13px; }
-  .helpNote > a { margin-left: 28px; flex-basis: 100%; }
-}
-@media (max-width: 359px) {
-  .projectCard { padding: 24px 20px; }
-  .projectContent > a { width: 100%; padding-inline: 12px; font-size: 14px; }
-  .storageNote { flex-direction: column; }
+@media (max-width: 400px) {
+  .contentHeading { flex-direction: column; }
+  .refresh { margin-left: -9px; }
+  .tabs button { gap: 5px; padding-inline: 5px; font-size: 13px; }
+  .cardActions { flex-wrap: wrap; }
+  .cardActions .download { flex: 1; }
 }

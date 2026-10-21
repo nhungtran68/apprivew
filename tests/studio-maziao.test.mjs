@@ -13,7 +13,7 @@ let sequence = 0;
 
 async function harness() {
   const key = `offline-maziao-secret-${++sequence}`;
-  const requests = [], grants = new Map(), charged = [], deleted = [], media = new Map(), storedMimes = new Map(), mp3Reads = [], waits = [], shortened = [], usage = [];
+  const requests = [], grants = new Map(), charged = [], deleted = [], media = new Map(), storedMimes = new Map(), mp3Reads = [], waits = [], shortened = [], usage = [], indexedAudio = [];
   let handle = async () => { throw new Error("Unexpected provider request"); };
   let accountVoices = [];
   let accountHandler;
@@ -75,6 +75,9 @@ async function harness() {
     apiError: error => Response.json({ code: error.code, error: error.message }, { status: error.status || 500 }),
   };
   const mocks = new Map([
+    [path.join(root, "lib/library-audio.ts"), {
+      registerLibraryAudio: async input => { indexedAudio.push(input); },
+    }],
     [path.join(root, "lib/studio-server.ts"), server],
     [path.join(root, "lib/studio-credit-operation.ts"), { creditRequestId: () => crypto.randomUUID() }],
     [path.join(root, "lib/studio-credits.ts"), {
@@ -103,6 +106,7 @@ async function harness() {
       },
     }],
     [path.join(root, "lib/studio-supabase.ts"), {
+      STUDIO_MEDIA_BUCKET: "studio-media",
       createStudioSupabaseServer: async () => ({
         from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) })
       }),
@@ -156,7 +160,7 @@ async function harness() {
     return module.namespace;
   }
   const wav = await entry("lib/studio-wav.ts");
-  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, wav, entry, setHandler(handler) { handle = handler; }, setAccountVoices(rows) { accountVoices = rows; }, setAccountHandler(handler) { accountHandler = handler; }, setMemberRole(role) { memberRole = role; }, setCatalog(rows) { catalog = rows; }, failStorageAt(index) { failStorageAt = index; } };
+  return { key, requests, grants, grant, charged, deleted, media, storedMimes, mp3Reads, waits, shortened, usage, indexedAudio, wav, entry, setHandler(handler) { handle = handler; }, setAccountVoices(rows) { accountVoices = rows; }, setAccountHandler(handler) { accountHandler = handler; }, setMemberRole(role) { memberRole = role; }, setCatalog(rows) { catalog = rows; }, failStorageAt(index) { failStorageAt = index; } };
 }
 
 function syntheticMpegFrames() {
@@ -694,6 +698,9 @@ await check("standalone narration uses paragraph mode, one voice, and the provid
   assert.equal(result.usage.credits, 12.5);
   assert.equal(h.requests.filter(request => request.url.endsWith("/tts/submit")).length, 1);
   assert.deepEqual(Array.from(h.media.get(result.audioPath)), Array.from(bytes));
+  assert.equal(h.indexedAudio.length, 1);
+  assert.equal(h.indexedAudio[0].audioPath, result.audioPath);
+  assert.equal(h.indexedAudio[0].sizeBytes, bytes.length);
 });
 
 await check("vieten rejects totals below 100 characters before network, quota or script changes", async () => {

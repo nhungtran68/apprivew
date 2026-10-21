@@ -30,7 +30,8 @@ async function harness() {
   let balance = 100, status = "completed", submitFailure = false, statusResponses = [];
   let now = 1_700_000_000_000;
   class TestDate extends Date { static now() { return now; } }
-  const operations = new Map(), requests = [], events = [];
+  const operations = new Map(), requests = [], events = [], storedAudio = new Set();
+  let storageCheckFailure = false;
   const modules = new Map(), synthetics = new Map();
   let contract;
   const context = vm.createContext({
@@ -60,7 +61,7 @@ async function harness() {
       if (operations.has(requestId)) { const op = operations.get(requestId); return { created: false, status: op.status, providerTaskId: op.providerTaskId }; }
       if (balance < amount) throw new contract.StudioError("INSUFFICIENT_CREDITS", "Hết credit", 402);
       balance -= amount;
-      operations.set(requestId, { kind, amount, status: "reserved", metadata });
+      operations.set(requestId, { kind, amount, status: "reserved", metadata, createdAt: new Date(now).toISOString() });
       events.push(["reserve", kind, amount]);
       return { created: true };
     },
@@ -77,23 +78,31 @@ async function harness() {
     saveAuthorizedVoice: async () => {}, savePersonalVoicePreview: async () => {}, saveSharedVoiceList: async () => {},
   };
   const mocks = new Map([
+    [path.join(root, "lib/library-audio.ts"), { registerLibraryAudio: async () => {} }],
     [path.join(root, "lib/studio-credits.ts"), credit],
     [path.join(root, "lib/studio-server.ts"), server],
     [path.join(root, "lib/studio-deepseek.ts"), { shortenSegment: async () => { throw new Error("No shortening expected"); } }],
     [path.join(root, "lib/studio-supabase.ts"), {
-      createStudioSupabaseServer: async () => ({ from: () => {
+      STUDIO_MEDIA_BUCKET: "studio-media",
+      createStudioSupabaseServer: async () => ({ storage: { from: bucket => {
+        assert.equal(bucket, "studio-media");
+        return { exists: async path => {
+          if (storageCheckFailure) return { data: null, error: new Error("Storage temporarily unavailable") };
+          return { data: storedAudio.has(path), error: null };
+        } };
+      } }, from: () => {
         const filters = {};
         const query = {
           select: () => query,
           eq: (key, value) => { filters[key] = value; return query; },
           not: () => query, order: () => query,
           limit: async () => ({ data: [...operations].filter(([id, op]) => op.kind === filters.kind && op.status === filters.status && op.providerTaskId).map(([id, op]) => ({ request_id: id, created_at: new Date().toISOString(), provider_task_id: op.providerTaskId, metadata: op.metadata })), error: null }),
-          maybeSingle: async () => { const op = operations.get(filters.request_id); return { data: op && op.kind === filters.kind ? { request_id: filters.request_id, provider_task_id: op.providerTaskId, metadata: op.metadata, status: op.status, provider_usage: op.providerUsage } : null, error: null }; },
+          maybeSingle: async () => { const op = operations.get(filters.request_id); return { data: op && op.kind === filters.kind ? { request_id: filters.request_id, created_at: op.createdAt, provider_task_id: op.providerTaskId, metadata: op.metadata, status: op.status, provider_usage: op.providerUsage } : null, error: null }; },
         };
         return query;
       } }),
       removeOwnedMedia: async () => {},
-      storeNarration: async () => ({ audioPath: `${userId}/narration/result.wav`, audioUrl: "https://audio.example.invalid/result.wav" }),
+      storeNarration: async () => { const audioPath = `${userId}/narration/result.wav`; storedAudio.add(audioPath); return { audioPath, audioUrl: "https://audio.example.invalid/result.wav" }; },
     }],
     [path.join(root, "lib/studio-mp3.ts"), { inspectMp3: async () => { throw new Error("Expected WAV"); } }],
   ]);
@@ -126,7 +135,7 @@ async function harness() {
   }
   contract = await entry("lib/studio-contract.ts");
   const maziao = await entry("lib/studio-maziao.ts");
-  return { maziao, operations, requests, events, setBalance: value => { balance = value; }, balance: () => balance, setStatus: value => { status = value; }, setStatusResponses: value => { statusResponses = value; }, setSubmitFailure: value => { submitFailure = value; } };
+  return { maziao, operations, requests, events, storedAudio, advanceDays: days => { now += days * 24 * 60 * 60 * 1000; }, setStorageCheckFailure: value => { storageCheckFailure = value; }, setBalance: value => { balance = value; }, balance: () => balance, setStatus: value => { status = value; }, setStatusResponses: value => { statusResponses = value; }, setSubmitFailure: value => { submitFailure = value; } };
 }
 
 const script = "Đây là lời thoại tiếng Việt đã được người dùng duyệt. ".repeat(3);
@@ -198,6 +207,16 @@ assert.equal(recoverable.requests.filter(item => item.pathname === "/api/tts/sub
 const restored = await recoverable.maziao.recoverMaziaoVoiceOver({ key: base.key, userId, requestId: ids.ambiguous });
 assert.equal(restored.audioPath, recovered.audioPath, "a lost HTTP response reuses the stored file");
 assert.equal(recoverable.requests.filter(item => item.pathname === "/api/tts/submit").length, 1);
+recoverable.setStorageCheckFailure(true);
+await assert.rejects(recoverable.maziao.recoverMaziaoVoiceOver({ key: base.key, userId, requestId: ids.ambiguous }), { code: "AUDIO_CHECK_UNAVAILABLE", status: 503 });
+recoverable.setStorageCheckFailure(false);
+recoverable.storedAudio.delete(recovered.audioPath);
+await assert.rejects(recoverable.maziao.recoverMaziaoVoiceOver({ key: base.key, userId, requestId: ids.ambiguous }), { code: "AUDIO_REMOVED", status: 410 });
+assert.equal(recoverable.requests.filter(item => item.pathname === "/api/tts/submit").length, 1, "missing stored audio never resubmits a paid provider task");
+recoverable.storedAudio.add(recovered.audioPath);
+recoverable.advanceDays(30);
+await assert.rejects(recoverable.maziao.recoverMaziaoVoiceOver({ key: base.key, userId, requestId: ids.ambiguous }), { code: "AUDIO_EXPIRED", status: 410 });
+assert.equal(recoverable.requests.filter(item => item.pathname === "/api/tts/submit").length, 1, "expired stored audio never resubmits a paid provider task");
 
 const resumed = await harness();
 resumed.setStatus("unknown");
