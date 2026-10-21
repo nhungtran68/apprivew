@@ -217,7 +217,7 @@ function ScriptAiWorkspace() {
     event.preventDefault();
     if (busy) return;
     if (availableCredits !== undefined && availableCredits < scriptCost) { setError(`Cần ${scriptCost} credit để tạo kịch bản. Hiện bạn còn ${availableCredits} credit khả dụng.`); return; }
-    if (!title.trim() || brief.trim().length < 5) { setError("Hãy nhập chủ đề video và thông tin bạn muốn chia sẻ."); return; }
+    if (!title.trim() || brief.trim().length < 5) { setError("Hãy nhập chủ đề video và điều bạn muốn chia sẻ."); return; }
     setBusy("generate"); setError(""); setNotice(""); setScript("");
     try {
       const selectedType = selection.kind === "custom" ? { templateId: selection.id } : { format: selection.format };
@@ -243,7 +243,7 @@ function ScriptAiWorkspace() {
 
   return <div className={styles.page}>
     <nav aria-label="Đường dẫn" className={styles.breadcrumb}><Link href="/">Tổng quan</Link><span aria-hidden="true">/</span><span aria-current="page">Tạo kịch bản AI</span></nav>
-    <header className={styles.hero}><span className={styles.heroIcon}><PlatformIcon name="script" size={27} /></span><div><p className={styles.eyebrow}>CÔNG CỤ SÁNG TẠO NỘI DUNG</p><h1>Tạo kịch bản AI</h1><p>Chọn dạng kịch bản, nhập chủ đề video và nói điều bạn muốn chia sẻ.</p></div></header>
+    <header className={styles.hero}><span className={styles.heroIcon}><PlatformIcon name="script" size={27} /></span><div><p className={styles.eyebrow}>CÔNG CỤ SÁNG TẠO NỘI DUNG</p><h1>Tạo kịch bản AI</h1><p>Chọn dạng kịch bản rồi nhập chủ đề và điều bạn muốn chia sẻ.</p></div></header>
 
     {error && <div role="alert" className={styles.error}>{error}<button type="button" aria-label="Đóng thông báo lỗi" onClick={() => setError("")}>×</button></div>}
     {notice && <div role="status" className={styles.notice}>{notice}<button type="button" aria-label="Đóng thông báo" onClick={() => setNotice("")}>×</button></div>}
@@ -291,12 +291,14 @@ function ScriptAiWorkspace() {
           </form>}
         </section>
 
-        <section className={styles.card} aria-labelledby="title-heading">
-          <div className={styles.sectionHeading}><span className={styles.step}>2</span><div><h2 id="title-heading">Nhập chủ đề video</h2><p>Đây là nội dung video bạn muốn tạo, độc lập với dạng kịch bản đã chọn.</p></div></div>
-          <label className={styles.field} htmlFor="script-title">Tiêu đề hoặc chủ đề video<input id="script-title" maxLength={120} value={title} onChange={event => { setTitle(event.target.value); setScript(""); }} placeholder="Ví dụ: Vì sao khách hàng thích sản phẩm này?" /></label>
+        <form className={styles.card} onSubmit={generate} aria-labelledby="idea-heading">
+          <div className={styles.sectionHeading}><span className={styles.step}>2</span><div><h2 id="idea-heading">Chủ đề và điều muốn chia sẻ</h2><p>Cho AI biết video nói về gì và những thông tin quan trọng để viết đúng ý bạn.</p></div></div>
+          <label className={styles.field} htmlFor="script-title">Chủ đề video<input id="script-title" maxLength={120} value={title} onChange={event => { setTitle(event.target.value); setScript(""); }} placeholder="Ví dụ: Vì sao khách hàng thích sản phẩm này?" /></label>
           {selectedCustom && <p className={styles.selectedNote}><PlatformIcon name="check" size={16} />Đang dùng dạng “{selectedCustom.title}”</p>}
-        </section>
-        <form className={styles.card} onSubmit={generate}><div className={styles.sectionHeading}><span className={styles.step}>3</span><div><h2>Cho AI biết điều cần chia sẻ</h2><p>Thông tin của bạn giúp kịch bản đúng ý và đúng sự thật.</p></div></div><label className={styles.field}>Sản phẩm, đối tượng và thông điệp chính<textarea required rows={5} maxLength={5000} value={brief} onChange={event => setBrief(event.target.value)} placeholder="Sản phẩm là gì? Dành cho ai? Điểm nổi bật nào bạn đã kiểm chứng? Bạn muốn người xem làm gì sau khi xem?" /></label><div className={styles.formFoot}><label className={styles.field}>Thời lượng dự kiến<select value={durationSeconds} onChange={event => setDurationSeconds(Number(event.target.value))}><option value={15}>15 giây</option><option value={30}>30 giây</option><option value={45}>45 giây</option><option value={60}>60 giây</option><option value={90}>90 giây</option></select></label><button type="submit" className={styles.primaryButton} disabled={!!busy || !title.trim() || brief.trim().length < 5 || (availableCredits !== undefined && availableCredits < scriptCost)}><PlatformIcon name="spark" size={19} />{busy === "generate" ? "Đang viết kịch bản…" : "Tạo kịch bản"}</button></div><p className={styles.creditHint}>{scriptCost} credit mỗi lần tạo{availableCredits !== undefined ? ` · Còn ${availableCredits} credit khả dụng` : ""}{availableCredits !== undefined && availableCredits < scriptCost ? <> · <Link href="/ca-nhan">Xem số dư</Link></> : null}</p></form>
+          <label className={`${styles.field} ${styles.briefField}`} htmlFor="script-brief">Điều bạn muốn chia sẻ<textarea id="script-brief" required rows={5} maxLength={5000} value={brief} onChange={event => setBrief(event.target.value)} placeholder="Sản phẩm là gì? Dành cho ai? Điểm nổi bật nào bạn đã kiểm chứng? Bạn muốn người xem làm gì sau khi xem?" /></label>
+          <div className={styles.formFoot}><label className={styles.field}>Thời lượng dự kiến<select value={durationSeconds} onChange={event => setDurationSeconds(Number(event.target.value))}><option value={15}>15 giây</option><option value={30}>30 giây</option><option value={45}>45 giây</option><option value={60}>60 giây</option><option value={90}>90 giây</option></select></label><button type="submit" className={styles.primaryButton} disabled={!!busy || !title.trim() || brief.trim().length < 5 || (availableCredits !== undefined && availableCredits < scriptCost)}><PlatformIcon name="spark" size={19} />{busy === "generate" ? "Đang viết kịch bản…" : "Tạo kịch bản"}</button></div>
+          <p className={styles.creditHint}>{scriptCost} credit mỗi lần tạo{availableCredits !== undefined ? ` · Còn ${availableCredits} credit khả dụng` : ""}{availableCredits !== undefined && availableCredits < scriptCost ? <> · <Link href="/ca-nhan">Xem số dư</Link></> : null}</p>
+        </form>
       </div>
 
       <aside className={styles.resultColumn} aria-labelledby="result-title"><div className={styles.resultCard}><div className={styles.resultTop}><span className={styles.resultIcon}><PlatformIcon name="script" size={19} /></span><div><p className={styles.eyebrow}>KẾT QUẢ CỦA BẠN</p><h2 id="result-title">Kịch bản đã tạo</h2></div></div>{script ? <><div className={styles.scriptText}>{script}</div><button type="button" className={styles.copyButton} onClick={() => void copyScript()}><PlatformIcon name="check" size={18} />Sao chép kịch bản</button></> : <div className={styles.resultEmpty}><PlatformIcon name="spark" size={30} /><p>Kịch bản sẽ xuất hiện ở đây sau khi bạn nhấn “Tạo kịch bản”.</p></div>}</div></aside>

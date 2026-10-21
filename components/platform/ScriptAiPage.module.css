@@ -26,3 +26,4 @@
 .eyebrow,.resultTop .eyebrow,.sharedBadge,.personalBadge,.formatMark,.formatButton small{font-size:11px}
 @media(max-width:390px){.formatButton strong{font-size:13px}.formatButton small{font-size:11px}}
 .creditHint{margin-top:10px;color:#62718d;font-size:12px;line-height:1.5}.creditHint a{color:#0b47f5;font-weight:700;text-decoration:underline}
+.briefField{margin-top:16px}
