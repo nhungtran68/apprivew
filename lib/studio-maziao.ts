@@ -14,6 +14,9 @@ const MAX_AUDIO = 12 * 1024 * 1024;
 const MAX_JSON = 1024 * 1024;
 const CLONE_CREDITS = 50;
 const SHORTEN_CREDITS = 10;
+// Keep each browser request short. A Maziao job can take several minutes, so
+// subsequent requests resume the recorded task instead of submitting it again.
+const VOICE_REQUEST_SLICE_MS = 18_000;
 
 async function payloadHash(data: string | Uint8Array): Promise<string> {
   const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
@@ -85,7 +88,11 @@ async function providerJson(key: string, path: string, init: RequestInit = {}, d
   if (response.status === 402) { await response.body?.cancel(); throw new StudioError("MAZIAO_BALANCE", "Tài khoản dịch vụ giọng nói chưa đủ credit hoặc chưa có quyền API. Quản trị viên cần kiểm tra gói và số dư.", 422, "contact_admin"); }
   if (response.status === 429) { await response.body?.cancel(); throw new StudioError("MAZIAO_LIMIT", "Hệ thống đang giới hạn số tác vụ cùng lúc. Hãy chờ tác vụ hiện tại xong rồi thử lại.", 429); }
   if (response.status === 404) { await response.body?.cancel(); throw new StudioError("MAZIAO_NOT_FOUND", "Giọng này không còn tồn tại. Hãy tải lại danh sách và chọn giọng khác.", 422); }
-  if (!response.ok) { await response.body?.cancel(); throw new StudioError("MAZIAO_REJECTED", response.status >= 500 ? "Hệ thống giọng nói đang gián đoạn. Vui lòng thử lại sau." : "Hệ thống chưa chấp nhận dữ liệu. Kiểm tra giọng, model và mẫu thu 3–8 giây.", response.status >= 500 ? 502 : 422); }
+  if (!response.ok) {
+    console.warn(JSON.stringify({ event: "studio_maziao_http_error", endpoint: path.startsWith("/tts/") ? "/tts/*" : path, status: response.status }));
+    await response.body?.cancel();
+    throw new StudioError("MAZIAO_REJECTED", response.status >= 500 ? "Hệ thống giọng nói đang gián đoạn. Tác vụ đã gửi sẽ được giữ để lấy lại, không cần tạo lượt mới." : "Hệ thống chưa chấp nhận dữ liệu. Kiểm tra giọng và model đang dùng.", response.status >= 500 ? 502 : 422);
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(await boundedBytes(response, MAX_JSON)));
@@ -585,10 +592,10 @@ export async function generateMaziaoSpeech(input: { key: string; userId: string;
  * Standalone voice-over is not tied to a video timeline. It preserves the
  * complete script and never shortens/retries a paid result to fit a scene.
  */
-export async function generateMaziaoVoiceOver(input: { key: string; userId: string; requestId: string; voiceId: string; text: string; speed: number; volume: number; pitch: number }) {
+export async function generateMaziaoVoiceOver(input: { key: string; userId: string; requestId: string; voiceId: string; text: string; speed: number; volume: number; pitch: number; requestSliceMs?: number }) {
   const parsed = parseMaziaoVoiceId(input.voiceId);
   if (parsed.model === "vieten_speech" && input.text.length < 100) throw new StudioError("MAZIAO_TEXT_TOO_SHORT", "Model này yêu cầu tối thiểu 100 ký tự. Hãy nhập thêm lời thoại trước khi tạo.", 422, "script");
-  const deadline = Date.now() + 240000;
+  const deadline = Date.now() + (input.requestSliceMs ?? 240000);
   await assertModel(input.key, parsed.model, deadline);
   const segments: StudioSegment[] = [{ start: 0, end: 180, text: input.text }];
   const costs: (number | null)[] = [];
@@ -622,20 +629,47 @@ export async function listPendingMaziaoVoiceOvers(userId: string) {
   return ((data || []) as PendingVoiceOperation[]).filter(voiceOperation).map(row => ({ requestId: row.request_id, createdAt: row.created_at }));
 }
 
-/** Reuse a previously submitted Maziao job, never spending on another submit. */
-export async function recoverMaziaoVoiceOver(input: { key: string; userId: string; requestId: unknown }) {
-  if (!creditId(input.requestId)) throw new StudioError("INVALID_CREDIT_REQUEST", "Mã tác vụ chưa hợp lệ.", 400);
+/** Only an already-submitted, owner-scoped job may be reported as pending. */
+export async function pendingMaziaoVoiceOver(userId: string, requestId: string) {
+  if (!creditId(requestId)) return false;
   const client = await createStudioSupabaseServer();
   const { data, error } = await client.from("studio_credit_operations")
     .select("request_id,created_at,provider_task_id,metadata,status")
+    .eq("user_id", userId).eq("request_id", requestId).eq("kind", "tts").maybeSingle();
+  if (error) throw new StudioError("CREDIT_LEDGER_UNAVAILABLE", "Chưa kiểm tra được tác vụ giọng đang xử lý.", 503);
+  return Boolean(data && data.status === "reserved" && voiceOperation(data as PendingVoiceOperation));
+}
+
+export function voiceRequestSliceMs() { return VOICE_REQUEST_SLICE_MS; }
+
+/** A provider task exists, but these errors do not prove it failed. */
+export function recoverableVoiceError(error: unknown) {
+  return error instanceof StudioError && (error.status >= 500 || error.code === "MAZIAO_LIMIT");
+}
+
+/** Reuse a previously submitted Maziao job, never spending on another submit. */
+export async function recoverMaziaoVoiceOver(input: { key: string; userId: string; requestId: unknown; requestSliceMs?: number }) {
+  if (!creditId(input.requestId)) throw new StudioError("INVALID_CREDIT_REQUEST", "Mã tác vụ chưa hợp lệ.", 400);
+  const client = await createStudioSupabaseServer();
+  const { data, error } = await client.from("studio_credit_operations")
+    .select("request_id,created_at,provider_task_id,metadata,status,provider_usage")
     .eq("user_id", input.userId).eq("request_id", input.requestId).eq("kind", "tts").maybeSingle();
   if (error) throw new StudioError("CREDIT_LEDGER_UNAVAILABLE", "Chưa xem được tác vụ giọng đang xử lý.", 503);
+  // A completed provider job may have reached Storage and settled the charge
+  // even if the original HTTP response was lost. Return that same file.
+  if (data?.status === "settled" && data.provider_usage && typeof data.provider_usage === "object" && !Array.isArray(data.provider_usage)) {
+    const usage = data.provider_usage as Record<string, unknown>;
+    if (typeof usage.audioPath === "string" && usage.audioPath.startsWith(`${input.userId}/narration/`) &&
+        (usage.audioMime === "audio/wav" || usage.audioMime === "audio/mpeg") &&
+        typeof usage.duration === "number" && Number.isFinite(usage.duration) && usage.duration > 0)
+      return { audioPath: usage.audioPath, audioMime: usage.audioMime, duration: usage.duration, provider: "maziao", usage: { credits: typeof usage.providerCredits === "number" ? usage.providerCredits : null, jobs: 1 } };
+  }
   if (!data || data.status !== "reserved" || !voiceOperation(data as PendingVoiceOperation))
     throw new StudioError("CREDIT_REQUEST_REUSED", "Tác vụ này không còn chờ khôi phục. Hãy tải lại trang để xem kết quả mới nhất.", 409);
   const taskId = data.provider_task_id as string;
   let audio: Audio;
   try {
-    [audio] = await completedAudio(input.key, taskId, 1, Date.now() + 240000);
+    [audio] = await completedAudio(input.key, taskId, 1, Date.now() + (input.requestSliceMs ?? 240000));
   } catch (error) {
     if (error instanceof StudioError && error.code === "MAZIAO_TASK_FAILED")
       await refundCredits(input.userId, input.requestId).catch(() => {});

@@ -28,7 +28,7 @@ async function harness(){
  const mocks=new Map([
   [path.join(root,"lib/studio-server.ts"),server],
   [path.join(root,"lib/studio-deepseek.ts"),{shortenSegment:async()=>{throw new Error("No hidden AI retry permitted");}}],
-  [path.join(root,"lib/studio-maziao.ts"),{authorizeMaziaoVoice:async()=>{throw new Error("Eleven voice-over must not authorize Maziao");},generateMaziaoVoiceOver:async()=>{throw new Error("Eleven voice-over must not call Maziao");}}],
+  [path.join(root,"lib/studio-maziao.ts"),{authorizeMaziaoVoice:async()=>{throw new Error("Eleven voice-over must not authorize Maziao");},generateMaziaoVoiceOver:async()=>{throw new Error("Eleven voice-over must not call Maziao");},pendingMaziaoVoiceOver:async()=>false,recoverableVoiceError:()=>false,voiceRequestSliceMs:()=>18_000}],
   [path.join(root,"lib/studio-supabase.ts"),{assertOwnedMediaPath:ownedPath,downloadOwnedMedia:async(userId,name)=>{ownedPath(userId,name);return new File([new Uint8Array([1,2,3,4])],"sample.wav",{type:"audio/wav"});},removeOwnedMedia:async(userId,paths)=>{for(const name of paths){ownedPath(userId,name);deleted.push(name);media.delete(name);}},storeNarration:async(userId,wav,index)=>{const audioPath=`${userId}/narration/${index}.wav`;media.set(audioPath,wav);return{audioPath,audioUrl:`https://audio.example.invalid/${index}`};}}],
   [path.join(root,"lib/studio-credit-operation.ts"),{creditRequestId:()=>crypto.randomUUID()}],
  ]);
@@ -111,6 +111,13 @@ await check("continuous Eleven voice-over blocks unpriced provider requests",asy
  const route=await h.entry("app/api/voice-over/route.ts");
  const response=await route.POST(new Request("https://app.example/api/voice-over",{method:"POST",body:JSON.stringify({voiceId:"memberVoice",text:script,speed:1,volume:1,pitch:1})}));
  assert.equal(response.status,503);assert.equal((await response.json()).code,"VOICE_PRICING_UNAVAILABLE");assert.deepEqual(h.charged,[]);assert.equal(h.media.size,0);assert.equal(h.requests.length,0);
+});
+await check("overlong standalone speech stops before reserving credits or calling a provider",async()=>{
+ const h=await harness();
+ const route=await h.entry("app/api/voice-over/route.ts");
+ const response=await route.POST(new Request("https://app.example/api/voice-over",{method:"POST",body:JSON.stringify({voiceId:"maziao:lingual_speech_v2:memberVoice",text:"a".repeat(1201),speed:1,volume:1,pitch:1})}));
+ assert.equal(response.status,400);assert.equal((await response.json()).code,"SCRIPT_REQUIRED");
+ assert.deepEqual(h.charged,[]);assert.equal(h.requests.length,0);
 });
 await check("clone entitlement distinguishes free, missing flags and a full paid plan",async()=>{
  const cases=[{plan:{tier:"free",can_use_instant_voice_cloning:false},code:"CLONING_PLAN_REQUIRED"},{plan:{tier:"starter"},code:"CLONING_ENTITLEMENT_UNKNOWN"},{plan:{tier:"starter",can_use_instant_voice_cloning:true,voice_slots_used:10,voice_limit:10},code:"VOICE_SLOTS_FULL"}];
