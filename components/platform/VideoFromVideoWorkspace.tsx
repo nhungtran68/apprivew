@@ -18,9 +18,35 @@ const MAX_VIDEO_BYTES = 60 * 1024 * 1024;
 const MAX_AUDIO_SECONDS = 90;
 const MAX_SCRIPT_LENGTH = 1200;
 const SESSION_KEY_PREFIX = "ibeetool:video-from-video:draft:v1:";
+const PENDING_KEY_PREFIX = "ibeetool:video-from-video:pending:v1:";
 
 function errorMessage(value: unknown) { return value instanceof Error ? value.message : "Chưa hoàn tất. Hãy thử lại."; }
 function clock(seconds: number) { const whole = Math.max(0, Math.floor(seconds || 0)); return `${Math.floor(whole / 60).toString().padStart(2, "0")}:${(whole % 60).toString().padStart(2, "0")}`; }
+function waitingTime(createdAt: string, now: number) {
+  const seconds = Math.max(0, Math.floor((now - Date.parse(createdAt)) / 1000));
+  if (!Number.isFinite(seconds)) return "đang chờ";
+  if (seconds < 60) return `${seconds} giây`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} phút ${seconds % 60} giây`;
+  return `${Math.floor(seconds / 3600)} giờ ${Math.floor(seconds % 3600 / 60)} phút`;
+}
+function waitForVoiceCheck(ms: number, signal: AbortSignal) {
+  return new Promise<void>(resolve => {
+    if (signal.aborted) { resolve(); return; }
+    const done = () => { window.clearTimeout(timer); signal.removeEventListener("abort", done); resolve(); };
+    const timer = window.setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+function savedVoiceTask(value: unknown): VoiceTask | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const task = value as Record<string, unknown>;
+  if (typeof task.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(task.requestId) ||
+      typeof task.text !== "string" || !task.text.trim() || task.text.length > MAX_SCRIPT_LENGTH ||
+      typeof task.voiceId !== "string" || !task.voiceId || task.voiceId.length > 160 ||
+      typeof task.createdAt !== "string" || !Number.isFinite(Date.parse(task.createdAt)) ||
+      Date.parse(task.createdAt) > Date.now() + 60_000 || Date.parse(task.createdAt) < Date.now() - 30 * 24 * 60 * 60 * 1000) return null;
+  return task as VoiceTask;
+}
 function voiceKey(voice: Voice) { return voice.voice_id || voice.voiceId || voice.id || ""; }
 function useObjectUrl(blob?: Blob) {
   const [url, setUrl] = useState("");
@@ -126,6 +152,8 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
   const [voiceId, setVoiceId] = useState("");
   const [pendingTask, setPendingTask] = useState<VoiceTask | null>(null);
   const [recoveryBlocked, setRecoveryBlocked] = useState(false);
+  const [recoveryChecks, setRecoveryChecks] = useState(0);
+  const [now, setNow] = useState(0);
   const [readyVoice, setReadyVoice] = useState<VoiceResult | null>(null);
   const [generatedAudio, setGeneratedAudio] = useState<Blob>();
   const [generatedDuration, setGeneratedDuration] = useState(0);
@@ -161,6 +189,12 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
   useEffect(() => { onBusyChangeRef.current(Boolean(busy)); }, [busy]);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; recoveryRef.current?.abort(); onBusyChangeRef.current(false); }; }, []);
   useEffect(() => {
+    if (!pendingTask) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 5000);
+    return () => window.clearInterval(timer);
+  }, [pendingTask]);
+  useEffect(() => {
     setHydratedUserId("");
     recoveryRef.current?.abort();
     setSource(undefined); setSourceDuration(0); setSourceSize({ width: 0, height: 0 });
@@ -170,16 +204,29 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
     setIntent(""); setScriptType("builtin:review"); setScript(""); setTitle(""); setVoiceId("");
     analysisRef.current = null; analysisRequestRef.current = null; scriptRequestRef.current = null; voiceRequestRef.current = null;
     setUncertainStage(null);
+    let value: Record<string, any> = {};
     try {
-      const value = JSON.parse(sessionStorage.getItem(`${SESSION_KEY_PREFIX}${userId}`) || "{}") as Record<string, any>;
-      if (typeof value.intent === "string") setIntent(value.intent.slice(0, 5000));
-      if (typeof value.scriptType === "string") setScriptType(value.scriptType);
-      if (typeof value.script === "string") setScript(value.script.slice(0, 6000));
-      if (typeof value.approvedScript === "string" && value.approvedScript === value.script?.trim()) setApprovedScript(value.approvedScript);
-      if (typeof value.title === "string") setTitle(value.title.slice(0, 120));
-      if (typeof value.voiceId === "string") setVoiceId(value.voiceId);
-      if (value.pendingTask && typeof value.pendingTask.requestId === "string" && typeof value.pendingTask.text === "string" && typeof value.pendingTask.voiceId === "string") setPendingTask(value.pendingTask as VoiceTask);
-    } catch { /* Session drafts are optional; corrupted storage never blocks creating a video. */ }
+      const saved = JSON.parse(sessionStorage.getItem(`${SESSION_KEY_PREFIX}${userId}`) || "{}");
+      if (saved && typeof saved === "object" && !Array.isArray(saved)) value = saved;
+    }
+    catch { /* A corrupt session draft must not hide a paid voice task. */ }
+    if (typeof value.intent === "string") setIntent(value.intent.slice(0, 5000));
+    if (typeof value.scriptType === "string") setScriptType(value.scriptType);
+    if (typeof value.script === "string") setScript(value.script.slice(0, 6000));
+    if (typeof value.approvedScript === "string" && value.approvedScript === value.script?.trim()) setApprovedScript(value.approvedScript);
+    if (typeof value.title === "string") setTitle(value.title.slice(0, 120));
+    if (typeof value.voiceId === "string") setVoiceId(value.voiceId);
+    const sessionTask = savedVoiceTask(value.pendingTask);
+    let localTask: VoiceTask | null = null;
+    try { localTask = savedVoiceTask(JSON.parse(localStorage.getItem(`${PENDING_KEY_PREFIX}${userId}`) || "null")); }
+    catch { /* A bad local recovery record does not discard the session draft. */ }
+    const previous = localTask && (!sessionTask || Date.parse(localTask.createdAt) >= Date.parse(sessionTask.createdAt)) ? localTask : sessionTask;
+    if (previous) {
+      setPendingTask(previous);
+      if (!value.script || value.script.trim() !== previous.text) {
+        setScript(previous.text); setApprovedScript(previous.text); setVoiceId(previous.voiceId);
+      }
+    }
     setHydratedUserId(userId);
   }, [userId]);
   useEffect(() => {
@@ -187,6 +234,13 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
     try { sessionStorage.setItem(`${SESSION_KEY_PREFIX}${userId}`, JSON.stringify({ intent, scriptType, script, approvedScript, title, voiceId, pendingTask })); }
     catch { /* Some browsers disable session storage. The in-memory draft remains available. */ }
   }, [userId, hydratedUserId, intent, scriptType, script, approvedScript, title, voiceId, pendingTask]);
+  useEffect(() => {
+    if (hydratedUserId !== userId) return;
+    try {
+      if (pendingTask) localStorage.setItem(`${PENDING_KEY_PREFIX}${userId}`, JSON.stringify(pendingTask));
+      else localStorage.removeItem(`${PENDING_KEY_PREFIX}${userId}`);
+    } catch { /* Recovery remains possible in this tab even if local storage is unavailable. */ }
+  }, [userId, hydratedUserId, pendingTask]);
 
   function begin(next: Busy) { if (busyRef.current) return false; busyRef.current = true; setBusy(next); setError(""); setNote(""); return true; }
   function end() { busyRef.current = false; if (mountedRef.current) setBusy(null); }
@@ -288,45 +342,61 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
   async function recoverVoice(task: VoiceTask, poll = false) {
     if (!begin("recover")) return;
     setRecoveryBlocked(false);
+    setRecoveryChecks(0);
     const controller = new AbortController();
     recoveryRef.current = controller;
     try {
       const deadline = Date.now() + (poll ? 8 * 60_000 : 60_000);
+      let firstCheck = true;
+      let nextWaitMs = 1000;
       do {
-        if (poll) await new Promise(resolve => window.setTimeout(resolve, 4000));
+        // Each server request already waits up to 18 seconds for Maziao. A
+        // short gap avoids another long pause. Back off if the server returns
+        // immediately, which can indicate a temporary provider outage.
+        if (poll && !firstCheck) await waitForVoiceCheck(nextWaitMs, controller.signal);
+        firstCheck = false;
         if (controller.signal.aborted) return;
+        setProgressText("Đang kiểm tra tác vụ giọng đã gửi…");
+        const checkStartedAt = Date.now();
         const response = await fetch("/api/voice-over/recover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: task.requestId }), signal: controller.signal });
         const result = await response.json().catch(() => ({})) as Record<string, any>;
+        if (mountedRef.current) setRecoveryChecks(count => count + 1);
         if (response.status === 202 && result.pending === true) {
-          setNote("Lời đọc vẫn đang được xử lý. Có thể lấy lại cùng tác vụ mà không tạo thêm lượt mới.");
+          nextWaitMs = Date.now() - checkStartedAt < 5000 ? Math.min(Math.max(nextWaitMs * 2, 4000), 15_000) : 1000;
+          setProgressText("Maziao vẫn đang tạo giọng. Ứng dụng sẽ kiểm tra lại cùng tác vụ.");
           if (poll) continue;
           return;
         }
         if (!response.ok) {
-          if (response.status === 409 || result.code === "MAZIAO_TASK_FAILED") setRecoveryBlocked(true);
-          throw new Error(typeof result.error === "string" ? result.error : "Chưa lấy lại được lời đọc. Hãy thử lại sau.");
+          const terminal = response.status === 409 || result.code === "MAZIAO_TASK_FAILED";
+          if (terminal) setRecoveryBlocked(true);
+          throw Object.assign(new Error(typeof result.error === "string" ? result.error : "Chưa lấy lại được lời đọc. Hãy thử lại sau."), { terminal });
         }
         const audio = validVoiceResult(result, task);
         setReadyVoice(audio);
-        setPendingTask(null);
         await receiveVoice(audio);
         return;
       } while (mountedRef.current && !controller.signal.aborted && Date.now() < deadline);
-      if (mountedRef.current) setNote("Lời đọc vẫn đang xử lý. Bấm “Lấy lại lời đọc” sau; không tạo thêm lượt mới.");
-    } catch (cause) { if (mountedRef.current && !controller.signal.aborted) setError(`${errorMessage(cause)} Tác vụ cũ vẫn được giữ để lấy lại, không cần tạo mới.`); }
+      if (mountedRef.current) setNote("Lời đọc vẫn đang xử lý. Bạn có thể kiểm tra lại đúng tác vụ này sau; không cần tạo lượt mới.");
+    } catch (cause) {
+      if (mountedRef.current && !controller.signal.aborted) {
+        const terminal = cause && typeof cause === "object" && "terminal" in cause && cause.terminal === true;
+        setError(`${errorMessage(cause)} ${terminal ? "Tác vụ này không thể lấy lại; bạn có thể bỏ tác vụ cũ rồi chủ động tạo lượt mới." : "Tác vụ cũ vẫn được giữ để kiểm tra lại, không cần tạo mới."}`);
+      }
+    }
     finally { if (recoveryRef.current === controller) recoveryRef.current = null; setProgressText(""); end(); }
   }
 
   function stopRecovery() {
     recoveryRef.current?.abort();
-    setNote("Đã dừng chờ trên trang. Tác vụ vẫn tiếp tục; bấm Lấy lại lời đọc sau để nhận kết quả, không tạo lượt mới.");
+    setNote("Đã dừng kiểm tra trên trang. Maziao vẫn xử lý tác vụ này; quay lại và bấm Kiểm tra kết quả để nhận file, không tốn lượt mới.");
   }
 
   async function createVoice() {
     if (!approvedScript || approvedScript !== script.trim()) { setError("Hãy duyệt bản kịch bản hiện tại trước khi tạo giọng."); return; }
     if (!voiceId || !voiceReady) { setError("Chọn giọng đọc đang có quyền sử dụng trước khi tạo."); return; }
     if (/^maziao:vieten_speech:[a-zA-Z0-9_-]+$/.test(voiceId) && approvedScript.length < 100) { setError("Giọng này cần lời thoại ít nhất 100 ký tự."); return; }
-    if (pendingTask) { await recoverVoice(pendingTask); return; }
+    if (pendingTask) { await recoverVoice(pendingTask, true); return; }
     if (!begin("voice")) return;
     let task: VoiceTask | null = null;
     let delivered = false;
@@ -335,17 +405,23 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
       const fingerprint = JSON.stringify({ text: approvedScript, voiceId });
       if (voiceRequestRef.current?.fingerprint !== fingerprint) voiceRequestRef.current = { fingerprint, id: crypto.randomUUID() };
       task = { requestId: voiceRequestRef.current.id, text: approvedScript, voiceId, createdAt: new Date().toISOString() };
+      // Save the request before sending it, so closing a mobile tab during the
+      // first response cannot hide a paid task that may already exist.
+      setPendingTask(task);
+      try { localStorage.setItem(`${PENDING_KEY_PREFIX}${userId}`, JSON.stringify(task)); } catch { /* The in-memory task remains available. */ }
       const response = await fetch("/api/voice-over", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": task.requestId }, body: JSON.stringify({ text: approvedScript, voiceId, speed: 1, volume: 1, pitch: 1 }) });
       const result = await response.json().catch(() => ({})) as Record<string, any>;
       if (response.status === 202 && result.pending === true) {
-        setPendingTask(task); setNote("Lời đọc đã gửi. Đang kiểm tra kết quả mà không tạo thêm lượt mới.");
+        setNote("Maziao đã nhận lời thoại. Ứng dụng đang tự kiểm tra kết quả của cùng tác vụ.");
         end(); await recoverVoice(task, true); return;
       }
       if (!response.ok) {
         const error = Object.assign(new Error(typeof result.error === "string" ? result.error : "Chưa tạo được giọng đọc."), { code: result.code, status: response.status });
         recoverable = response.status >= 500 || ["MAZIAO_INVALID_RESPONSE", "MAZIAO_TIMEOUT", "MAZIAO_UNAVAILABLE", "MAZIAO_REJECTED", "MAZIAO_AUDIO_DOWNLOAD", "AUDIO_STORE_FAILED", "AUDIO_LINK_FAILED"].includes(result.code);
-        if (recoverable) setPendingTask(task);
-        else voiceRequestRef.current = null;
+        if (!recoverable) {
+          setPendingTask(null); voiceRequestRef.current = null;
+          try { localStorage.removeItem(`${PENDING_KEY_PREFIX}${userId}`); } catch { /* The state update also clears the saved task. */ }
+        }
         throw error;
       }
       const audio = validVoiceResult(result, task);
@@ -404,11 +480,28 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
   async function saveExport() { if (!exported) return; try { await saveVideoFile(exported, title || "video-ai"); } catch (cause) { setError(errorMessage(cause)); } }
   async function shareExport() { if (!exported) return; try { await shareVideoFile(exported, title || "video-ai"); } catch (cause) { setError(errorMessage(cause)); } }
 
+  function pendingVoicePanel(task: VoiceTask) {
+    const elapsed = now ? Math.max(0, now - Date.parse(task.createdAt)) : 0;
+    return <div className={styles.pending}>
+      <strong>{busy === "voice" ? "Đang gửi lời thoại" : busy === "audio" ? "Đã tạo xong · đang nhận file âm thanh" : busy === "recover" ? "Maziao đang tạo lời thoại" : "Lời thoại đã gửi · chờ kết quả"}</strong>
+      <span>Đã chờ {waitingTime(task.createdAt, now || Date.now())}{recoveryChecks ? ` · Đã kiểm tra ${recoveryChecks} lần` : ""}. Thời gian tạo phụ thuộc độ dài lời thoại và giọng đã chọn.</span>
+      {(busy === "recover" || busy === "audio") && progressText ? <p className={styles.pendingStatus} role="status">{progressText}</p> : null}
+      {elapsed > 90_000 && busy === "recover" ? <span>Đã chờ hơn 90 giây. Bạn có thể chọn “Kiểm tra sau”; tác vụ vẫn tiếp tục và không mất lời đọc.</span> : null}
+      <span>Ứng dụng chỉ kiểm tra tác vụ đã gửi, không tạo thêm giọng hoặc trừ credit lần hai.</span>
+      <div className={styles.pendingActions}>
+        {readyVoice ? <button type="button" className={styles.secondary} onClick={() => void retryAudioDownload()} disabled={Boolean(busy)}>Tải lại file âm thanh</button>
+          : <button type="button" className={styles.secondary} onClick={() => void recoverVoice(task, true)} disabled={Boolean(busy)}>{busy === "voice" ? "Đang gửi…" : busy === "recover" ? "Đang tự kiểm tra…" : busy === "audio" ? "Đang nhận file…" : "Kiểm tra kết quả"}</button>}
+        {busy === "recover" ? <button type="button" className={styles.secondary} onClick={stopRecovery}>Kiểm tra sau</button> : null}
+      </div>
+      {recoveryBlocked ? <button type="button" className={styles.textLink} onClick={() => { setPendingTask(null); voiceRequestRef.current = null; setRecoveryBlocked(false); setNote("Đã bỏ tác vụ không thể khôi phục. Lượt tạo mới có thể phát sinh phí."); }}>Bỏ tác vụ cũ để tạo lượt mới</button> : null}
+    </div>;
+  }
+
   return <section className={styles.workspace} aria-labelledby="video-source-title">
     <div className={styles.intro}><span className={styles.eyebrow}>VIDEO CỦA BẠN · LỜI THOẠI AI</span><h2 id="video-source-title">Tạo Video Từ Video</h2><p>Tải video, chọn cách kể, duyệt lời thoại rồi ghép. App tự điều chỉnh phần hình theo độ dài giọng đọc.</p></div>
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
     {note ? <p className={styles.note} role="status">{note}</p> : null}
-    {pendingTask && !approvedScript ? <div className={styles.section}><div className={styles.heading}><span className={styles.number}>↻</span><div><h3>Lời đọc cũ đang chờ</h3><p>Tác vụ đã gửi từ kịch bản trước. Lấy lại kết quả trước khi tạo lượt giọng mới.</p></div></div><button type="button" className={styles.secondary} onClick={() => void recoverVoice(pendingTask)} disabled={Boolean(busy)}>Lấy lại lời đọc</button>{busy === "recover" ? <button type="button" className={styles.textLink} onClick={stopRecovery}>Dừng chờ trên trang</button> : null}{recoveryBlocked ? <button type="button" className={styles.textLink} onClick={() => { setPendingTask(null); voiceRequestRef.current = null; setRecoveryBlocked(false); setNote("Đã bỏ tác vụ không thể khôi phục. Lượt tạo mới có thể phát sinh phí."); }}>Bỏ tác vụ cũ để tạo lượt mới</button> : null}</div> : null}
+    {pendingTask && !approvedScript ? <div className={styles.section}><div className={styles.heading}><span className={styles.number}>↻</span><div><h3>Lời đọc cũ đang chờ</h3><p>Tác vụ đã gửi từ kịch bản trước. Bạn có thể lấy lại mà không tạo giọng lần nữa.</p></div></div>{pendingVoicePanel(pendingTask)}</div> : null}
     {readyVoice && !approvedScript ? <div className={styles.section}><div className={styles.heading}><span className={styles.number}>♪</span><div><h3>Lời đọc cũ đã tạo</h3><p>Tệp đã có trong kho riêng. Bạn có thể tải lại mà không tạo thêm lượt giọng.</p></div></div><button type="button" className={styles.secondary} onClick={() => void retryAudioDownload()} disabled={Boolean(busy)}>Tải lại lời đọc đã tạo</button></div> : null}
     {generatedAudio && audioUrl && !approvedScript ? <div className={styles.section}><div className={styles.heading}><span className={styles.number}>♪</span><div><h3>Lời đọc đã lấy lại</h3><p>Nghe lại và quyết định có dùng cùng video hiện tại không.</p></div></div><audio src={audioUrl} controls preload="metadata" /><button type="button" className={styles.secondary} onClick={() => { setScript(generatedText); setApprovedScript(generatedText); setVoiceId(generatedVoiceId); setExported(undefined); }} disabled={Boolean(busy) || !source}>Dùng lời đọc này với video hiện tại</button></div> : null}
 
@@ -445,11 +538,11 @@ export default function VideoFromVideoWorkspace({ userId, deepseekReady, voiceRe
       <div className={styles.heading}><span className={styles.number}>4</span><div><h3>Tạo và nghe lời thoại</h3><p>Giọng đọc được tạo từ toàn bộ kịch bản đã duyệt.</p></div></div>
       <div className={styles.voiceRow}><label className={styles.field}>Chọn giọng đọc<select value={voiceId} onChange={event => { setVoiceId(event.target.value); setExported(undefined); }} disabled={Boolean(busy)}><option value="">Chọn giọng</option>{voices.map(voice => <option key={voiceKey(voice)} value={voiceKey(voice)}>{voice.name}{voice.category === "cloned" ? " · Giọng cá nhân" : ""}</option>)}</select></label><button type="button" className={styles.secondary} onClick={onReloadVoices} disabled={Boolean(busy) || voicesLoading}>{voicesLoading ? "Đang tải…" : "Làm mới giọng"}</button></div>
       {selectedVoice && (selectedVoice.preview_url || selectedVoice.previewUrl) ? <div className={styles.voiceSample}><span>Nghe mẫu {selectedVoice.name}</span><audio src={selectedVoice.preview_url || selectedVoice.previewUrl} controls preload="none" /></div> : null}
-      {pendingTask ? <div className={styles.pending}><strong>Lời đọc đã gửi, có thể lấy lại</strong><span>Không bấm tạo lượt mới. Hãy lấy kết quả của tác vụ đang chờ.</span><button type="button" className={styles.secondary} onClick={() => void recoverVoice(pendingTask)} disabled={Boolean(busy)}>{busy === "recover" ? "Đang kiểm tra…" : "Lấy lại lời đọc"}</button>{busy === "recover" ? <button type="button" className={styles.textLink} onClick={stopRecovery}>Dừng chờ trên trang</button> : null}{recoveryBlocked ? <button type="button" className={styles.textLink} onClick={() => { setPendingTask(null); voiceRequestRef.current = null; setRecoveryBlocked(false); setNote("Đã bỏ tác vụ không thể khôi phục. Lượt tạo mới có thể phát sinh phí."); }}>Bỏ tác vụ cũ để tạo lượt mới</button> : null}</div> : null}
-      {readyVoice ? <button type="button" className={styles.secondary} onClick={() => void retryAudioDownload()} disabled={Boolean(busy)}>Tải lại lời đọc đã tạo</button> : null}
+      {pendingTask ? pendingVoicePanel(pendingTask) : null}
+      {readyVoice && !pendingTask ? <button type="button" className={styles.secondary} onClick={() => void retryAudioDownload()} disabled={Boolean(busy)}>Tải lại lời đọc đã tạo</button> : null}
       {!pendingTask && !audioCurrent ? <button type="button" className={styles.primary} onClick={() => void createVoice()} disabled={Boolean(busy) || !voiceReady || !voiceId}>{busy === "voice" || busy === "recover" || busy === "audio" ? "Đang tạo lời thoại…" : "Tạo Lời Thoại"}</button> : null}
       {!voiceReady ? <p className={styles.warning}>Công cụ giọng nói chưa sẵn sàng. Quản trị viên cần kiểm tra kết nối.</p> : null}
-      {generatedAudio && audioUrl ? <div className={styles.mediaCard}><strong>{audioCurrent ? "Lời thoại đã tạo" : "Lời thoại cũ · kịch bản hoặc giọng đã thay đổi"}</strong><audio src={audioUrl} controls preload="metadata" /><span>Thời lượng thực tế: {clock(generatedDuration)}. {generatedDuration > MAX_AUDIO_SECONDS ? "Dài quá 90 giây để ghép trên thiết bị hiện tại." : "Video sẽ được tự kéo dài hoặc cắt phần hình cho vừa."}</span></div> : null}
+      {generatedAudio && audioUrl ? <div className={styles.mediaCard}><strong>{audioCurrent ? "Lời thoại đã tạo" : "Lời thoại cũ · kịch bản hoặc giọng đã thay đổi"}</strong><audio src={audioUrl} controls preload="metadata" /><span>Thời lượng thực tế: {clock(generatedDuration)}. {generatedDuration > MAX_AUDIO_SECONDS ? "Dài quá 90 giây để ghép trên thiết bị hiện tại." : "Video sẽ được tự kéo dài hoặc cắt phần hình cho vừa."}</span>{!audioCurrent ? <button type="button" className={styles.secondary} onClick={() => { setScript(generatedText); setApprovedScript(generatedText); setVoiceId(generatedVoiceId); setExported(undefined); }} disabled={Boolean(busy)}>Dùng kịch bản và giọng của file này</button> : null}</div> : null}
     </div> : null}
 
     {source && audioCurrent && generatedAudio ? <div className={styles.section}>
