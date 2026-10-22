@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";
-import { getVisibleModules, moduleHref, type AiModule } from "@/lib/studio-modules";
+import { getListedModules, getVisibleModules, moduleHref, type AiModule } from "@/lib/studio-modules";
 import { AccountProvider, accountInitials, useAccount } from "./AccountProvider";
 import { PlatformIcon, type PlatformIconName } from "./PlatformIcon";
 import { ToolSearch } from "./ToolSearch";
@@ -21,7 +21,7 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
   return <nav className={styles.navigation} aria-label="Điều hướng chính">
     {navLink("/", "Tổng quan", "grid")}
     <p className={styles.navLabel}>CÔNG CỤ SÁNG TẠO</p>
-    {getVisibleModules().map(module => <div key={module.id}>{navLink(moduleHref(module), module.shortTitle, module.icon, module.tone)}</div>)}
+    {getListedModules().map(module => <div key={module.id}>{navLink(moduleHref(module), module.shortTitle, module.icon, module.tone)}</div>)}
     <p className={styles.navLabel}>KHÔNG GIAN CỦA BẠN</p>
     {navLink("/thu-vien", "Thư viện của tôi", "folder")}
     <div className={styles.personalNavGroup}>

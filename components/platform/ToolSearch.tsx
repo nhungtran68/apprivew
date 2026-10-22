@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
-import { getVisibleModules, moduleHref } from "@/lib/studio-modules";
+import { getListedModules, moduleHref } from "@/lib/studio-modules";
 import { PlatformIcon } from "./PlatformIcon";
 import styles from "./Platform.module.css";
 
@@ -18,7 +18,7 @@ export function ToolSearch() {
   const pathname = usePathname();
   const listId = useId();
   const searchTerm = normalize(query.trim());
-  const results = getVisibleModules()
+  const results = getListedModules()
     .filter(module => normalize(`${module.title} ${module.description}`).includes(searchTerm))
     .sort((left, right) => Number(normalize(right.title).includes(searchTerm)) - Number(normalize(left.title).includes(searchTerm)));
   useEffect(() => { setOpen(false); setQuery(""); }, [pathname]);

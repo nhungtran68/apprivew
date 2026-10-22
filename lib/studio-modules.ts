@@ -9,6 +9,8 @@ export type AiModule = {
   tone: "violet" | "blue" | "amber" | "rose" | "green" | "slate";
   /** Controls whether the module is visible and its route can be opened. */
   available: boolean;
+  /** Hide a module from menus and discovery without removing its direct route. */
+  listed?: boolean;
   capabilities: readonly { title: string; description: string }[];
   legacy?: { href: string; label: string };
 };
@@ -74,6 +76,7 @@ export const aiModules: readonly AiModule[] = [
     icon: "review",
     tone: "rose",
     available: true,
+    listed: false,
     capabilities: [
       { title: "Hiểu tư liệu thực tế", description: "Kết hợp những gì có trong video với thông điệp bạn muốn gửi đến người xem." },
       { title: "Kịch bản review tự nhiên", description: "Phát triển góc kể có ích, bám thông tin bạn cung cấp về sản phẩm và trải nghiệm." },
@@ -107,6 +110,7 @@ export const aiModules: readonly AiModule[] = [
     icon: "grid",
     tone: "slate",
     available: true,
+    listed: false,
     capabilities: [
       { title: "Chuẩn bị tệp nội dung", description: "Các tiện ích xử lý tệp để bạn đưa tư liệu vào quy trình sáng tạo thuận tiện hơn." },
       { title: "Tái sử dụng nội dung", description: "Chuẩn bị cách chuyển một ý tưởng thành nhiều phiên bản cho các kênh khác nhau." },
@@ -117,6 +121,10 @@ export const aiModules: readonly AiModule[] = [
 
 export function getVisibleModules(): readonly AiModule[] {
   return aiModules.filter(module => module.available);
+}
+
+export function getListedModules(): readonly AiModule[] {
+  return getVisibleModules().filter(module => module.listed !== false);
 }
 
 export function getModuleBySlug(slug: string): AiModule | undefined {

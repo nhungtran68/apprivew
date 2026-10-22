@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { getVisibleModules, moduleHref } from "@/lib/studio-modules";
+import { getListedModules, moduleHref } from "@/lib/studio-modules";
 import { PlatformIcon } from "./PlatformIcon";
 import common from "./Platform.module.css";
 import styles from "./Dashboard.module.css";
@@ -15,8 +15,6 @@ const filters = [
   { id: "audio", title: "Âm thanh" },
 ] as const;
 const categoryLabels = { audio: "ÂM THANH", video: "VIDEO", content: "NỘI DUNG", image: "HÌNH ẢNH", other: "KHÁM PHÁ" };
-// Temporarily hide these dashboard cards while keeping their modules available.
-const hiddenHomeModuleIds = new Set(["review", "other"]);
 const readyHomeModuleIds = new Set(["voice", "video", "script"]);
 
 export function ToolCatalog() {
@@ -28,7 +26,7 @@ export function ToolCatalog() {
     compactView.addEventListener("change", showAllOnMobile);
     return () => compactView.removeEventListener("change", showAllOnMobile);
   }, []);
-  const modules = getVisibleModules().filter(module => !hiddenHomeModuleIds.has(module.id));
+  const modules = getListedModules();
   const visible = modules.filter(module => filter === "all" || (filter === "visual" ? module.category === "video" || module.category === "image" : module.category === filter));
   return <section className={styles.catalog} id="cong-cu" aria-labelledby="catalog-title">
     <div className={`${common.sectionHeading} ${styles.catalogHeading}`}><div><h2 id="catalog-title">Bộ công cụ của bạn<span className={common.sectionCount}>{modules.length}</span></h2><p>Chọn công cụ phù hợp. Bắt đầu từ điều bạn muốn tạo.</p></div><span className={styles.catalogNote}><PlatformIcon name="layers" size={16} />Một nơi, nhiều khả năng</span></div>
