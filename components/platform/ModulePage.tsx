@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { getVisibleModules, moduleHref, type AiModule } from "@/lib/studio-modules";
+import { getListedModules, moduleHref, type AiModule } from "@/lib/studio-modules";
 import { PlatformIcon } from "./PlatformIcon";
 import tones from "./ModuleTone.module.css";
 import styles from "./ModulePage.module.css";
 
 export default function ModulePage({ module }: { module: AiModule }) {
   const isImageModule = module.id === "image";
-  const related = getVisibleModules().filter(item => item.id !== module.id).slice(0, 3);
+  const related = getListedModules().filter(item => item.id !== module.id).slice(0, 3);
 
   return (
     <div className={`${styles.page} ${tones[module.tone]}`}>
