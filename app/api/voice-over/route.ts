@@ -1,4 +1,4 @@
-import { apiError, json, limitedJson, providerKey, requestUser } from "@/lib/studio-server";
+import { apiError, json, limitedJson, providerKey, requestUser, voiceProvider } from "@/lib/studio-server";
 import { StudioError, cleanText } from "@/lib/studio-contract";
 import { authorizeMaziaoVoice, generateMaziaoVoiceOver, pendingMaziaoVoiceOver, recoverableVoiceError, voiceRequestSliceMs } from "@/lib/studio-maziao";
 import { creditRequestId } from "@/lib/studio-credit-operation";
@@ -15,6 +15,15 @@ export async function POST(request: Request) {
     const voiceId = cleanText(body.voiceId, 160);
     if (!text.trim() || text.length > 1200) throw new StudioError("SCRIPT_REQUIRED", "Mỗi tệp giọng hỗ trợ tối đa 1.200 ký tự. Hãy chia kịch bản dài thành các đoạn ngắn hơn.");
     if (!voiceId) throw new StudioError("INVALID_VOICE", "Chọn một giọng hợp lệ để tạo lời đọc.");
+    if (voiceProvider() === "saydi") {
+      const speed = body.speed === undefined ? 1 : Number(body.speed);
+      if (!Number.isFinite(speed) || speed < 0.25 || speed > 4)
+        throw new StudioError("INVALID_AUDIO_SETTINGS", "Tốc độ đọc SaydiVoice cần từ 0,25 đến 4.", 422);
+      const { key } = await providerKey(userId, "saydi");
+      return json(await (await import("@/lib/studio-saydi-service")).generateSaydiVoiceOver({
+        key, userId, requestId, voiceId, text, speed,
+      }));
+    }
     const controls = { speed: Number(body.speed), volume: Number(body.volume), pitch: Number(body.pitch) };
     if (!Number.isFinite(controls.speed) || controls.speed < 0.8 || controls.speed > 1.2 || !Number.isFinite(controls.volume) || controls.volume < 0.5 || controls.volume > 1.5 || !Number.isFinite(controls.pitch) || controls.pitch < 0.8 || controls.pitch > 1.2) throw new StudioError("INVALID_AUDIO_SETTINGS", "Cấu hình âm thanh chưa hợp lệ.");
     if (voiceId.startsWith("maziao:")) {

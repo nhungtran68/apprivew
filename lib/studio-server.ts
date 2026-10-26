@@ -11,8 +11,8 @@ const vietnameseSpeechModels = ["eleven_flash_v2_5", "eleven_turbo_v2_5", "eleve
 export const MAZIAO_MODELS = ["vieten_speech", "lingual_speech_v2"] as const;
 export type MaziaoModel = typeof MAZIAO_MODELS[number];
 export function maziaoModel(): MaziaoModel { return MAZIAO_MODELS.find(model => model === process.env.MAZIAO_MODEL) ?? "vieten_speech"; }
-export function voiceProvider(): "maziao" | "eleven" {
-  if (process.env.STUDIO_VOICE_PROVIDER === "maziao" || process.env.STUDIO_VOICE_PROVIDER === "eleven") return process.env.STUDIO_VOICE_PROVIDER;
+export function voiceProvider(): "maziao" | "eleven" | "saydi" {
+  if (process.env.STUDIO_VOICE_PROVIDER === "maziao" || process.env.STUDIO_VOICE_PROVIDER === "eleven" || process.env.STUDIO_VOICE_PROVIDER === "saydi") return process.env.STUDIO_VOICE_PROVIDER;
   return process.env.MAZIAO_API_KEY ? "maziao" : "eleven";
 }
 function approvedModel(value: string | undefined, allowed: readonly string[], fallback: string): string {
@@ -24,7 +24,17 @@ export const modelNames = () => ({
 });
 export function json(data: unknown, status = 200): Response { return Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } }); }
 export function apiError(error: unknown): Response {
-  if (error instanceof StudioError) return json({ error: error.message, code: error.code, action: error.action, ...(error.code === "AUTH_NOT_CONFIGURED" ? { authReady: false } : {}) }, error.status);
+  if (error instanceof StudioError) {
+    const saydi = error as StudioError & { retryAfter?: unknown; limit?: unknown };
+    const retryAfter = typeof saydi.retryAfter === "string" && saydi.retryAfter.length < 100 ? saydi.retryAfter : undefined;
+    const limit = typeof saydi.limit === "string" && saydi.limit.length < 100 ? saydi.limit : undefined;
+    if (retryAfter || limit) return Response.json({ error: error.message, code: error.code, action: error.action,
+      ...(limit ? { limit } : {}) }, { status: error.status, headers: {
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        ...(retryAfter ? { "Retry-After": retryAfter } : {}), ...(limit ? { "X-OV-Limit": limit } : {}),
+      } });
+    return json({ error: error.message, code: error.code, action: error.action, ...(error.code === "AUTH_NOT_CONFIGURED" ? { authReady: false } : {}) }, error.status);
+  }
   return json({ error: "Chưa hoàn tất xử lý. Vui lòng thử lại.", code: "INTERNAL_ERROR" }, 500);
 }
 export type StudioMember = { user_id: string; email: string; display_name: string; role: "admin" | "member"; enabled: boolean; ai_units_limit: number; ai_units_used: number; voice_clone_limit: number; voice_clone_used: number };
@@ -61,11 +71,13 @@ export async function readSettings(userId: string) {
 export async function getConfig(userId: string) {
   const [{ profile }, member, credits] = await Promise.all([readSettings(userId), getMember(userId), getCreditBalance(userId)]);
   const provider = voiceProvider();
-  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: profile.name || member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), maziaoConfigured: Boolean(process.env.MAZIAO_API_KEY), voiceProvider: provider, voiceConfigured: provider === "maziao" && Boolean(process.env.MAZIAO_API_KEY), ...modelNames(), maziaoModel: maziaoModel(), profile, credits, creditRates };
+  return { userId, authReady: supabaseConfigured(), isAdmin: member.role === "admin", memberName: profile.name || member.display_name || member.email, deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY), elevenConfigured: Boolean(process.env.ELEVENLABS_API_KEY), maziaoConfigured: Boolean(process.env.MAZIAO_API_KEY), saydiConfigured: Boolean(process.env.SAYDI_API_KEY), voiceProvider: provider, voiceConfigured: provider === "saydi" ? Boolean(process.env.SAYDI_API_KEY) : provider === "maziao" && Boolean(process.env.MAZIAO_API_KEY), ...modelNames(), maziaoModel: maziaoModel(), profile, credits, creditRates };
 }
-export async function providerKey(_userId: string, provider: "deepseek" | "eleven" | "maziao"): Promise<{ key: string; personal: boolean }> {
-  const key = provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : provider === "maziao" ? process.env.MAZIAO_API_KEY : process.env.ELEVENLABS_API_KEY;
+export async function providerKey(_userId: string, provider: "deepseek" | "eleven" | "maziao" | "saydi"): Promise<{ key: string; personal: boolean }> {
+  const key = provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : provider === "maziao" ? process.env.MAZIAO_API_KEY : provider === "saydi" ? process.env.SAYDI_API_KEY : process.env.ELEVENLABS_API_KEY;
   if (!key) throw new StudioError("API_KEY_REQUIRED", `Quản trị viên chưa kết nối ${provider === "deepseek" ? "dịch vụ viết nội dung" : "dịch vụ giọng nói"} cho app.`, 503, "contact_admin");
+  if (provider === "saydi" && (!key.startsWith("sv_live_") || key.length <= "sv_live_".length))
+    throw new StudioError("SAYDI_KEY_INVALID", "Khóa SAYDI_API_KEY trên máy chủ chưa hợp lệ.", 503, "contact_admin");
   return { key, personal: false };
 }
 export async function saveSettings(userId: string, body: Record<string, unknown>) {

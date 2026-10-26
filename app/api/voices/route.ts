@@ -9,6 +9,11 @@ export const maxDuration = 300;
 export async function GET(request: Request) {
   try {
     const userId = await requestUser(request), provider = voiceProvider();
+    if (provider === "saydi") {
+      const { key } = await providerKey(userId, "saydi");
+      const voices = await (await import("@/lib/studio-saydi-service")).listSaydiStudioVoices(key, userId);
+      return json({ provider, voices: voices.map(voice => ({ ...voice, voice_id: voice.voiceId, preview_url: voice.previewUrl })) });
+    }
     if (provider === "maziao") {
       await (await import("@/lib/studio-maziao")).backfillMaziaoPersonalPreviews(userId).catch(() => {});
       const { cachedVoiceList } = await import("@/lib/studio-voice-cache");
@@ -34,6 +39,11 @@ export async function POST(request: Request) {
     if (files.reduce((sum, file) => sum + file.size, 0) > 25 * 1024 * 1024) throw new StudioError("VOICE_SAMPLE_TOO_LARGE", "Tổng mẫu giọng tối đa 25 MB.", 413);
     if (files.some((file) => !file.type.startsWith("audio/") && !["video/webm", "video/mp4"].includes(file.type.split(";")[0]))) throw new StudioError("INVALID_VOICE_SAMPLE", "Chọn tệp âm thanh hoặc bản ghi giọng.");
     const provider = voiceProvider(), { key } = await providerKey(userId, provider);
+    if (provider === "saydi") {
+      if (files.length !== 1) throw new StudioError("VOICE_SAMPLE_REQUIRED", "Chọn một mẫu giọng để nhân bản.", 422);
+      const result = await (await import("@/lib/studio-saydi-service")).createSaydiClone({ key, userId, requestId, name, file: files[0] });
+      return json(result, result.status === "processing" ? 202 : 201);
+    }
     if (provider === "maziao") {
       if (body.gender !== "male" && body.gender !== "female") throw new StudioError("INVALID_GENDER", "Chọn giọng nam hoặc nữ để nhân bản.");
       return json(await (await import("@/lib/studio-maziao")).cloneMaziaoVoice(key, userId, name, files, body.gender, requestId), 201);

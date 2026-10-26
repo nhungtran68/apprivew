@@ -42,6 +42,14 @@ API tìm kiếm và tải clip yêu cầu tài khoản đăng nhập. Khóa `PIX
 
 ## Giọng tiếng Việt và thư viện phổ biến
 
+### SaydiVoice
+
+Đặt `SAYDI_API_KEY=sv_live_...` trong biến môi trường **server** của Vercel (Production và Preview), rồi đặt `STUDIO_VOICE_PROVIDER=saydi` và triển khai lại. Không đặt khóa trong biến `NEXT_PUBLIC_` hoặc mã trình duyệt. Ở máy cá nhân, dùng `.env.local` (không commit); `.env.example` chỉ liệt kê tên biến.
+
+Ứng dụng lấy `voice_id` và tên hiển thị từ `GET /samples`, còn giọng nhân bản dùng ID `vc_...` do `POST /v1/voices` trả về. Chỉ chủ tài khoản đã đồng ý nhân bản mới dùng hoặc xóa giọng cá nhân. Lời đọc gọi `POST /v1/audio/speech` qua máy chủ, nhận MP3 dạng bytes, kiểm tra `X-OV-Voice` và ghi `X-OV-Chars` vào giao dịch credit. Giọng nhân bản đang `processing` được kiểm tra lại khi tải danh sách; credit của app được quyết toán khi giọng chuyển sang `ready`, hoặc hoàn lại nếu `failed`. 429 được thử lại theo `Retry-After`; lỗi kết nối không tự gửi lại yêu cầu trả phí.
+
+Phí trong ứng dụng là 1 credit cho 100 ký tự TTS và 50 credit cho một lần nhân bản thành công; đây là đơn vị riêng với pool ký tự SaydiVoice. Video chia lời thoại thành các đoạn riêng và lưu từng audio trong kho riêng. Nếu một đoạn cần tạo lại, cùng mã yêu cầu sẽ dùng lại đoạn đã hoàn thành thay vì tính phí lần nữa. Các điều khiển âm lượng và cao độ không được gửi tới SaydiVoice vì [tài liệu chính thức](https://voice.saydi.ai/docs/) không liệt kê chúng cho endpoint đang dùng.
+
 ### Maziao
 
 Thêm `MAZIAO_API_KEY` (Personal Access Token) vào Vercel Production + Preview rồi triển khai lại. App tự chọn Maziao khi có khóa này. `MAZIAO_MODEL` mặc định `vieten_speech`, có thể đổi sang `lingual_speech_v2`; cả hai được xác minh lại qua `/api/configs` về hỗ trợ tiếng Việt và nhân bản. Có thể đặt `STUDIO_VOICE_PROVIDER=eleven` để chủ động dùng ElevenLabs. App không tự chuyển nhà cung cấp khi lỗi, tránh phát sinh phí ngoài dự kiến.
@@ -104,9 +112,10 @@ Chỉ hai biến NEXT_PUBLIC_SUPABASE_URL và NEXT_PUBLIC_SUPABASE_PUBLISHABLE_K
 | ELEVENLABS_API_KEY | Khóa ElevenLabs dùng chung |
 | ELEVENLABS_MODEL | Mặc định eleven_flash_v2_5, hỗ trợ tiếng Việt |
 | MAZIAO_API_KEY | Personal Access Token Maziao, chỉ ở server |
+| SAYDI_API_KEY | Khóa SaydiVoice `sv_live_...`, chỉ ở server |
 | PIXABAY_API_KEY | Khóa Pixabay cho tìm và chọn video kho cảnh, chỉ ở server |
 | MAZIAO_MODEL | vieten_speech (mặc định) hoặc lingual_speech_v2 |
-| STUDIO_VOICE_PROVIDER | maziao hoặc eleven; mặc định Maziao khi có MAZIAO_API_KEY |
+| STUDIO_VOICE_PROVIDER | saydi, maziao hoặc eleven; mặc định Maziao khi có MAZIAO_API_KEY |
 | STUDIO_ENCRYPTION_KEY | Chuỗi ngẫu nhiên ít nhất32 ký tự, bảo vệ quyền dùng giọng cá nhân; giữ ổn định |
 | STUDIO_SHARED_VOICE_IDS | Tùy chọn: danh sách voice ID được chia sẻ, phân cách bằng dấu phẩy |
 
