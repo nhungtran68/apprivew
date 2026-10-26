@@ -6,7 +6,8 @@ import { PlatformIcon } from "./PlatformIcon";
 import { downloadSpeechSegments } from "@/lib/studio-upload";
 import styles from "./VoiceAiPage.module.css";
 
-type Voice = { voiceId: string; name: string; category: string; group?: string; previewUrl?: string; isPersonalClone?: boolean };
+type Voice = { voiceId: string; name: string; category: string; group?: string; previewUrl?: string; isPersonalClone?: boolean; status?: string };
+type VoiceProvider = "maziao" | "eleven" | "saydi";
 type CuratedVoice = { voice_id: string; name: string; enabled: boolean; kind: "system" | "admin_clone" };
 type AdminCloneCandidate = { voice_id: string; name: string; enabled: boolean; kind: "admin_clone"; previewUrl?: string };
 type AudioResult = { audioPath: string; audioMime: string; duration: number; voiceId?: string; audioUrl?: string };
@@ -20,6 +21,7 @@ const friendlyError = (value: unknown) => value instanceof Error ? value.message
 export default function VoiceAiPage() {
   const account = useAccount();
   const [voices, setVoices] = useState<Voice[]>([]);
+  const [provider, setProvider] = useState<VoiceProvider | "">("");
   const [curated, setCurated] = useState<CuratedVoice[]>([]);
   const [adminCloneCandidates, setAdminCloneCandidates] = useState<AdminCloneCandidate[]>([]);
   const [selected, setSelected] = useState("");
@@ -49,13 +51,23 @@ export default function VoiceAiPage() {
   const load = useCallback(async () => {
     setBusy("loading"); setError("");
     try {
-      const [vr, cr] = await Promise.all([fetch("/api/voices", { cache: "no-store" }), fetch("/api/voice-catalog", { cache: "no-store" })]);
-      const [vd, cd] = await Promise.all([vr.json(), cr.json()]);
+      const vr = await fetch("/api/voices", { cache: "no-store" });
+      const vd = await vr.json();
       if (!vr.ok) throw new Error(vd.error || "Không tải được danh sách giọng.");
-      if (!cr.ok) throw new Error(cd.error || "Không tải được danh sách giọng được duyệt.");
+      const nextProvider = vd.provider as VoiceProvider;
+      if (!["maziao", "eleven", "saydi"].includes(nextProvider)) throw new Error("Chưa xác định được dịch vụ giọng nói.");
+      let cd: { voices?: CuratedVoice[]; candidates?: AdminCloneCandidate[] } = {};
+      if (nextProvider !== "saydi") {
+        const cr = await fetch("/api/voice-catalog", { cache: "no-store" });
+        cd = await cr.json();
+        if (!cr.ok) throw new Error((cd as { error?: string }).error || "Không tải được danh sách giọng được duyệt.");
+      }
       const items = Array.isArray(vd.voices) ? vd.voices as Voice[] : [];
+      setProvider(nextProvider);
+      if (nextProvider !== "maziao") setPendingTasks([]);
+      setDeleteCandidate("");
       setVoices(items); setCurated(Array.isArray(cd.voices) ? cd.voices : []); setAdminCloneCandidates(Array.isArray(cd.candidates) ? cd.candidates : []);
-      setSelected(previous => items.some(item => item.voiceId === previous) ? previous : items[0]?.voiceId || "");
+      setSelected(previous => items.some(item => item.voiceId === previous && item.status !== "processing" && item.status !== "failed") ? previous : items.find(item => item.status !== "processing" && item.status !== "failed")?.voiceId || "");
     } catch (err) { setError(friendlyError(err)); }
     finally { setBusy(""); }
   }, []);
@@ -69,10 +81,17 @@ export default function VoiceAiPage() {
       setPendingTasks(Array.isArray(result.tasks) ? result.tasks.filter((item: PendingVoiceTask) => typeof item.requestId === "string" && typeof item.createdAt === "string") : []);
     } catch { /* The main voice workflow remains available if recovery listing is offline. */ }
   }, []);
-  useEffect(() => { if (account.status === "ready") void loadPendingTasks(); }, [account.status, loadPendingTasks]);
+  useEffect(() => { if (account.status === "ready" && provider === "maziao") void loadPendingTasks(); }, [account.status, provider, loadPendingTasks]);
   useEffect(() => () => { tracking.current?.abort(); if (activeSrc.current) URL.revokeObjectURL(activeSrc.current); }, []);
 
   const visible = voices.filter(voice => (group === "all" || (group === "personal" ? voice.category === "cloned" : voice.category !== "cloned")) && (!search.trim() || voice.name.toLocaleLowerCase("vi").includes(search.toLocaleLowerCase("vi").trim())));
+  const audioSettings = [
+    { label: "Tốc độ", value: speed, set: setSpeed, min: provider === "saydi" ? 0.25 : 0.8, max: provider === "saydi" ? 4 : 1.2 },
+    ...(provider === "saydi" ? [] : [
+      { label: "Âm lượng", value: volume, set: setVolume, min: 0.5, max: 1.5 },
+      { label: "Cao độ", value: pitch, set: setPitch, min: 0.8, max: 1.2 },
+    ]),
+  ];
   const shareableVoices = (() => {
     const byId = new Map<string, Voice>();
     for (const voice of voices) byId.set(voice.voiceId, voice);
@@ -144,31 +163,32 @@ export default function VoiceAiPage() {
   }
 
   async function generate() {
-    if (requestInFlight.current || busy || !selected || !text.trim()) return;
+    if (requestInFlight.current || busy || !provider || !selected || !text.trim()) return;
     requestInFlight.current = true;
     const controller = new AbortController(); tracking.current = controller;
     setBusy("speech"); setError(""); setNotice("");
     try {
-      const payload = { voiceId: selected, text: text.trim(), speed, volume, pitch };
+      const payload = provider === "saydi" ? { voiceId: selected, text: text.trim(), speed } : { voiceId: selected, text: text.trim(), speed, volume, pitch };
       const fingerprint = JSON.stringify(payload);
       if (lastRequest.current?.fingerprint !== fingerprint) lastRequest.current = { fingerprint, id: crypto.randomUUID() };
-      const existing = pendingTasks.find(task => task.requestId === lastRequest.current?.id);
+      const existing = provider === "maziao" ? pendingTasks.find(task => task.requestId === lastRequest.current?.id) : undefined;
       if (existing) { await trackPending(existing, controller); return; }
       const response = await fetch("/api/voice-over", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": lastRequest.current.id }, body: JSON.stringify(payload) });
       const result = await response.json();
-      if (response.status === 202 && result.pending === true) {
+      if (provider === "maziao" && response.status === 202 && result.pending === true) {
         await trackPending({ requestId: lastRequest.current.id, createdAt: new Date().toISOString() }, controller, result.reason);
         return;
       }
       if (!response.ok) {
-        if (!["MAZIAO_INVALID_RESPONSE", "MAZIAO_TIMEOUT", "MAZIAO_UNAVAILABLE", "MAZIAO_REJECTED", "MAZIAO_AUDIO_DOWNLOAD", "INVALID_AUDIO", "AUDIO_STORE_FAILED", "AUDIO_LINK_FAILED", "CREDIT_LEDGER_UNAVAILABLE"].includes(result.code)) lastRequest.current = null;
+        if (!["MAZIAO_INVALID_RESPONSE", "MAZIAO_TIMEOUT", "MAZIAO_UNAVAILABLE", "MAZIAO_REJECTED", "MAZIAO_AUDIO_DOWNLOAD", "SAYDI_UNAVAILABLE", "SAYDI_INVALID_RESPONSE", "SAYDI_INVALID_AUDIO", "INVALID_AUDIO", "AUDIO_STORE_FAILED", "AUDIO_LINK_FAILED", "CREDIT_LEDGER_UNAVAILABLE", "CREDIT_REQUEST_REUSED"].includes(result.code)) lastRequest.current = null;
         throw new Error(result.error || "Không tạo được giọng đọc.");
       }
       acceptAudioResult(result);
       setPendingTasks(previous => previous.filter(task => task.requestId !== lastRequest.current?.id));
-      lastRequest.current = null; await loadPendingTasks();
+      lastRequest.current = null;
+      if (provider === "maziao") await loadPendingTasks();
       setNotice("Đã tạo lời đọc. Bấm Nghe hoặc Tải MP3/WAV để nhận tệp.");
-    } catch (err) { if (!controller.signal.aborted) { setError(friendlyError(err)); await loadPendingTasks(); } }
+    } catch (err) { if (!controller.signal.aborted) { setError(friendlyError(err)); if (provider === "maziao") await loadPendingTasks(); } }
     finally { if (tracking.current === controller) { requestInFlight.current = false; tracking.current = null; setBusy(""); } }
   }
 
@@ -213,7 +233,7 @@ export default function VoiceAiPage() {
   }
 
   async function deletePersonalVoice(voice: Voice) {
-    if (busy || isAdmin || !voice.isPersonalClone || deleteCandidate !== voice.voiceId) return;
+    if ((provider !== "maziao" && provider !== "saydi") || busy || isAdmin || !voice.isPersonalClone || deleteCandidate !== voice.voiceId) return;
     setBusy("delete"); setError(""); setNotice("");
     try {
       const response = await fetch(`/api/voices/${encodeURIComponent(voice.voiceId)}`, { method: "DELETE" });
@@ -230,7 +250,7 @@ export default function VoiceAiPage() {
   }
 
   async function synchronizeVoices() {
-    if (syncBusy || busy) return;
+    if (provider !== "maziao" || syncBusy || busy) return;
     setSyncBusy(true); setError(""); setNotice("");
     try {
       const response = await fetch("/api/voices/sync", { method: "POST", headers: { "Content-Type": "application/json" } });
@@ -243,6 +263,7 @@ export default function VoiceAiPage() {
   }
 
   async function approve(voice: Voice, enabled: boolean) {
+    if (provider !== "maziao") return;
     setCatalogBusy(voice.voiceId); setError("");
     try {
       const kind = voice.category === "cloned" ? "admin_clone" : "system";
@@ -273,13 +294,13 @@ export default function VoiceAiPage() {
             <p className={styles.muted}>Muốn thêm giọng riêng? <Link href="/ca-nhan/nhan-ban-giong" className={styles.scriptLink}>Nhân bản giọng trong Cá nhân <PlatformIcon name="arrow" size={16}/></Link></p>
             {busy === "loading" && voices.length === 0 ? <p className={styles.muted}>Đang tải giọng nói đã lưu…</p> : visible.length ? <div className={styles.voiceGrid}>{visible.map(voice =>
               <article key={voice.voiceId} className={selected === voice.voiceId ? styles.voiceSelected : styles.voiceItem}>
-                <button type="button" className={styles.voiceSelectButton} disabled={Boolean(busy)} onClick={() => { setSelected(voice.voiceId); setAudio(null); setAudioSrc(""); }}>
+                <button type="button" className={styles.voiceSelectButton} disabled={Boolean(busy) || voice.status === "processing" || voice.status === "failed"} onClick={() => { setSelected(voice.voiceId); setAudio(null); setAudioSrc(""); }}>
                   <span className={styles.voiceAvatar}><PlatformIcon name="voice" size={22}/></span>
-                  <span className={styles.voiceCopy}><strong>{voice.name}</strong><small>{voice.category === "cloned" ? "Giọng cá nhân" : "Giọng thư viện"}</small></span>
+                  <span className={styles.voiceCopy}><strong>{voice.name}</strong><small>{voice.status === "processing" ? "Đang xử lý, hãy làm mới sau ít phút" : voice.status === "failed" ? "Chưa nhân bản thành công" : voice.category === "cloned" ? "Giọng cá nhân" : "Giọng thư viện"}</small></span>
                   {selected === voice.voiceId && <PlatformIcon name="check" size={19}/>}
                 </button>
                 {voice.previewUrl ? <audio aria-label={`Nghe thử ${voice.name}`} controls preload="none" className={styles.voicePreview} src={voice.previewUrl}>Trình duyệt chưa hỗ trợ nghe thử.</audio> : <span className={styles.previewUnavailable}>Chưa có bản nghe thử</span>}
-                {!isAdmin && voice.isPersonalClone === true && (deleteCandidate === voice.voiceId ?
+                {(provider === "maziao" || provider === "saydi") && !isAdmin && voice.isPersonalClone === true && (deleteCandidate === voice.voiceId ?
                   <div className={styles.deleteConfirm} role="group" aria-label={`Xác nhận xóa giọng ${voice.name}`}>
                     <p>Xóa hẳn giọng này? Giọng đã xóa không thể khôi phục. Hãy tải về lời đọc cần giữ trước khi rời trang.</p>
                     <div className={styles.deleteActions}>
@@ -304,21 +325,21 @@ export default function VoiceAiPage() {
                 <span className={styles.settingsArrow} aria-hidden="true"/>
               </summary>
               <div className={styles.settingsControls}>
-                {([{ label: "Tốc độ", value: speed, set: setSpeed, min: 0.8, max: 1.2 }, { label: "Âm lượng", value: volume, set: setVolume, min: 0.5, max: 1.5 }, { label: "Cao độ", value: pitch, set: setPitch, min: 0.8, max: 1.2 }] as const).map(setting => <label className={styles.slider} key={setting.label}><span><strong>{setting.label}</strong><output>{setting.value.toFixed(2)}{setting.label === "Tốc độ" ? "x" : ""}</output></span><input type="range" min={setting.min} max={setting.max} step="0.05" value={setting.value} onChange={e => setting.set(Number(e.target.value))}/></label>)}
+                {audioSettings.map(setting => <label className={styles.slider} key={setting.label}><span><strong>{setting.label}</strong><output>{setting.value.toFixed(2)}{setting.label === "Tốc độ" ? "x" : ""}</output></span><input type="range" min={setting.min} max={setting.max} step="0.05" value={setting.value} onChange={e => setting.set(Number(e.target.value))}/></label>)}
                 <button type="button" className={styles.reset} onClick={() => { setSpeed(1); setVolume(1); setPitch(1); }}>Đặt lại mặc định</button>
               </div>
             </details>
           </section>
           <section className={styles.card}>
             <div className={styles.sectionHeading}><div><span className={styles.step}>04</span><h2>Tạo và tải giọng đọc</h2></div></div>
-            <button className={styles.generate} onClick={() => void generate()} disabled={Boolean(busy) || !selected || !text.trim()}>{busy === "speech" ? "Đã gửi lời đọc, đang chờ…" : busy === "recover" ? "Đang lấy kết quả giọng…" : "Tạo giọng nói AI"} <PlatformIcon name="arrow" size={19}/></button>
-            {busy === "recover" && <button type="button" className={styles.textButton} onClick={stopTracking}>Dừng chờ trên trang này</button>}
-            {pendingTasks.length > 0 && <div className={styles.result}><strong>Lời đọc đã gửi, có thể lấy lại</strong><p className={styles.muted}>Nếu lần tạo trước bị gián đoạn, lấy lại tệp từ tác vụ cũ mà không tạo thêm lượt mới.</p><div className={styles.resultButtons}>{pendingTasks.map(task => <button key={task.requestId} type="button" disabled={Boolean(busy)} onClick={() => void recover(task)}>{busy === "recover" ? "Đang lấy lại…" : `Lấy lại lời đọc ${new Date(task.createdAt).toLocaleString("vi-VN")}`}</button>)}</div></div>}
+            <button className={styles.generate} onClick={() => void generate()} disabled={Boolean(busy) || !provider || !selected || !text.trim()}>{busy === "speech" ? "Đã gửi lời đọc, đang chờ…" : busy === "recover" ? "Đang lấy kết quả giọng…" : "Tạo giọng nói AI"} <PlatformIcon name="arrow" size={19}/></button>
+            {provider === "maziao" && busy === "recover" && <button type="button" className={styles.textButton} onClick={stopTracking}>Dừng chờ trên trang này</button>}
+            {provider === "maziao" && pendingTasks.length > 0 && <div className={styles.result}><strong>Lời đọc đã gửi, có thể lấy lại</strong><p className={styles.muted}>Nếu lần tạo trước bị gián đoạn, lấy lại tệp từ tác vụ cũ mà không tạo thêm lượt mới.</p><div className={styles.resultButtons}>{pendingTasks.map(task => <button key={task.requestId} type="button" disabled={Boolean(busy)} onClick={() => void recover(task)}>{busy === "recover" ? "Đang lấy lại…" : `Lấy lại lời đọc ${new Date(task.createdAt).toLocaleString("vi-VN")}`}</button>)}</div></div>}
             {audio && <div className={styles.result}><strong>Đã tạo lời đọc • {audio.duration.toFixed(1)} giây</strong><div className={styles.resultButtons}><button onClick={() => void downloadAudio(false)} disabled={Boolean(busy)}>Nghe lời đọc</button><button onClick={() => void downloadAudio(true)} disabled={Boolean(busy)}>Tải MP3 / WAV</button></div>{audioSrc && <audio controls src={audioSrc} className={styles.player}/>}<p className={styles.muted}>Nếu mất mạng khi tải, bấm lại để nhận chính tệp đã tạo, không tạo lại từ đầu.</p></div>}
           </section>
         </div>
       </div>
-      {isAdmin && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div><button className={styles.textButton} disabled={syncBusy || Boolean(busy)} onClick={() => void synchronizeVoices()}>{syncBusy ? "Đang đồng bộ…" : "Đồng bộ giọng từ API"}</button></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{shareableVoices.map(voice => {
+      {isAdmin && provider === "maziao" && <section className={styles.card}><div className={styles.sectionHeading}><div><span className={styles.step}>ADMIN</span><h2>Giọng dùng chung cho tất cả thành viên</h2></div><button className={styles.textButton} disabled={syncBusy || Boolean(busy)} onClick={() => void synchronizeVoices()}>{syncBusy ? "Đang đồng bộ…" : "Đồng bộ giọng từ API"}</button></div><p className={styles.muted}>Bật một lần tại đây để mọi tài khoản thành viên nhìn thấy giọng đó. Bạn có thể chia sẻ cả giọng thư viện và các giọng do chính tài khoản quản trị nhân bản. Giọng clone của thành viên khác vẫn luôn riêng tư.</p><div className={styles.catalogGrid}>{shareableVoices.map(voice => {
         const enabled = curated.some(item => item.voice_id === voice.voiceId && item.enabled);
         const isClone = voice.category === "cloned";
         return <article className={styles.catalogRow} key={voice.voiceId}>

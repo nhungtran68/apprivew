@@ -18,11 +18,11 @@ const preview = "https://r2-storage.maziao.com/users/owner/clone-preview.wav";
 const cloneId = "maziao:lingual_speech_v2:owner-clone";
 const clone = { voiceId: cloneId, name: "Giọng của quản trị", category: "cloned", previewUrl: preview };
 
-function renderPage({ voices = [clone], curated = [], candidates = [], isAdmin = true, fetchImpl } = {}) {
-  // The first three state values are the page's fetched voice list, approval
-  // list, and verified admin candidates, respectively. Remaining hooks use
+function renderPage({ voices = [clone], curated = [], candidates = [], isAdmin = true, provider = "maziao", fetchImpl } = {}) {
+  // The initial state values are the page's fetched voice list, active
+  // provider, approval list, and verified admin candidates. Remaining hooks use
   // their real initial values; effects stay deferred just as they do in SSR.
-  const states = [voices, curated, candidates];
+  const states = [voices, provider, curated, candidates];
   let cursor = 0;
   const calls = [];
   const mockReact = {
@@ -175,4 +175,16 @@ test("confirmed member deletion sends DELETE for the encoded owned voice ID", ()
   const confirmed = view.rerender();
   elements(confirmed.tree).find(element => element.type === "button" && element.props.className === "deleteConfirmButton").props.onClick();
   assert.deepEqual(view.calls, [[`/api/voices/${encodeURIComponent(cloneId)}`, { method: "DELETE" }]]);
+});
+
+test("Saydi mode keeps the voice preview and owned deletion while hiding Maziao administration", () => {
+  const saydi = { voiceId: "vc_owned", name: "Giọng riêng", category: "cloned", isPersonalClone: true,
+    previewUrl: "/api/voices/preview?voiceId=vc_owned" };
+  const { tree, html, calls } = renderPage({ voices: [saydi], provider: "saydi", isAdmin: false });
+  assert.ok(elements(tree).some(element => element.type === "audio" && element.props.src === saydi.previewUrl));
+  assert.ok(elements(tree).some(element => element.type === "button" && element.props.className === "deleteTrigger"));
+  assert.ok(!html.includes("Đồng bộ giọng từ API"));
+  assert.ok(!html.includes("Âm lượng"));
+  assert.ok(!html.includes("Cao độ"));
+  assert.deepEqual(calls, []);
 });

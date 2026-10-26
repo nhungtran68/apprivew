@@ -24,7 +24,8 @@ type Project = {
   mode: "scenery" | "talking" | "face"; keepAmbient: boolean; step: Step;
 };
 type Voice = { voice_id?: string; id?: string; name: string; category?: string; preview_url?: string; labels?: Record<string, string>; group?: string; language?: string; accent?: string; gender?: string; description?: string; users?: number; freeAllowed?: boolean };
-type Configuration = { userId: string; deepseek: boolean; eleven: boolean; voiceProvider?: "maziao" | "eleven"; voiceConfigured?: boolean; maziaoConfigured?: boolean; authenticated?: boolean; displayName?: string; authReady?: boolean; isAdmin?: boolean; credits?: { balance: number; reserved: number; available: number } };
+type VoiceProvider = "maziao" | "saydi" | "eleven";
+type Configuration = { userId: string; deepseek: boolean; eleven: boolean; voiceProvider?: VoiceProvider; voiceConfigured?: boolean; maziaoConfigured?: boolean; saydiConfigured?: boolean; authenticated?: boolean; displayName?: string; authReady?: boolean; isAdmin?: boolean; credits?: { balance: number; reserved: number; available: number } };
 type Notice = { text: string; type: "success" | "error" | "info" };
 type BrowserRecognition = { lang: string; continuous: boolean; interimResults: boolean; onresult: ((event: { results: { length: number; [index: number]: { isFinal: boolean; 0: { transcript: string } } } }) => void) | null; onerror: ((event: { error: string }) => void) | null; onend: (() => void) | null; start: () => void; stop: () => void; abort: () => void };
 
@@ -103,8 +104,20 @@ async function requestJson(path: string, init?: RequestInit): Promise<Record<str
 function configurationFrom(data: Record<string, any>, fallbackId: string): Configuration {
   const eleven = Boolean(data.elevenLabsConfigured ?? data.elevenConfigured ?? data.configured?.elevenLabs ?? data.configured?.elevenlabs ?? data.providers?.elevenlabs?.configured);
   const maziaoConfigured = Boolean(data.maziaoConfigured);
-  const voiceProvider = data.voiceProvider === "maziao" ? "maziao" : "eleven";
-  return { userId: data.userId || data.user?.id || fallbackId, deepseek: Boolean(data.deepseekConfigured ?? data.configured?.deepseek ?? data.providers?.deepseek?.configured), eleven, voiceProvider, maziaoConfigured, voiceConfigured: Boolean(data.voiceConfigured ?? (voiceProvider === "maziao" ? maziaoConfigured : eleven)), authenticated: Boolean(data.authenticated || data.userId || data.user?.id), displayName: data.memberName || data.user?.displayName || data.displayName, authReady: data.authReady, isAdmin: Boolean(data.isAdmin), credits: data.credits && Number.isFinite(data.credits.available) ? data.credits : undefined };
+  const saydiConfigured = Boolean(data.saydiConfigured);
+  const voiceProvider: VoiceProvider = data.voiceProvider === "maziao" ? "maziao" : data.voiceProvider === "saydi" ? "saydi" : "eleven";
+  return { userId: data.userId || data.user?.id || fallbackId, deepseek: Boolean(data.deepseekConfigured ?? data.configured?.deepseek ?? data.providers?.deepseek?.configured), eleven, voiceProvider, maziaoConfigured, saydiConfigured, voiceConfigured: Boolean(data.voiceConfigured ?? (voiceProvider === "maziao" ? maziaoConfigured : voiceProvider === "saydi" ? saydiConfigured : eleven)), authenticated: Boolean(data.authenticated || data.userId || data.user?.id), displayName: data.memberName || data.user?.displayName || data.displayName, authReady: data.authReady, isAdmin: Boolean(data.isAdmin), credits: data.credits && Number.isFinite(data.credits.available) ? data.credits : undefined };
+}
+
+function normalizeVoice(value: unknown, provider: VoiceProvider): Voice | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Voice & { voiceId?: string; previewUrl?: string };
+  const voiceId = row.voice_id || row.voiceId || row.id;
+  if (typeof voiceId !== "string" || !voiceId || typeof row.name !== "string" || !row.name) return null;
+  const personal = row.category === "cloned" || (provider === "saydi" && voiceId.startsWith("vc_"));
+  return { ...row, voice_id: voiceId, preview_url: row.preview_url || row.previewUrl,
+    category: personal ? "cloned" : row.category,
+    group: row.group || (personal ? "personal" : provider === "saydi" && (row.language === "vi" || voiceId.startsWith("vi-")) ? "vietnamese" : "default") };
 }
 function normalizeSegments(value: unknown, duration: number): Segment[] {
   const data = value as Record<string, any>;
@@ -277,6 +290,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
   const pendingWrites = useRef(new Set<Promise<void>>());
   const writeQueue = useRef(Promise.resolve());
   const speechInFlight = useRef(false);
+  const speechRequest = useRef<{ fingerprint: string; id: string } | null>(null);
   const leavingStudioRef = useRef(false);
   const deletedProjectIds = useRef(new Set<string>());
   const mounted = useRef(true);
@@ -291,12 +305,17 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
   const speechNeedsDelivery = project.segments.some(segment => segment.audioPath);
   const speechRetryLabel = spokenSegments.length > 0 && spokenSegments.every(segment => segment.audioBase64) ? "Lưu lại lời đọc" : "Tải lại lời đọc";
   const narrationTooLong = Boolean(project.narration && project.narrationDuration && project.duration && project.narrationDuration > project.duration + 0.001);
+  const speechTooLong = !project.narration && project.segments.some(segment =>
+    typeof segment.duration === "number" && segment.duration > segment.end - segment.start + 0.05);
   const speechMinimumHint = voiceScriptMinimumHint(project.voiceId, project.segments);
-  const voiceReady = config.voiceConfigured ?? config.eleven;
   const voiceProvider = config.voiceProvider || "eleven";
+  const voiceReady = Boolean(config.voiceConfigured ?? (voiceProvider === "saydi" ? config.saydiConfigured : voiceProvider === "maziao" ? config.maziaoConfigured : config.eleven));
   const isMaziao = voiceProvider === "maziao";
-  const voiceProviderLabel = "Dịch vụ giọng nói";
-  const voicePlanNote = "Giọng đọc dùng kết nối chung do quản trị viên cấu hình. Chi phí và hạn mức phụ thuộc model và gói dịch vụ hiện tại.";
+  const isSaydi = voiceProvider === "saydi";
+  const voiceProviderLabel = isSaydi ? "SaydiVoice" : "Dịch vụ giọng nói";
+  const voicePlanNote = isSaydi
+    ? "Giọng đọc SaydiVoice dùng kết nối chung do quản trị viên cấu hình. Ứng dụng tính 1 credit cho mỗi 100 ký tự lời thoại."
+    : "Giọng đọc dùng kết nối chung do quản trị viên cấu hình. Chi phí và hạn mức phụ thuộc model và gói dịch vụ hiện tại.";
   const selectedScriptTypeName = project.templateId
     ? customScriptTypes.find(item => item.id === project.templateId)?.title || "Dạng kịch bản đã chọn"
     : builtinScriptTypes.find(item => item.format === project.format)?.title || FORMATS.find(item => item.id === project.format)?.name || "Kịch bản";
@@ -571,7 +590,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
     if (!voiceReady) return;
     const token = ++voicesToken.current;
     setVoicesLoading(true);
-    try { const result = await requestJson("/api/voices"); if (token === voicesToken.current) setVoices(Array.isArray(result.voices) ? result.voices : []); } catch (error) { if (token === voicesToken.current) notify(errorText(error), "error"); } finally { if (token === voicesToken.current) setVoicesLoading(false); }
+    try { const result = await requestJson("/api/voices"); if (token === voicesToken.current) setVoices(Array.isArray(result.voices) ? result.voices.map((voice: unknown) => normalizeVoice(voice, voiceProvider)).filter((voice: Voice | null): voice is Voice => voice !== null) : []); } catch (error) { if (token === voicesToken.current) notify(errorText(error), "error"); } finally { if (token === voicesToken.current) setVoicesLoading(false); }
   }
   useEffect(() => { ++voicesToken.current; setVoices([]); setVoicesLoading(false); setVoiceFilter("vietnamese"); }, [voiceProvider, config.userId]);
   useEffect(() => { if (voiceReady && (view === "voices" || step === 3 || (embedded && videoMode === "video"))) void loadVoices(); }, [voiceReady, voiceProvider, config.userId, view, step, embedded, videoMode]);
@@ -619,10 +638,13 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
     if (project.segments.some(segment => !segment.text.trim())) { notify("Hãy điền hoặc xóa các đoạn lời còn trống trước khi tạo giọng."); return; }
     if (speechMinimumHint) { notify(speechMinimumHint); return; }
     const expected = scriptKey(project), expectedVoice = project.voiceId, expectedNarration = project.narration;
+    const fingerprint = JSON.stringify([config.userId, voiceProvider, expected, expectedVoice]);
+    if (speechRequest.current?.fingerprint !== fingerprint) speechRequest.current = { fingerprint, id: crypto.randomUUID() };
     speechInFlight.current = true;
     setBusy("speech");
     try {
-      const result = await requestJson("/api/speech", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ segments: project.segments.map(({ start, end, text }) => ({ start, end, text })), voiceId: project.voiceId, duration: project.duration }) });
+      const result = await requestJson("/api/speech", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": speechRequest.current.id }, body: JSON.stringify({ segments: project.segments.map(({ start, end, text }) => ({ start, end, text })), voiceId: project.voiceId, duration: project.duration }) });
+      speechRequest.current = null;
       if (scriptKey(projectRef.current) !== expected || projectRef.current.voiceId !== expectedVoice || projectRef.current.narration !== expectedNarration) { notify("Kịch bản hoặc giọng đã thay đổi. Đã giữ nội dung mới; hãy tạo lại lời đọc cho phiên bản này."); return; }
       update({ segments: pendingSpeechSegments(result.segments, project.duration, project.userId), narration: undefined, narrationName: undefined });
       const pending = projectRef.current;
@@ -679,7 +701,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
     if (leavingStudioRef.current) return;
     if (!project.source) return;
     if (!narrationReady || narrationChecking) { notify("Hãy tạo lời đọc hoặc tải tệp âm thanh trước khi ghép."); return; }
-    if (narrationTooLong) { notify("Bản thu lời thoại dài hơn video. Hãy chọn bản ngắn hơn trước khi ghép để giữ trọn câu.", "error"); return; }
+    if (narrationTooLong || speechTooLong) { notify("Lời đọc dài hơn khoảng thời gian đã đặt. Hãy chỉnh thời gian hoặc rút gọn lời thoại trước khi ghép.", "error"); return; }
     setBusy("export"); setExportProgress(0); setExportMessage("Đang chuẩn bị bộ xử lý video…");
     try {
       const { exportVideo: render } = await import("@/lib/video-export");
@@ -869,8 +891,9 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
           {voiceReady && speechMinimumHint && !project.narration && !speechNeedsDelivery ? <p className="inline-note" role="status"><Icon name="info" size={20} /><span>{speechMinimumHint}</span></p> : null}
           {!project.narration && project.segments.some(segment => segment.audioBase64) ? <div className="speech-previews"><h2>Nghe thử lời đọc</h2>{project.segments.map((segment, index) => segment.audioBase64 ? <div className="speech-preview" key={index}><span>Đoạn {index + 1} · {time(segment.start)} – {time(segment.end)}</span><p>{segment.text}</p><audio controls src={`data:${segment.mimeType || segment.audioMime || "audio/mpeg"};base64,${segment.audioBase64}`} /></div> : null)}{!speechNeedsDelivery ? <button className="text-button" onClick={() => void generateSpeech()} disabled={Boolean(busy) || Boolean(speechMinimumHint)}><Icon name="refresh" size={16} />Tạo lại giọng đọc</button> : null}</div> : null}
           {speechNeedsDelivery ? <div className="speech-recovery" role="status"><strong>Lời đọc đã tạo xong</strong><p>{speechRetryLabel === "Lưu lại lời đọc" ? "Âm thanh đang có trong trang này. Hãy lưu lại hoặc tải bản sao dự án trước khi đóng trang." : "Kết quả được giữ trong kho riêng. Bạn có thể tải lại lời đọc mà không trừ thêm credit."}</p>{narrationReady ? <button className="button secondary" onClick={() => void retrySpeechDownload()} disabled={Boolean(busy)}>{busy === "download" ? <Spinner /> : <Icon name="download" size={18} />}{busy === "download" ? "Đang nhận lời đọc…" : speechRetryLabel}</button> : null}</div> : null}
+          {speechTooLong ? <p className="inline-note" role="status"><Icon name="info" size={20} /><span>Một đoạn giọng đọc dài hơn thời gian của đoạn video. Hãy chỉnh mốc thời gian hoặc rút gọn lời thoại để giữ trọn câu.</span></p> : null}
           <details className="quiet-details manual-narration" open={project.narration ? true : undefined}><summary>Đã có bản thu lời thoại?<Icon name="chevron" size={16} /></summary><p className="helper-text">Tải bản thu của bạn để dùng thay lời đọc AI. Bản thu bắt đầu từ đầu video.</p><button className="button secondary" onClick={() => narrationInput.current?.click()} disabled={Boolean(busy) || narrationChecking}>{narrationChecking ? <Spinner /> : <Icon name="upload" size={18} />}{narrationChecking ? "Đang kiểm tra bản thu…" : project.narration ? "Chọn bản thu khác" : "Tải bản thu lời thoại"}</button>{narrationUrl ? <div className="narration-preview"><div><strong>{project.narrationName}</strong><button className="icon-button" aria-label="Xóa bản thu lời thoại" onClick={() => update({ narration: undefined })}><Icon name="trash" size={18} /></button></div><audio controls src={narrationUrl} /><NarrationTiming duration={project.narrationDuration} videoDuration={project.duration} /></div> : null}</details>
-          <div className="step-actions"><button className="text-button" onClick={() => navigateStep(2)}>Quay lại</button>{narrationReady ? <button className="button primary large" onClick={() => navigateStep(4)} disabled={narrationTooLong || narrationChecking || Boolean(busy)}>Dùng lời đọc này<Icon name="arrow" size={19} /></button> : speechNeedsDelivery ? <button className="button primary large" onClick={() => void retrySpeechDownload()} disabled={Boolean(busy)}>{busy === "download" ? <Spinner /> : <Icon name="download" size={19} />}{busy === "download" ? "Đang nhận lời đọc…" : speechRetryLabel}</button> : <button className="button primary large" onClick={() => void generateSpeech()} disabled={!voiceReady || !project.voiceId || Boolean(busy) || Boolean(speechMinimumHint)}>{busy === "speech" ? <Spinner /> : <Icon name="sound" size={19} />}{busy === "speech" ? "Đang tạo giọng đọc…" : "Tạo giọng đọc"}</button>}</div>
+          <div className="step-actions"><button className="text-button" onClick={() => navigateStep(2)}>Quay lại</button>{narrationReady ? <button className="button primary large" onClick={() => navigateStep(4)} disabled={narrationTooLong || speechTooLong || narrationChecking || Boolean(busy)}>Dùng lời đọc này<Icon name="arrow" size={19} /></button> : speechNeedsDelivery ? <button className="button primary large" onClick={() => void retrySpeechDownload()} disabled={Boolean(busy)}>{busy === "download" ? <Spinner /> : <Icon name="download" size={19} />}{busy === "download" ? "Đang nhận lời đọc…" : speechRetryLabel}</button> : <button className="button primary large" onClick={() => void generateSpeech()} disabled={!voiceReady || !project.voiceId || Boolean(busy) || Boolean(speechMinimumHint)}>{busy === "speech" ? <Spinner /> : <Icon name="sound" size={19} />}{busy === "speech" ? "Đang tạo giọng đọc…" : "Tạo giọng đọc"}</button>}</div>
         </section> : null}
 
         {step === 4 ? <section className="step-card" aria-labelledby="export-title">
@@ -879,7 +902,7 @@ export default function Studio({ initialView = "studio", embedded = false }: { i
           {project.narration ? <NarrationTiming duration={project.narrationDuration} videoDuration={project.duration} /> : null}
           <details className="quiet-details export-options"><summary>Tùy chọn âm thanh<Icon name="chevron" size={16} /></summary><label className="checkbox-row"><input type="checkbox" checked={project.keepAmbient} disabled={busy === "export"} onChange={event => update({ keepAmbient: event.target.checked })} /><span><strong>Giữ nhẹ tiếng môi trường</strong><span>Trộn tiếng gốc nhỏ dưới giọng đọc.</span></span></label>{project.mode !== "scenery" && project.keepAmbient ? <p className="inline-note"><Icon name="info" size={18} />Video gốc có lời nói. Giữ âm thanh có thể làm chồng hai giọng.</p> : null}</details>
           {busy === "export" ? <div className="export-progress" role="status"><div><span><Spinner />Đang ghép video…</span><strong>{Math.round(exportProgress)}%</strong></div><progress max={100} value={exportProgress} /><p>{exportMessage || "Giữ trang này mở trong lúc xuất video."}</p></div> : null}
-          <div className="step-actions"><button className="text-button" onClick={() => navigateStep(3)} disabled={Boolean(busy)}>Quay lại</button>{exported ? <a className="button primary large" href={exportedUrl} download={videoDownloadName(visibleProjectTitle(project.title))}><Icon name="download" size={20} />Tải video MP4</a> : <button className="button primary large" onClick={() => void exportVideo()} disabled={!narrationReady || narrationTooLong || narrationChecking || Boolean(busy)}>{busy === "export" ? <Spinner /> : <Icon name="studio" size={19} />}{busy === "export" ? "Đang ghép…" : "Ghép video"}</button>}</div>
+          <div className="step-actions"><button className="text-button" onClick={() => navigateStep(3)} disabled={Boolean(busy)}>Quay lại</button>{exported ? <a className="button primary large" href={exportedUrl} download={videoDownloadName(visibleProjectTitle(project.title))}><Icon name="download" size={20} />Tải video MP4</a> : <button className="button primary large" onClick={() => void exportVideo()} disabled={!narrationReady || narrationTooLong || speechTooLong || narrationChecking || Boolean(busy)}>{busy === "export" ? <Spinner /> : <Icon name="studio" size={19} />}{busy === "export" ? "Đang ghép…" : "Ghép video"}</button>}</div>
           {exported && exportedUrl ? <div className="download-options">{supportsVideoSave() ? <button className="button secondary" onClick={()=>void saveExport()}><Icon name="folder" size={18} />Lưu vào thư mục…</button> : null}{canShareVideoFile(exported,visibleProjectTitle(project.title)) ? <button className="button secondary" onClick={()=>void shareExport()}>Chia sẻ tệp video</button> : null}<a className="text-button" href={exportedUrl} target="_blank" rel="noopener">Mở video để lưu<Icon name="arrow" size={16} /></a><p>Nếu trình duyệt chặn tải trực tiếp, mở video rồi dùng menu lưu hoặc chia sẻ. Hãy lưu video trước khi đóng trang.</p></div> : null}
           <p className="export-footnote">Tệp MP4 dùng được với CapCut và Facebook. Hãy xem lại trước khi đăng.</p>
         </section> : null}
@@ -916,7 +939,7 @@ function ProfileEditor({profile,onChange,prefix="creator"}:{profile:Profile;onCh
     <details className="quiet-details profile-extras"><summary>Thông tin bổ sung <span>Không bắt buộc</span><Icon name="chevron" size={16} /></summary><div className="creator-fields">{field("name","Tên của bạn","Bạn muốn AI gọi bạn là gì?")}{field("pronoun","Cách xưng hô","Ví dụ: mình – bạn, em – anh chị")}{field("facts","Thông tin nền AI cần biết","Tên sản phẩm, địa điểm và những điều đã được bạn xác nhận.",3)}{field("cta","Lời nhắn cuối video thường dùng","Ví dụ: Bạn đang gặp vấn đề gì khi trồng nho? Có thể để trống.")}</div></details>
     <p className="helper-text">Hồ sơ được lưu riêng trong tài khoản và dùng làm phong cách mặc định. Lời dặn của từng video được ưu tiên hơn.</p></div>;
 }
-function VoiceFilter({value,onChange,voices,provider}:{value:string;onChange:(value:string)=>void;voices:Voice[];provider:"maziao"|"eleven"}) { return <div className="voice-filters" aria-label="Nhóm giọng đọc">{[...VOICE_GROUPS.filter(group=>provider!=="maziao" || group.id!=="popular"),{id:"all",name:"Tất cả"}].map(group=><button key={group.id} type="button" aria-pressed={value===group.id} className={value===group.id ? "active" : ""} onClick={()=>onChange(group.id)}>{group.name}<span>{voices.filter(voice=>group.id==="all" || (voice.group || (voice.category==="cloned" ? "personal" : "default"))===group.id).length}</span></button>)}</div>; }
+function VoiceFilter({value,onChange,voices,provider}:{value:string;onChange:(value:string)=>void;voices:Voice[];provider:VoiceProvider}) { return <div className="voice-filters" aria-label="Nhóm giọng đọc">{[...VOICE_GROUPS.filter(group=>provider==="eleven" || group.id!=="popular"),{id:"all",name:"Tất cả"}].map(group=><button key={group.id} type="button" aria-pressed={value===group.id} className={value===group.id ? "active" : ""} onClick={()=>onChange(group.id)}>{group.name}<span>{voices.filter(voice=>group.id==="all" || (voice.group || (voice.category==="cloned" ? "personal" : "default"))===group.id).length}</span></button>)}</div>; }
 function VoiceDetail({voice}:{voice:Voice}) {
   const accentLabels:Record<string,string> = {northern:"Miền Bắc",southern:"Miền Nam",central:"Miền Trung",standard:"Phổ thông"};
   const accent=voice.accent ? accentLabels[voice.accent.toLowerCase()] || voice.accent : "";
