@@ -54,6 +54,7 @@ async function harness() {
   const server = {
     MAZIAO_MODELS: ["vieten_speech", "lingual_speech_v2"],
     maziaoModel: () => "vieten_speech",
+    voiceProvider: () => "maziao",
     authorizedVoiceRows: async userId => [...grants.values()].filter(row => row.user_id === userId),
     saveAuthorizedVoice: async (userId, voiceId, name, source, previewUrl) => grant(userId, voiceId, source, name, previewUrl),
     savePersonalVoicePreview: async (userId, voiceId, authorizationTag, previewUrl) => {
