@@ -21,6 +21,17 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Có lỗi kết nối. Hãy thử lại.";
 }
 
+function saydiSample(file: File): File {
+  const mimeByExtension: Record<string, string> = {
+    wav: "audio/wav", mp3: "audio/mpeg", m4a: "audio/mp4",
+    ogg: "audio/ogg", flac: "audio/flac", webm: "audio/webm",
+  };
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  const mime = mimeByExtension[extension];
+  if (!mime) throw new Error("Chọn mẫu WAV, MP3, M4A, OGG, FLAC hoặc WebM.");
+  return new File([file], file.name, { type: mime, lastModified: file.lastModified });
+}
+
 export default function VoiceClonePage() {
   const account = useAccount();
   const [voices, setVoices] = useState<Voice[]>([]);
@@ -71,7 +82,7 @@ export default function VoiceClonePage() {
     let paths: string[] = [];
     try {
       if (provider === "saydi" && cloneFile.size > 10 * 1024 * 1024) throw new Error("Mẫu giọng SaydiVoice cần nhỏ hơn 10 MB.");
-      const sample = provider === "saydi" ? cloneFile : await prepareMaziaoVoiceSample(cloneFile);
+      const sample = provider === "saydi" ? saydiSample(cloneFile) : await prepareMaziaoVoiceSample(cloneFile);
       const uploaded = await uploadVoiceSamples([sample]);
       paths = uploaded.samplePaths;
       const name = cloneName.trim();
